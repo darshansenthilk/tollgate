@@ -1,0 +1,20 @@
+{
+  "name": "tollgate",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Spend-control and credentialing proxy for AI agents",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./proxy\" --filter \"./api\" --filter \"./dashboard\" dev",
+    "dev:proxy": "pnpm --filter @tollgate/proxy dev",
+    "dev:api": "pnpm --filter @tollgate/api dev",
+    "dev:dashboard": "pnpm --filter @tollgate/dashboard dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  }
+}
