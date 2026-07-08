@@ -1,8 +1,15 @@
-import "dotenv/config";
+import "./lib/env.js";
 import Fastify from "fastify";
 import type { HealthReport } from "@tollgate/shared";
 import { redis, checkRedis } from "./lib/redis.js";
 import { pool, checkPostgres } from "./lib/db.js";
+import { providers } from "./adapters/registry.js";
+import { pgAgentStore } from "./lib/agents.js";
+import { redisBudgetStore } from "./lib/budget.js";
+import { pgSpendLog } from "./lib/spend-log.js";
+import { envVault } from "./lib/vault.js";
+import { redisFreezeStore } from "./lib/freeze.js";
+import { registerProxyRoute } from "./routes/proxy.js";
 
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const startedAt = Date.now();
@@ -34,18 +41,20 @@ app.get("/health", async (_req, reply): Promise<HealthReport> => {
 });
 
 /**
- * Future data plane: agents call /:providerSlug/* with a Tollgate token; the
- * proxy evaluates policy from Redis, forwards upstream with the vaulted key,
- * meters the response, and settles spend. Not implemented in this milestone.
+ * Data plane: agents call POST /:providerSlug/* with a Tollgate token; the proxy
+ * authenticates, checks the Redis budget, forwards upstream with the vaulted key,
+ * meters the response, and settles spend. All provider specifics live behind the
+ * adapter registry — this wiring names no provider.
  */
-app.all("/:providerSlug/*", async (req, reply) => {
-  reply.code(501);
-  return {
-    error: "not_implemented",
-    message:
-      "Tollgate proxy is running, but request forwarding lands in a later milestone.",
-    received: { method: req.method, url: req.url },
-  };
+registerProxyRoute(app, {
+  registry: providers,
+  agents: pgAgentStore(pool),
+  budget: redisBudgetStore(redis),
+  spendLog: pgSpendLog(pool),
+  vault: envVault(),
+  freeze: redisFreezeStore(redis),
+  fetchImpl: fetch,
+  now: () => new Date(),
 });
 
 async function main() {

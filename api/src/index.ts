@@ -1,10 +1,12 @@
-import "dotenv/config";
+import "./lib/env.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import type { HealthReport } from "@tollgate/shared";
 import { redis, checkRedis } from "./lib/redis.js";
-import { pool, checkPostgres } from "./lib/db.js";
+import { checkPostgres, pool } from "./lib/db.js";
 import { registerStubRoutes } from "./routes/stubs.js";
+import { registerAgentRoutes } from "./routes/agents.js";
+import { runMigrations } from "./db/migrate.js";
 
 const PORT = Number(process.env.API_PORT ?? 4000);
 const startedAt = Date.now();
@@ -12,21 +14,6 @@ const startedAt = Date.now();
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true }); // tighten before any real deployment
-
-/**
- * Proof-of-life bootstrap: create a heartbeat table and write a row, proving
- * the api service has DDL + write access to Postgres. Real migrations
- * (agents, policies, spend_events, audit_log) come with the schema milestone.
- */
-async function bootstrap() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS service_heartbeats (
-      service    text        NOT NULL,
-      booted_at  timestamptz NOT NULL DEFAULT now()
-    )
-  `);
-  await pool.query(`INSERT INTO service_heartbeats (service) VALUES ('api')`);
-}
 
 app.get("/health", async (_req, reply): Promise<HealthReport> => {
   const [redisHealth, pgHealth] = await Promise.all([checkRedis(), checkPostgres()]);
@@ -48,14 +35,16 @@ app.get("/health", async (_req, reply): Promise<HealthReport> => {
 });
 
 registerStubRoutes(app);
+registerAgentRoutes(app, redis);
 
 async function main() {
   try {
-    await bootstrap();
-    app.log.info("postgres bootstrap ok (service_heartbeats)");
+    await runMigrations();
+    app.log.info("postgres migrations applied");
   } catch (err) {
-    // Don't crash: /health will report the Postgres failure with detail.
-    app.log.warn({ err }, "postgres bootstrap failed; continuing");
+    // Don't crash: /health will report the Postgres failure with detail, and
+    // routes that hit missing tables will surface it per-request.
+    app.log.warn({ err }, "postgres migration failed; continuing");
   }
   await app.listen({ port: PORT, host: "0.0.0.0" });
 }
