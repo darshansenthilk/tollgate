@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@tollgate/api", "dev"],
+      "port": 4000
+    },
+    {
+      "name": "proxy",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@tollgate/proxy", "dev"],
+      "port": 8080
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@tollgate/dashboard", "dev"],
+      "port": 3000
+    }
+  ]
+}
