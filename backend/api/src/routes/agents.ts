@@ -198,7 +198,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         .where(eq(agents.id, agent.id));
 
       // Redis fast-path flag, set in lockstep with Postgres — see
-      // proxy/src/lib/freeze.ts for why the proxy checks this too.
+      // backend/proxy/src/lib/freeze.ts for why the proxy checks this too.
       await redis.set(freezeKey(agent.id), "1");
 
       return { id: agent.id, status };

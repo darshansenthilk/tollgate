@@ -1,5 +1,5 @@
 packages:
-  - shared
-  - proxy
-  - api
-  - dashboard
+  - backend/shared
+  - backend/proxy
+  - backend/api
+  - frontend/dashboard

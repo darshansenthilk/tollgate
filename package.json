@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "dev": "pnpm --parallel --filter \"./proxy\" --filter \"./api\" --filter \"./dashboard\" dev",
+    "dev": "pnpm --parallel --filter @tollgate/proxy --filter @tollgate/api --filter @tollgate/dashboard dev",
     "dev:proxy": "pnpm --filter @tollgate/proxy dev",
     "dev:api": "pnpm --filter @tollgate/api dev",
     "dev:dashboard": "pnpm --filter @tollgate/dashboard dev",

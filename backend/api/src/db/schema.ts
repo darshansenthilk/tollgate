@@ -52,7 +52,7 @@ export const spendDecisionEnum = pgEnum("spend_decision", [
 // One policy row per agent in this milestone (no shared/template policies
 // yet — see @tollgate/shared Policy docstring for the eventual model). Only
 // max_budget_cents is exercised by the proxy hot path
-// (proxy/src/lib/agents.ts); the rest of the columns mirror the full shared
+// (backend/proxy/src/lib/agents.ts); the rest of the columns mirror the full shared
 // Policy type so the api/dashboard have somewhere to land later.
 // ---------------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ export const policies = pgTable("policies", {
   budgetCents: integer("budget_cents").notNull(),
   /**
    * Decorative in this milestone: the proxy's spend counter is always
-   * monthly-keyed (proxy/src/lib/budget.ts currentMonth()), regardless of
+   * monthly-keyed (backend/proxy/src/lib/budget.ts currentMonth()), regardless of
    * this value. Kept so the column exists once window-aware enforcement
    * ships.
    */
@@ -91,7 +91,7 @@ export const agents = pgTable("agents", {
   status: agentStatusEnum("status").notNull().default("active"),
   policyId: uuid("policy_id").references(() => policies.id),
   /**
-   * SHA-256 hex digest of the raw token (proxy/src/lib/agents.ts hashToken).
+   * SHA-256 hex digest of the raw token (backend/proxy/src/lib/agents.ts hashToken).
    * Never present in the shared Agent type or any api response — like a
    * password hash, it's a DB-only secret-adjacent field. Unique because it's
    * an exact-match auth lookup key.
@@ -104,7 +104,7 @@ export const agents = pgTable("agents", {
 // ---------------------------------------------------------------------------
 // Spend events
 //
-// Column set and order match proxy/src/lib/spend-log.ts's INSERT exactly.
+// Column set and order match backend/proxy/src/lib/spend-log.ts's INSERT exactly.
 // created_at is deliberately NOT in that INSERT's column list — the proxy
 // relies entirely on this table's default now() for it.
 // ---------------------------------------------------------------------------

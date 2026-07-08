@@ -3,7 +3,7 @@
 #
 # Removes the demo agent so repeated demo runs don't clutter the dashboard.
 # There is no DELETE /v1/agents/:id endpoint yet (still a 501 stub in
-# api/src/routes/stubs.ts), so this goes straight at Postgres/Redis — scoped
+# backend/api/src/routes/stubs.ts), so this goes straight at Postgres/Redis — scoped
 # to the exact agent id seed.sh recorded, not a name match, so it never
 # touches an unrelated agent.
 set -euo pipefail

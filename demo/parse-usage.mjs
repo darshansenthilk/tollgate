@@ -1,6 +1,6 @@
 // Reads a proxied chat-completions response body from stdin and prints a
 // one-line cost summary, using the same price table as
-// proxy/src/adapters/openai.ts (gpt-4o-mini: 15c/60c per 1M in/out tokens).
+// backend/proxy/src/adapters/openai.ts (gpt-4o-mini: 15c/60c per 1M in/out tokens).
 // Terminal-only convenience — the dashboard's own number (read from Redis via
 // GET /v1/agents) is the authoritative spend total, this just mirrors it live
 // in the terminal without waiting on the 3s poll.

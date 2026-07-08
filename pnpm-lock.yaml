@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  api:
+  backend/api:
     dependencies:
       '@fastify/cors':
         specifier: ^10.0.1
@@ -48,14 +48,54 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  dashboard:
+  backend/proxy:
+    dependencies:
+      '@tollgate/shared':
+        specifier: workspace:*
+        version: link:../shared
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      fastify:
+        specifier: ^5.1.0
+        version: 5.10.0
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
+      pg:
+        specifier: ^8.13.1
+        version: 8.22.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.20.0
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.0
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)(lightningcss@1.32.0)
+
+  backend/shared:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  frontend/dashboard:
     dependencies:
       '@base-ui/react':
         specifier: ^1.6.0
         version: 1.6.0(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@tollgate/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../backend/shared
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -99,46 +139,6 @@ importers:
       tailwindcss:
         specifier: ^4.0.0
         version: 4.3.2
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-
-  proxy:
-    dependencies:
-      '@tollgate/shared':
-        specifier: workspace:*
-        version: link:../shared
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
-      fastify:
-        specifier: ^5.1.0
-        version: 5.10.0
-      ioredis:
-        specifier: ^5.4.1
-        version: 5.11.1
-      pg:
-        specifier: ^8.13.1
-        version: 8.22.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.9.0
-        version: 22.20.0
-      '@types/pg':
-        specifier: ^8.11.10
-        version: 8.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.0
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.20.0)(lightningcss@1.32.0)
-
-  shared:
-    devDependencies:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

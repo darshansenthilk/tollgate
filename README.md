@@ -7,10 +7,10 @@ to Redis and Postgres. No business logic yet.
 ## Layout
 
 ```
-/proxy      Fastify reverse proxy (data plane) — agents → Tollgate → upstream APIs
-/api        Fastify management API (control plane) — agent/policy CRUD, freeze/unfreeze
-/dashboard  Next.js (app router) + Tailwind — operator dashboard
-/shared     Shared TypeScript types (Agent, Policy, SpendEvent, Provider, ...)
+/backend/proxy      Fastify reverse proxy (data plane) — agents → Tollgate → upstream APIs
+/backend/api        Fastify management API (control plane) — agent/policy CRUD, freeze/unfreeze
+/frontend/dashboard Next.js (app router) + Tailwind — operator dashboard
+/backend/shared     Shared TypeScript types (Agent, Policy, SpendEvent, Provider, ...)
 ```
 
 ## Prerequisites

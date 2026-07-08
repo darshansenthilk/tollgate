@@ -6,7 +6,7 @@ watch enforcement (budget or freeze) cut it off — before the request ever
 reaches OpenAI.
 
 Everything below reflects the **actual, verified** route shapes in this repo
-(`api/src/routes/agents.ts`, `proxy/src/routes/proxy.ts`), and every script has
+(`backend/api/src/routes/agents.ts`, `backend/proxy/src/routes/proxy.ts`), and every script has
 been run end-to-end against the real services as part of writing this doc —
 not just written and hoped to work.
 
@@ -34,7 +34,7 @@ not just written and hoped to work.
 `OPENAI_UPSTREAM_KEY` in `.env` is currently a placeholder
 (`sk-placeholder-not-a-real-key`). This matters for one specific reason:
 **the proxy only meters a nonzero cost when the upstream response contains a
-real `usage` object** (`proxy/src/adapters/openai.ts` — `parseCost` returns
+real `usage` object** (`backend/proxy/src/adapters/openai.ts` — `parseCost` returns
 `{ costCents: 0 }` whenever the body has no `usage.prompt_tokens`, which is
 exactly what an OpenAI auth-error body looks like). With a placeholder key,
 every call gets a real `401 invalid_api_key` from OpenAI — proving Tollgate's
@@ -57,7 +57,7 @@ changes between the two modes; only whether real cost accrues.
 
 If you do supply a real key: `demo-agent`'s `maxBudgetCents` is set to **2**
 ($0.02) on purpose. `gpt-4o-mini` is priced at 15¢/60¢ per 1M input/output
-tokens (`proxy/src/adapters/openai.ts`) — genuinely tiny, so hitting even a
+tokens (`backend/proxy/src/adapters/openai.ts`) — genuinely tiny, so hitting even a
 couple of cents for real takes dozens of calls, not thousands, and the whole
 demo's real-dollar cost is bounded at roughly $0.02 plus at most one call's
 overshoot (Tollgate's budget check runs *before* metering the current call,
@@ -81,7 +81,7 @@ metered-tier providers).
 - **`cleanup.sh`** — deletes the demo agent by the exact id `seed.sh`
   recorded (not a name match), straight against Postgres/Redis. There's no
   `DELETE /v1/agents/:id` endpoint yet — it's still a `501` stub in
-  `api/src/routes/stubs.ts` — so this is the only way to actually remove one
+  `backend/api/src/routes/stubs.ts` — so this is the only way to actually remove one
   today.
 
 Override any of these via env vars if your setup differs:

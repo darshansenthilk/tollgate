@@ -2,7 +2,7 @@ import type { AgentStatus } from "@tollgate/shared";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-/** Exact shape returned by GET /v1/agents (api/src/routes/agents.ts). */
+/** Exact shape returned by GET /v1/agents (backend/api/src/routes/agents.ts). */
 export interface AgentListItem {
   id: string;
   name: string;
