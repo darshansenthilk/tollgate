@@ -19,6 +19,12 @@ interface CreateAgentBody {
   maxBudgetCents: number | null;
 }
 
+/**
+ * Agent creation is restricted to providers the dashboard's dropdown offers.
+ * Keep in sync with the frontend's provider options if that list changes.
+ */
+const ALLOWED_PROVIDER_SLUGS = new Set(["anthropic", "openai"]);
+
 function parseCreateBody(body: unknown): CreateAgentBody | null {
   if (typeof body !== "object" || body === null) return null;
   const rec = body as Record<string, unknown>;
@@ -74,6 +80,26 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     if (body === null) {
       reply.code(400);
       return { error: "invalid_body" };
+    }
+
+    if (!ALLOWED_PROVIDER_SLUGS.has(body.providerSlug)) {
+      reply.code(400);
+      return {
+        error: "invalid_provider_slug",
+        message: `providerSlug must be one of: ${[...ALLOWED_PROVIDER_SLUGS].join(", ")}`,
+      };
+    }
+
+    const existing = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.name, body.name));
+    if (existing.length > 0) {
+      reply.code(409);
+      return {
+        error: "agent_name_taken",
+        message: `An agent named "${body.name}" already exists`,
+      };
     }
 
     const token = generateToken();

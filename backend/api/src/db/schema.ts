@@ -85,7 +85,9 @@ export const policies = pgTable("policies", {
 export const agents = pgTable("agents", {
   id: uuid("id").primaryKey(),
   orgId: uuid("org_id").notNull().default(DEFAULT_ORG_ID),
-  name: text("name").notNull(),
+  /** Unique (exact-string) so two agents can't share a name; enforced at the
+   *  DB level to close the race an application-only check would leave open. */
+  name: text("name").notNull().unique(),
   /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
   providerSlug: text("provider_slug").notNull(),
   status: agentStatusEnum("status").notNull().default("active"),

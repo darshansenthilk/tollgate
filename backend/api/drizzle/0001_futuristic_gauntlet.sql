@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD CONSTRAINT "agents_name_unique" UNIQUE("name");
