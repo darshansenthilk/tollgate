@@ -13,7 +13,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ApiError, createAgent, type CreateAgentResponse } from "@/lib/api";
+
+/** The only providers selectable from the dashboard today. */
+const PROVIDERS = [
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+] as const;
+
+type ProviderSlug = (typeof PROVIDERS)[number]["value"];
 
 interface CreateAgentDialogProps {
   onCreated: (agent: CreateAgentResponse) => void;
@@ -22,7 +37,7 @@ interface CreateAgentDialogProps {
 export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [providerSlug, setProviderSlug] = useState("");
+  const [providerSlug, setProviderSlug] = useState<ProviderSlug | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +49,7 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
     // Reset after the close animation so the form doesn't visibly flash blank.
     setTimeout(() => {
       setName("");
-      setProviderSlug("");
+      setProviderSlug(null);
       setMaxBudgetCents("");
       setError(null);
       setCreated(null);
@@ -47,6 +62,10 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
     setPending(true);
     setError(null);
     try {
+      if (providerSlug === null) {
+        setError("Select a provider");
+        return;
+      }
       const budget = maxBudgetCents.trim() === "" ? null : Number(maxBudgetCents);
       if (budget !== null && (!Number.isFinite(budget) || budget < 0)) {
         setError("Max budget must be a non-negative number of cents");
@@ -107,14 +126,23 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-provider">Provider slug</Label>
-              <Input
-                id="agent-provider"
+              <Label htmlFor="agent-provider">Provider</Label>
+              <Select
+                items={PROVIDERS}
                 value={providerSlug}
-                onChange={(e) => setProviderSlug(e.target.value)}
-                placeholder="openai"
-                required
-              />
+                onValueChange={(value) => setProviderSlug(value)}
+              >
+                <SelectTrigger id="agent-provider">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVIDERS.map((provider) => (
+                    <SelectItem key={provider.value} value={provider.value}>
+                      {provider.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex flex-col gap-1.5">
