@@ -30,19 +30,46 @@ const PROVIDERS = [
 
 type ProviderSlug = (typeof PROVIDERS)[number]["value"];
 
+/**
+ * Model choices per provider. Purely a client-side selection today — see the
+ * `model` field comment on CreateAgentInput (lib/api.ts): backend/api has no
+ * column for it yet, so it's sent but silently dropped by POST /v1/agents.
+ */
+const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: string }[]> = {
+  openai: [
+    { value: "gpt-4o", label: "gpt-4o" },
+    { value: "gpt-4o-mini", label: "gpt-4o-mini" },
+  ],
+  anthropic: [
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
+  ],
+};
+
 interface CreateAgentDialogProps {
   onCreated: (agent: CreateAgentResponse) => void;
+  /**
+   * Names of agents already fetched via GET /v1/agents. The backend also
+   * rejects duplicates (409 agent_name_taken), but its check is case-sensitive
+   * — this client-side check additionally catches "Foo" vs "foo" before a
+   * round trip.
+   */
+  existingNames: string[];
 }
 
-export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
+export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [providerSlug, setProviderSlug] = useState<ProviderSlug | null>(null);
+  const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreateAgentResponse | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const modelOptions = providerSlug === null ? [] : MODELS_BY_PROVIDER[providerSlug];
 
   function resetAndClose() {
     setOpen(false);
@@ -50,6 +77,7 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
     setTimeout(() => {
       setName("");
       setProviderSlug(null);
+      setModel(null);
       setMaxBudgetCents("");
       setError(null);
       setCreated(null);
@@ -62,8 +90,20 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
     setPending(true);
     setError(null);
     try {
+      const trimmedName = name.trim();
+      const isDuplicate = existingNames.some(
+        (existing) => existing.toLowerCase() === trimmedName.toLowerCase(),
+      );
+      if (isDuplicate) {
+        setError(`An agent named "${trimmedName}" already exists`);
+        return;
+      }
       if (providerSlug === null) {
         setError("Select a provider");
+        return;
+      }
+      if (model === null) {
+        setError("Select a model");
         return;
       }
       const budget = maxBudgetCents.trim() === "" ? null : Number(maxBudgetCents);
@@ -71,10 +111,18 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
         setError("Max budget must be a non-negative number of cents");
         return;
       }
-      const agent = await createAgent({ name, providerSlug, maxBudgetCents: budget });
+      const agent = await createAgent({
+        name: trimmedName,
+        providerSlug,
+        maxBudgetCents: budget,
+        model,
+      });
       setCreated(agent);
       onCreated(agent);
     } catch (err) {
+      // ApiError.message is already a clear, human-readable string here (e.g.
+      // the backend's 409 agent_name_taken message), not a raw error code —
+      // see lib/api.ts's request() for how that's resolved.
       setError(err instanceof ApiError ? err.message : "Request failed");
     } finally {
       setPending(false);
@@ -125,24 +173,52 @@ export function CreateAgentDialog({ onCreated }: CreateAgentDialogProps) {
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="agent-provider">Provider</Label>
-              <Select
-                items={PROVIDERS}
-                value={providerSlug}
-                onValueChange={(value) => setProviderSlug(value)}
-              >
-                <SelectTrigger id="agent-provider">
-                  <SelectValue placeholder="Select provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROVIDERS.map((provider) => (
-                    <SelectItem key={provider.value} value={provider.value}>
-                      {provider.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="agent-provider">Provider</Label>
+                <Select
+                  items={PROVIDERS}
+                  value={providerSlug}
+                  onValueChange={(value) => {
+                    setProviderSlug(value);
+                    setModel(null);
+                  }}
+                >
+                  <SelectTrigger id="agent-provider">
+                    <SelectValue placeholder="Select provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROVIDERS.map((provider) => (
+                      <SelectItem key={provider.value} value={provider.value}>
+                        {provider.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="agent-model">Model</Label>
+                <Select
+                  items={modelOptions}
+                  value={model}
+                  onValueChange={(value) => setModel(value)}
+                  disabled={providerSlug === null}
+                >
+                  <SelectTrigger id="agent-model">
+                    <SelectValue
+                      placeholder={providerSlug === null ? "Select provider first" : "Select model"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">

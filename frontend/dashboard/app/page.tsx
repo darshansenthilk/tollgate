@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { AgentStatus } from "@tollgate/shared";
+import { useToastManager } from "@/components/ui/toast";
 import {
   Card,
   CardContent,
@@ -21,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { FreezeAgentButton } from "@/components/freeze-agent-button";
+import { DeleteAgentButton } from "@/components/delete-agent-button";
 import {
   ApiError,
   listAgents,
@@ -47,15 +49,57 @@ function spendFraction(spend: number, max: number | null): number | null {
   return spend / max;
 }
 
+/** Single source of truth for "over budget" — used by sorting, the "needs
+ *  attention" banner, and over-budget transition detection alike. */
+function isOverBudget(agent: AgentListItem): boolean {
+  return (spendFraction(agent.currentMonthSpendCents, agent.maxBudgetCents) ?? 0) >= 1;
+}
+
+/** Over-budget agents first; within each group, alphabetical by name
+ *  (case-insensitive). */
+function compareAgents(a: AgentListItem, b: AgentListItem): number {
+  const aOver = isOverBudget(a);
+  const bOver = isOverBudget(b);
+  if (aOver !== bOver) return aOver ? -1 : 1;
+  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+}
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const { add: addToast } = useToastManager();
+  // Read via a ref inside refresh() so refresh's identity (and therefore the
+  // poll interval effect below) doesn't depend on addToast's own identity.
+  const addToastRef = useRef(addToast);
+  addToastRef.current = addToast;
+
+  // Previous poll's over-budget state per agent id. null = no poll has
+  // completed yet, which is what suppresses toasts on the very first load —
+  // there's nothing to diff a transition against until this is populated.
+  const prevOverBudgetRef = useRef<Map<string, boolean> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const data = await listAgents();
       setAgents(data);
       setError(null);
+
+      const previous = prevOverBudgetRef.current;
+      const next = new Map<string, boolean>();
+      for (const agent of data) {
+        const over = isOverBudget(agent);
+        next.set(agent.id, over);
+        // A real transition: this exact agent was confirmed under/at limit
+        // on the immediately preceding poll, and is over budget now.
+        if (previous !== null && previous.get(agent.id) === false && over) {
+          addToastRef.current({
+            title: "Over budget",
+            description: `${agent.name} just went over its budget.`,
+          });
+        }
+      }
+      prevOverBudgetRef.current = next;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to reach the api");
     }
@@ -85,11 +129,16 @@ export default function AgentsPage() {
     );
   }
 
+  function handleDeleted(id: string) {
+    setAgents((prev) => (prev === null ? prev : prev.filter((a) => a.id !== id)));
+  }
+
   const needsAttention = (agents ?? []).filter(
-    (a) =>
-      FROZEN_STATUSES.has(a.status) ||
-      (spendFraction(a.currentMonthSpendCents, a.maxBudgetCents) ?? 0) >= 1,
+    (a) => FROZEN_STATUSES.has(a.status) || isOverBudget(a),
   );
+
+  // Over-budget agents first, then alphabetical — see compareAgents.
+  const sortedAgents = agents === null ? null : [...agents].sort(compareAgents);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
@@ -100,7 +149,10 @@ export default function AgentsPage() {
             Spend and enforcement status, live from Redis.
           </p>
         </div>
-        <CreateAgentDialog onCreated={handleCreated} />
+        <CreateAgentDialog
+          onCreated={handleCreated}
+          existingNames={(agents ?? []).map((a) => a.name)}
+        />
       </header>
 
       {needsAttention.length > 0 && (
@@ -132,11 +184,11 @@ export default function AgentsPage() {
           <CardDescription>Polling every 3s</CardDescription>
         </CardHeader>
         <CardContent>
-          {agents === null ? (
+          {sortedAgents === null ? (
             <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
               Loading…
             </p>
-          ) : agents.length === 0 ? (
+          ) : sortedAgents.length === 0 ? (
             <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
               No agents yet — create one to get started.
             </p>
@@ -152,7 +204,7 @@ export default function AgentsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {agents.map((agent) => {
+                {sortedAgents.map((agent) => {
                   const fraction = spendFraction(
                     agent.currentMonthSpendCents,
                     agent.maxBudgetCents,
@@ -211,12 +263,19 @@ export default function AgentsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <FreezeAgentButton
-                          agentId={agent.id}
-                          agentName={agent.name}
-                          status={agent.status}
-                          onStatusChange={(status) => handleStatusChange(agent.id, status)}
-                        />
+                        <div className="flex justify-end gap-2">
+                          <FreezeAgentButton
+                            agentId={agent.id}
+                            agentName={agent.name}
+                            status={agent.status}
+                            onStatusChange={(status) => handleStatusChange(agent.id, status)}
+                          />
+                          <DeleteAgentButton
+                            agentId={agent.id}
+                            agentName={agent.name}
+                            onDeleted={handleDeleted}
+                          />
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
