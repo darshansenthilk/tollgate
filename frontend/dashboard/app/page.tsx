@@ -346,7 +346,7 @@ export default function AgentsPage() {
                     />
                   </TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead>Provider</TableHead>
+                  <TableHead>Assistant</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Spend / budget</TableHead>
                   <TableHead>Tokens</TableHead>

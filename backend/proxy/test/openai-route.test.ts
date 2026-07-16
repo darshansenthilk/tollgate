@@ -30,6 +30,7 @@ describe("POST /openai/* hot path", () => {
       id: AGENT_ID,
       status: "active",
       maxBudgetCents: 100, // $1.00 ceiling — plenty
+      providerSlug: "chatgpt",
     });
 
     const body = completion("gpt-4o-mini", 1000, 500);
@@ -76,7 +77,12 @@ describe("POST /openai/* hot path", () => {
 
   it("accumulates spend across successive requests (atomic INCRBY)", async () => {
     const h = await buildHarness({ adapters: [openaiAdapter] });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "active", maxBudgetCents: 100 });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "chatgpt",
+    });
     h.upstream.setResponder(
       () => new Response(JSON.stringify(completion("gpt-4o", 100, 100)), { status: 200 }),
     );
@@ -98,7 +104,12 @@ describe("POST /openai/* hot path", () => {
 
   it("denies with budget_exceeded when the counter is at/over the ceiling", async () => {
     const h = await buildHarness({ adapters: [openaiAdapter] });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "active", maxBudgetCents: 50 });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 50,
+      providerSlug: "chatgpt",
+    });
     // Seed spend equal to the ceiling (50 cents = 50,000,000 micro-cents).
     h.budget.seed(KEY, 50 * MICROCENTS_PER_CENT);
 
@@ -119,7 +130,12 @@ describe("POST /openai/* hot path", () => {
 
   it("denies frozen agents with agent_frozen and never forwards", async () => {
     const h = await buildHarness({ adapters: [openaiAdapter] });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "soft_frozen", maxBudgetCents: 100 });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "soft_frozen",
+      maxBudgetCents: 100,
+      providerSlug: "chatgpt",
+    });
 
     const res = await h.app.inject({
       method: "POST",
@@ -135,7 +151,12 @@ describe("POST /openai/* hot path", () => {
 
   it("denies via the Redis frozen flag even when Postgres status is still active", async () => {
     const h = await buildHarness({ adapters: [openaiAdapter] });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "active", maxBudgetCents: 100 });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "chatgpt",
+    });
     h.freeze.freeze(AGENT_ID);
 
     const res = await h.app.inject({
@@ -147,6 +168,31 @@ describe("POST /openai/* hot path", () => {
 
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: "agent_frozen" });
+    expect(h.upstream.calls).toHaveLength(0);
+  });
+
+  it("denies with provider_mismatch when the agent's assistant doesn't map to this adapter", async () => {
+    const h = await buildHarness({ adapters: [openaiAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "claude", // created for Claude, not ChatGPT
+    });
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/openai/v1/chat/completions",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { model: "gpt-4o-mini" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({
+      error: "provider_mismatch",
+      providerSlug: "openai",
+      assistantSlug: "claude",
+    });
     expect(h.upstream.calls).toHaveLength(0);
   });
 

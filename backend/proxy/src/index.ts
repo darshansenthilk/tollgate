@@ -3,7 +3,7 @@ import Fastify from "fastify";
 import type { HealthReport } from "@tollgate/shared";
 import { redis, checkRedis } from "./lib/redis.js";
 import { pool, checkPostgres } from "./lib/db.js";
-import { providers } from "./adapters/registry.js";
+import { providers, assistantAdapterSlugs } from "./adapters/registry.js";
 import { pgAgentStore } from "./lib/agents.js";
 import { redisBudgetStore } from "./lib/budget.js";
 import { pgSpendLog } from "./lib/spend-log.js";
@@ -44,9 +44,11 @@ app.get("/health", async (_req, reply): Promise<HealthReport> => {
 
 /**
  * Data plane: agents call POST /:providerSlug/* with a Tollgate token; the proxy
- * authenticates, checks the Redis budget, forwards upstream with the vaulted key,
- * meters the response, and settles spend. All provider specifics live behind the
- * adapter registry — this wiring names no provider.
+ * authenticates, checks the agent's declared assistant against the resolved
+ * adapter, checks the Redis budget, forwards upstream with the vaulted key,
+ * meters the response, and settles spend. Adapter dispatch itself stays
+ * provider-agnostic (the registry); assistantAdapterSlugs is the one place
+ * that names the real integrations, kept out of the route handler.
  */
 registerProxyRoute(app, {
   registry: providers,
@@ -59,6 +61,7 @@ registerProxyRoute(app, {
   currentPrompt: redisCurrentPromptStore(redis),
   fetchImpl: fetch,
   now: () => new Date(),
+  assistantAdapterSlugs,
 });
 
 async function main() {

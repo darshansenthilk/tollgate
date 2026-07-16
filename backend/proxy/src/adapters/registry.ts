@@ -1,5 +1,6 @@
 import type { ProviderAdapter } from "@tollgate/shared";
 import { openaiAdapter } from "./openai.js";
+import { claudeAdapter } from "./claude.js";
 
 /**
  * The provider registry: slug → adapter. The hot path looks an adapter up here
@@ -23,4 +24,25 @@ export function buildRegistry(
 }
 
 /** Default registry wired for production. */
-export const providers: ProviderRegistry = buildRegistry([openaiAdapter]);
+export const providers: ProviderRegistry = buildRegistry([openaiAdapter, claudeAdapter]);
+
+/**
+ * The descriptive assistant label an agent is created with (dashboard's
+ * PROVIDERS list, stored as agents.provider_slug) doesn't share a vocabulary
+ * with the real adapter slug that label is meant to authorize — "chatgpt" the
+ * label vs. "openai" the adapter, by design, since the label is
+ * consumer-facing and the adapter slug is a routing detail. This map is the
+ * one place that bridges the two, so the proxy's assistant gate
+ * (registerProxyRoute) can check "is this agent even allowed to call the
+ * adapter this request resolved to" without hardcoding provider names into
+ * the route handler itself — it stays an injected dependency like the
+ * registry.
+ *
+ * Keep in sync with frontend/dashboard/components/create-agent-dialog.tsx's
+ * PROVIDERS list and backend/api/src/routes/agents.ts's
+ * ALLOWED_PROVIDER_SLUGS.
+ */
+export const assistantAdapterSlugs: ReadonlyMap<string, string> = new Map([
+  ["chatgpt", "openai"],
+  ["claude", "claude"],
+]);

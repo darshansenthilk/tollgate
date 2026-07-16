@@ -22,22 +22,25 @@ import {
 } from "@/components/ui/select";
 import { ApiError, createAgent, type CreateAgentResponse } from "@/lib/api";
 
-/** The only providers selectable from the dashboard today. */
+/** The only assistants selectable from the dashboard today. */
 const PROVIDERS = [
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
+  { value: "chatgpt", label: "ChatGPT" },
+  { value: "claude", label: "Claude" },
 ] as const;
 
 type ProviderSlug = (typeof PROVIDERS)[number]["value"];
 
-/** Model choices per provider. Persisted server-side via the `model` column
- *  on the agents table (backend/api/src/db/schema.ts). */
+/** Model choices per assistant. Keyed by the assistant slug above, not by the
+ *  adapter slug the proxy routes on ("chatgpt" the label vs. "openai" the
+ *  adapter) — backend/proxy/src/adapters/registry.ts's assistantAdapterSlugs is
+ *  the one place that bridges the two. Persisted server-side via the `model`
+ *  column on the agents table (backend/api/src/db/schema.ts). */
 const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: string }[]> = {
-  openai: [
+  chatgpt: [
     { value: "gpt-4o", label: "gpt-4o" },
     { value: "gpt-4o-mini", label: "gpt-4o-mini" },
   ],
-  anthropic: [
+  claude: [
     { value: "opus", label: "Opus" },
     { value: "sonnet", label: "Sonnet" },
     { value: "haiku", label: "Haiku" },
@@ -96,7 +99,7 @@ export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialo
         return;
       }
       if (providerSlug === null) {
-        setError("Select a provider");
+        setError("Select an assistant");
         return;
       }
       if (model === null) {
@@ -172,7 +175,7 @@ export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialo
 
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="agent-provider">Provider</Label>
+                <Label htmlFor="agent-provider">Assistant</Label>
                 <Select
                   items={PROVIDERS}
                   value={providerSlug}
@@ -182,7 +185,7 @@ export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialo
                   }}
                 >
                   <SelectTrigger id="agent-provider">
-                    <SelectValue placeholder="Select provider" />
+                    <SelectValue placeholder="Select an assistant" />
                   </SelectTrigger>
                   <SelectContent>
                     {PROVIDERS.map((provider) => (

@@ -70,7 +70,7 @@ metered-tier providers).
 - **`seed.sh`** — wipes `agents`/`policies`/`spend_events` and any
   `spend:*`/`frozen:*` Redis keys (this is the local dev/demo DB, not
   production), then creates one agent named `demo-agent` (`providerSlug:
-  "openai"`, `maxBudgetCents: 2`), prints its one-time token, and saves
+  "chatgpt"`, `maxBudgetCents: 2`), prints its one-time token, and saves
   `{id, token}` to `demo/.demo-agent.json` (gitignored) for the other scripts.
 - **`hammer.sh`** — loops `POST /openai/v1/chat/completions` with that token
   once a second, printing each call's real usage/cost (parsed from the
@@ -101,7 +101,7 @@ narrate a manual `curl` call later. Open **http://localhost:3000**.
 
 **a. Show the dashboard at $0 spend.**
 
-The table has exactly one row: `demo-agent`, provider `openai`, status
+The table has exactly one row: `demo-agent`, app name `chatgpt`, status
 **Active**, `$0.00 / $0.02`, 0%. (`seed.sh` wiped everything else first, so
 there's nothing else on screen to explain away.)
 

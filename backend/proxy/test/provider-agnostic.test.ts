@@ -17,6 +17,13 @@ const acmeAdapter: ProviderAdapter = {
   parseCost: () => ({ costCents: 3, estimatedCostCents: 5 }),
 };
 
+/**
+ * A fictional assistant→adapter mapping, disjoint from the real
+ * chatgpt/claude one — proves the assistant gate is also driven entirely
+ * through injection, with no adapter names hardcoded in the route handler.
+ */
+const acmeAssistantAdapterSlugs = new Map([["acme-assistant", "acme"]]);
+
 const AGENT_ID = "agent-acme";
 const TOKEN = "acme-token";
 const KEY = spendKey(AGENT_ID, currentMonth(FIXED_NOW));
@@ -26,8 +33,14 @@ describe("route handler is provider-agnostic", () => {
     const h = await buildHarness({
       adapters: [acmeAdapter],
       vault: new FakeVault("acme-upstream-key"),
+      assistantAdapterSlugs: acmeAssistantAdapterSlugs,
     });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "active", maxBudgetCents: 100 });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "acme-assistant",
+    });
 
     const upstreamBody = { ok: true, note: "acme response" };
     h.upstream.setResponder(
@@ -66,8 +79,16 @@ describe("route handler is provider-agnostic", () => {
   });
 
   it("knows no provider it wasn't given: /openai 404s under an acme-only registry", async () => {
-    const h = await buildHarness({ adapters: [acmeAdapter] });
-    h.agents.add(TOKEN, { id: AGENT_ID, status: "active", maxBudgetCents: 100 });
+    const h = await buildHarness({
+      adapters: [acmeAdapter],
+      assistantAdapterSlugs: acmeAssistantAdapterSlugs,
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "acme-assistant",
+    });
 
     const res = await h.app.inject({
       method: "POST",
@@ -79,6 +100,34 @@ describe("route handler is provider-agnostic", () => {
     // No hardcoded OpenAI fallback exists in the handler.
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: "unknown_provider", providerSlug: "openai" });
+    expect(h.upstream.calls).toHaveLength(0);
+  });
+
+  it("denies via provider_mismatch when the assistant→adapter map doesn't authorize this adapter", async () => {
+    const h = await buildHarness({
+      adapters: [acmeAdapter],
+      assistantAdapterSlugs: new Map(), // nothing is authorized
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "acme-assistant",
+    });
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/acme/widgets/create",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({
+      error: "provider_mismatch",
+      providerSlug: "acme",
+      assistantSlug: "acme-assistant",
+    });
     expect(h.upstream.calls).toHaveLength(0);
   });
 });

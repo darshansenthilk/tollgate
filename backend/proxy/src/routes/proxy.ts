@@ -33,6 +33,13 @@ export interface ProxyDeps {
   currentPrompt: CurrentPromptStore;
   fetchImpl: typeof fetch;
   now: () => Date;
+  /**
+   * Bridges an agent's descriptive assistant label to the real adapter slug
+   * it's allowed to call (see registry.ts's assistantAdapterSlugs doc
+   * comment for why these are different vocabularies). Injected — like the
+   * registry — so the route handler still hardcodes no provider names.
+   */
+  assistantAdapterSlugs: ReadonlyMap<string, string>;
 }
 
 /** Statuses that deny new operations outright. */
@@ -90,7 +97,20 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         return { error: "invalid_token" };
       }
 
-      // 3. Freeze gate: Postgres status (system of record) plus a Redis
+      // 3. Assistant gate: the agent's declared assistant must map to the
+      //    adapter this request resolved to — otherwise a token created for
+      //    one assistant could be used against a different upstream with zero
+      //    checks. Fails closed: an unmapped assistant slug matches nothing.
+      if (deps.assistantAdapterSlugs.get(agent.providerSlug) !== adapter.slug) {
+        reply.code(403);
+        return {
+          error: "provider_mismatch",
+          providerSlug,
+          assistantSlug: agent.providerSlug,
+        };
+      }
+
+      // 4. Freeze gate: Postgres status (system of record) plus a Redis
       //    fast-path flag the api's freeze/unfreeze endpoints set in lockstep.
       const frozenInRedis = await deps.freeze.isFrozen(agent.id);
       if (FROZEN_STATUSES.has(agent.status) || frozenInRedis) {
@@ -98,7 +118,7 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         return { error: "agent_frozen" };
       }
 
-      // 4. Budget gate: current month spend vs. policy ceiling. A null ceiling
+      // 5. Budget gate: current month spend vs. policy ceiling. A null ceiling
       //    means unlimited — no counter comparison.
       const month = currentMonth(deps.now());
       const key = spendKey(agent.id, month);
@@ -111,7 +131,7 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         }
       }
 
-      // 5. Forward upstream with the vaulted key. The incoming Tollgate token is
+      // 6. Forward upstream with the vaulted key. The incoming Tollgate token is
       //    dropped; the adapter supplies the real upstream auth.
       const upstreamKey = deps.vault.getUpstreamKey(adapter.slug);
       if (upstreamKey === null) {
@@ -143,7 +163,7 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       const latencyMs = Date.now() - startedAt;
       const upstreamText = await upstream.text();
 
-      // 6. Meter: parse cost via the adapter, then atomically bump the counter.
+      // 7. Meter: parse cost via the adapter, then atomically bump the counter.
       const { costCents, estimatedCostCents, promptTokens, completionTokens } =
         adapter.parseCost(parseJson(upstreamText));
       await deps.budget.addSpendMicroCents(key, centsToMicroCents(costCents));
@@ -157,7 +177,7 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         );
       }
 
-      // 7. Settle: write the audit event without blocking the response.
+      // 8. Settle: write the audit event without blocking the response.
       void deps.spendLog
         .record({
           agentId: agent.id,
@@ -174,7 +194,7 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
           req.log.error({ err }, "spend_events write failed");
         });
 
-      // 8. Return the upstream response unchanged.
+      // 9. Return the upstream response unchanged.
       reply.code(upstream.status);
       const contentType = upstream.headers.get("content-type");
       reply.header("content-type", contentType ?? "application/json");

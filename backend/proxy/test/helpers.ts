@@ -1,6 +1,10 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import type { ProviderAdapter } from "@tollgate/shared";
-import { buildRegistry, type ProviderRegistry } from "../src/adapters/registry.js";
+import {
+  buildRegistry,
+  assistantAdapterSlugs as defaultAssistantAdapterSlugs,
+  type ProviderRegistry,
+} from "../src/adapters/registry.js";
 import {
   hashToken,
   type AgentStore,
@@ -143,6 +147,7 @@ export interface HarnessOverrides {
   currentPrompt?: CurrentPromptStore;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  assistantAdapterSlugs?: ReadonlyMap<string, string>;
 }
 
 export interface Harness {
@@ -205,6 +210,7 @@ export async function buildHarness(
     currentPrompt: overrides.currentPrompt ?? currentPrompt,
     fetchImpl: overrides.fetchImpl ?? upstream.fetchImpl,
     now: overrides.now ?? (() => FIXED_NOW),
+    assistantAdapterSlugs: overrides.assistantAdapterSlugs ?? defaultAssistantAdapterSlugs,
   };
 
   const app = Fastify();

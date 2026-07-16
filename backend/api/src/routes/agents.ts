@@ -23,10 +23,11 @@ interface CreateAgentBody {
 }
 
 /**
- * Agent creation is restricted to providers the dashboard's dropdown offers.
- * Keep in sync with the frontend's provider options if that list changes.
+ * Agent creation is restricted to the app names the dashboard's dropdown
+ * offers. Keep in sync with the frontend's PROVIDERS options if that list
+ * changes.
  */
-const ALLOWED_PROVIDER_SLUGS = new Set(["anthropic", "openai"]);
+const ALLOWED_PROVIDER_SLUGS = new Set(["claude", "chatgpt"]);
 
 function parseCreateBody(body: unknown): CreateAgentBody | null {
   if (typeof body !== "object" || body === null) return null;

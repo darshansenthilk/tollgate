@@ -2,7 +2,7 @@
 # Tollgate demo — step 1: seed.sh
 #
 # Resets the demo Postgres/Redis to a clean slate and creates ONE demo agent
-# (provider slug "openai", a small maxBudgetCents so hammer.sh can exhaust it
+# (app name "chatgpt", a small maxBudgetCents so hammer.sh can exhaust it
 # quickly), printing its one-time Tollgate token.
 #
 # Requires: docker (with the tollgate-postgres-1 / tollgate-redis-1 containers
@@ -58,10 +58,10 @@ echo "   done"
 echo ""
 
 # --- Create the demo agent ---
-echo "-- Creating demo agent (providerSlug: openai, maxBudgetCents: $DEMO_MAX_BUDGET_CENTS) --"
+echo "-- Creating demo agent (providerSlug: chatgpt, maxBudgetCents: $DEMO_MAX_BUDGET_CENTS) --"
 RESPONSE=$(curl -sf -X POST "$API_URL/v1/agents" \
   -H "content-type: application/json" \
-  -d "{\"name\":\"demo-agent\",\"providerSlug\":\"openai\",\"maxBudgetCents\":$DEMO_MAX_BUDGET_CENTS}")
+  -d "{\"name\":\"demo-agent\",\"providerSlug\":\"chatgpt\",\"maxBudgetCents\":$DEMO_MAX_BUDGET_CENTS}")
 
 echo "$RESPONSE" > "$STATE_FILE"
 
