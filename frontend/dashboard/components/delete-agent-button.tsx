@@ -40,15 +40,7 @@ export function DeleteAgentButton({ agentId, agentName, onDeleted }: DeleteAgent
       onDeleted(agentId);
       setOpen(false);
     } catch (err) {
-      // DELETE /v1/agents/:id is still a 501 stub in
-      // backend/api/src/routes/stubs.ts — not implemented yet (another
-      // teammate owns building the real route). Surface that plainly instead
-      // of the raw "not_implemented" code the stub returns.
-      if (err instanceof ApiError && err.code === "not_implemented") {
-        setError("Delete isn't available yet.");
-      } else {
-        setError(err instanceof ApiError ? err.message : "Request failed");
-      }
+      setError(err instanceof ApiError ? err.message : "Request failed");
     } finally {
       setPending(false);
     }

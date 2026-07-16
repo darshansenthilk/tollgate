@@ -21,7 +21,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
-import { FreezeAgentButton } from "@/components/freeze-agent-button";
+import { StopAgentButton } from "@/components/stop-agent-button";
 import { DeleteAgentButton } from "@/components/delete-agent-button";
 import {
   ApiError,
@@ -116,6 +116,7 @@ export default function AgentsPage() {
       id: agent.id,
       name: agent.name,
       providerSlug: agent.providerSlug,
+      model: agent.model,
       status: agent.status,
       maxBudgetCents: agent.maxBudgetCents,
       currentMonthSpendCents: 0,
@@ -264,7 +265,7 @@ export default function AgentsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <FreezeAgentButton
+                          <StopAgentButton
                             agentId={agent.id}
                             agentName={agent.name}
                             status={agent.status}

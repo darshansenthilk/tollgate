@@ -4,13 +4,15 @@ import { Badge } from "@/components/ui/badge";
 /**
  * One entry per AgentStatus (@tollgate/shared) — five states, kept in sync
  * with the freeze lifecycle documented on that type: active, pending,
- * soft_frozen, hard_frozen, archived.
+ * soft_frozen, hard_frozen, archived. The backend still models soft vs. hard
+ * freeze separately, but the dashboard no longer distinguishes them in the
+ * UI — both display as "Stopped".
  */
 const STATUS_STYLE: Record<AgentStatus, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--ok)" },
   pending: { label: "Pending", color: "var(--amber)" },
-  soft_frozen: { label: "Soft frozen", color: "var(--amber)" },
-  hard_frozen: { label: "Hard frozen", color: "var(--err)" },
+  soft_frozen: { label: "Stopped", color: "var(--err)" },
+  hard_frozen: { label: "Stopped", color: "var(--err)" },
   archived: { label: "Archived", color: "var(--muted-foreground)" },
 };
 

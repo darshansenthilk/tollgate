@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
   currentMonth,
@@ -17,6 +17,7 @@ interface CreateAgentBody {
   name: string;
   providerSlug: string;
   maxBudgetCents: number | null;
+  model: string | null;
 }
 
 /**
@@ -32,16 +33,30 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
   const name = rec["name"];
   const providerSlug = rec["providerSlug"];
   const maxBudgetCentsRaw = rec["maxBudgetCents"];
+  const modelRaw = rec["model"];
 
   if (typeof name !== "string" || name.trim() === "") return null;
   if (typeof providerSlug !== "string" || providerSlug.trim() === "") return null;
 
+  let maxBudgetCents: number | null;
   if (maxBudgetCentsRaw === undefined || maxBudgetCentsRaw === null) {
-    return { name, providerSlug, maxBudgetCents: null };
+    maxBudgetCents = null;
+  } else if (typeof maxBudgetCentsRaw === "number" && maxBudgetCentsRaw >= 0) {
+    maxBudgetCents = maxBudgetCentsRaw;
+  } else {
+    return null;
   }
-  if (typeof maxBudgetCentsRaw !== "number" || maxBudgetCentsRaw < 0) return null;
 
-  return { name, providerSlug, maxBudgetCents: maxBudgetCentsRaw };
+  let model: string | null;
+  if (modelRaw === undefined || modelRaw === null) {
+    model = null;
+  } else if (typeof modelRaw === "string" && modelRaw.trim() !== "") {
+    model = modelRaw;
+  } else {
+    return null;
+  }
+
+  return { name, providerSlug, maxBudgetCents, model };
 }
 
 function parsePolicyBody(body: unknown): { maxBudgetCents: number | null } | null {
@@ -62,16 +77,45 @@ function parseFreezeBody(body: unknown): { mode: "soft" | "hard" } | null {
   return { mode };
 }
 
-/** Shared lookup used by the policy/freeze/unfreeze routes: agent must exist. */
+/** Same shape/behavior as backend/proxy/src/routes/proxy.ts's extractBearer —
+ *  duplicated rather than shared, matching this codebase's existing pattern
+ *  of keeping small per-service auth helpers local (see lib/tokens.ts). */
+function extractBearer(header: string | undefined): string | null {
+  if (header === undefined) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  if (match === null) return null;
+  const token = match[1];
+  return token === undefined ? null : token.trim() || null;
+}
+
+/** Shared lookup used by the policy/freeze/unfreeze/delete routes: agent
+ *  must exist. tokenHash is included so freeze/unfreeze can verify the
+ *  caller-supplied token without a second query. */
 async function findAgent(
   id: string,
-): Promise<{ id: string; policyId: string | null } | null> {
+): Promise<{ id: string; policyId: string | null; tokenHash: string } | null> {
   const rows = await db
-    .select({ id: agents.id, policyId: agents.policyId })
+    .select({ id: agents.id, policyId: agents.policyId, tokenHash: agents.tokenHash })
     .from(agents)
     .where(eq(agents.id, id));
 
   return rows[0] ?? null;
+}
+
+/**
+ * Freeze/unfreeze require the caller to prove they hold the agent's own
+ * token, via the same Bearer scheme the proxy uses — this is what the
+ * dashboard's paste-token field is for. Returns an error code to send as a
+ * 401, or null if the token is present and matches.
+ */
+function checkAgentToken(
+  req: { headers: { authorization?: string } },
+  agent: { tokenHash: string },
+): "missing_token" | "invalid_token" | null {
+  const token = extractBearer(req.headers.authorization);
+  if (token === null) return "missing_token";
+  if (hashToken(token) !== agent.tokenHash) return "invalid_token";
+  return null;
 }
 
 export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
@@ -121,6 +165,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       id: agentId,
       name: body.name,
       providerSlug: body.providerSlug,
+      model: body.model,
       policyId,
       tokenHash,
     });
@@ -130,6 +175,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       id: agentId,
       name: body.name,
       providerSlug: body.providerSlug,
+      model: body.model,
       status: "active" satisfies AgentStatus,
       maxBudgetCents: body.maxBudgetCents,
       // Returned once. Only the hash is ever persisted — this response is the
@@ -144,11 +190,17 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         id: agents.id,
         name: agents.name,
         providerSlug: agents.providerSlug,
+        model: agents.model,
         status: agents.status,
         maxBudgetCents: policies.maxBudgetCents,
       })
       .from(agents)
-      .leftJoin(policies, eq(policies.id, agents.policyId));
+      // Archived agents are DELETE /v1/agents/:id's result (an archive, not a
+      // hard row delete — see that route). Excluding them here is what makes
+      // delete actually stick from the dashboard's perspective: without this,
+      // an archived agent would reappear on the very next 3s poll.
+      .leftJoin(policies, eq(policies.id, agents.policyId))
+      .where(ne(agents.status, "archived"));
 
     const month = currentMonth(new Date());
 
@@ -160,6 +212,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           id: row.id,
           name: row.name,
           providerSlug: row.providerSlug,
+          model: row.model,
           status: row.status,
           maxBudgetCents: row.maxBudgetCents,
           currentMonthSpendCents: microCentsToCents(
@@ -210,6 +263,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      const tokenError = checkAgentToken(req, agent);
+      if (tokenError !== null) {
+        reply.code(401);
+        return { error: tokenError };
+      }
+
       const body = parseFreezeBody(req.body);
       if (body === null) {
         reply.code(400);
@@ -240,6 +299,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      const tokenError = checkAgentToken(req, agent);
+      if (tokenError !== null) {
+        reply.code(401);
+        return { error: tokenError };
+      }
+
       await db
         .update(agents)
         .set({ status: "active", updatedAt: new Date() })
@@ -250,4 +315,25 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       return { id: agent.id, status: "active" satisfies AgentStatus };
     },
   );
+
+  app.delete<{ Params: { id: string } }>("/v1/agents/:id", async (req, reply) => {
+    const agent = await findAgent(req.params.id);
+    if (agent === null) {
+      reply.code(404);
+      return { error: "agent_not_found" };
+    }
+
+    await db
+      .update(agents)
+      .set({ status: "archived", updatedAt: new Date() })
+      .where(eq(agents.id, agent.id));
+
+    // Same belt-and-suspenders Redis flag freeze/unfreeze use — the proxy's
+    // FROZEN_STATUSES set already includes "archived" so the Postgres status
+    // alone would deny the agent, but setting this too keeps the fast-path
+    // check consistent with every other status transition here.
+    await redis.set(freezeKey(agent.id), "1");
+
+    return { id: agent.id, status: "archived" satisfies AgentStatus };
+  });
 }

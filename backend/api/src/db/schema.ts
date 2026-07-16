@@ -90,6 +90,9 @@ export const agents = pgTable("agents", {
   name: text("name").notNull().unique(),
   /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
   providerSlug: text("provider_slug").notNull(),
+  /** Descriptive only, same as providerSlug — not enforced by the proxy.
+   *  Nullable: optional at creation, and existing rows predate this column. */
+  model: text("model"),
   status: agentStatusEnum("status").notNull().default("active"),
   policyId: uuid("policy_id").references(() => policies.id),
   /**

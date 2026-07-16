@@ -15,6 +15,13 @@
       "when": 1783912993328,
       "tag": "0001_futuristic_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784168363904,
+      "tag": "0002_narrow_mimic",
+      "breakpoints": true
     }
   ]
 }

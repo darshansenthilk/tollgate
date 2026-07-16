@@ -2,12 +2,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 
 /**
  * Management-plane route skeleton for what's not implemented yet.
- * Agent CRUD + freeze/unfreeze now live in routes/agents.ts; policy template
- * CRUD (shared/reusable policies, distinct from the per-agent policy row
- * created in routes/agents.ts) is still a future milestone.
+ * Agent CRUD + freeze/unfreeze/delete now live in routes/agents.ts; policy
+ * template CRUD (shared/reusable policies, distinct from the per-agent
+ * policy row created in routes/agents.ts) is still a future milestone.
  *
  * Planned shape (from the design docs):
- *   Agents:   GET/PATCH/DELETE /v1/agents/:id  (single-agent get/update/archive)
+ *   Agents:   GET/PATCH /v1/agents/:id  (single-agent get/update)
  *   Policies: GET/POST /v1/policies, GET/PATCH/DELETE /v1/policies/:id
  */
 export function registerStubRoutes(app: FastifyInstance) {
@@ -19,7 +19,6 @@ export function registerStubRoutes(app: FastifyInstance) {
 
   app.get("/v1/agents/:id", notImplemented("get agent"));
   app.patch("/v1/agents/:id", notImplemented("update agent"));
-  app.delete("/v1/agents/:id", notImplemented("archive agent"));
 
   app.get("/v1/policies", notImplemented("list policies"));
   app.post("/v1/policies", notImplemented("create policy"));

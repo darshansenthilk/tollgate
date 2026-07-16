@@ -30,11 +30,8 @@ const PROVIDERS = [
 
 type ProviderSlug = (typeof PROVIDERS)[number]["value"];
 
-/**
- * Model choices per provider. Purely a client-side selection today — see the
- * `model` field comment on CreateAgentInput (lib/api.ts): backend/api has no
- * column for it yet, so it's sent but silently dropped by POST /v1/agents.
- */
+/** Model choices per provider. Persisted server-side via the `model` column
+ *  on the agents table (backend/api/src/db/schema.ts). */
 const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: string }[]> = {
   openai: [
     { value: "gpt-4o", label: "gpt-4o" },
