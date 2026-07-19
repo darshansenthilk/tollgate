@@ -204,7 +204,7 @@ export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialo
                 >
                   <SelectTrigger id="agent-model">
                     <SelectValue
-                      placeholder={providerSlug === null ? "Select provider first" : "Select model"}
+                      placeholder={providerSlug === null ? "Provider first" : "Select model"}
                     />
                   </SelectTrigger>
                   <SelectContent>

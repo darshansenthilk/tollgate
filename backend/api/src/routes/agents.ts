@@ -104,18 +104,23 @@ async function findAgent(
 
 /**
  * Freeze/unfreeze require the caller to prove they hold the agent's own
- * token, via the same Bearer scheme the proxy uses — this is what the
- * dashboard's paste-token field is for. Returns an error code to send as a
- * 401, or null if the token is present and matches.
+ * token.
  */
-function checkAgentToken(
+type StopAuthResult =
+  | { ok: true }
+  | { ok: false; error: "missing_token" | "invalid_token" };
+
+function checkStopAuth(
   req: { headers: { authorization?: string } },
   agent: { tokenHash: string },
-): "missing_token" | "invalid_token" | null {
+): StopAuthResult {
   const token = extractBearer(req.headers.authorization);
-  if (token === null) return "missing_token";
-  if (hashToken(token) !== agent.tokenHash) return "invalid_token";
-  return null;
+  if (token === null) return { ok: false, error: "missing_token" };
+
+  const tokenHash = hashToken(token);
+  if (tokenHash !== agent.tokenHash) return { ok: false, error: "invalid_token" };
+
+  return { ok: true };
 }
 
 export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
@@ -263,10 +268,10 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
-      const tokenError = checkAgentToken(req, agent);
-      if (tokenError !== null) {
+      const auth = checkStopAuth(req, agent);
+      if (!auth.ok) {
         reply.code(401);
-        return { error: tokenError };
+        return { error: auth.error };
       }
 
       const body = parseFreezeBody(req.body);
@@ -299,10 +304,10 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
-      const tokenError = checkAgentToken(req, agent);
-      if (tokenError !== null) {
+      const auth = checkStopAuth(req, agent);
+      if (!auth.ok) {
         reply.code(401);
-        return { error: tokenError };
+        return { error: auth.error };
       }
 
       await db

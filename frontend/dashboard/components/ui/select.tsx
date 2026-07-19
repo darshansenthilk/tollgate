@@ -41,7 +41,7 @@ function SelectValue({
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
-      className={cn("data-placeholder:text-muted-foreground", className)}
+      className={cn("min-w-0 truncate data-placeholder:text-muted-foreground", className)}
       {...props}
     />
   )
