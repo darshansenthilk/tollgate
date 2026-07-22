@@ -43,6 +43,16 @@ export interface Provider {
 export interface ProviderCost {
   costCents: number;
   estimatedCostCents?: number;
+  /**
+   * Token counts metered from the response, when the provider reports them
+   * (e.g. OpenAI's usage.prompt_tokens/completion_tokens). Optional — an
+   * adapter that can't report tokens simply omits these, and the hot path
+   * skips the token counter update rather than guessing. Independent of
+   * costCents: a response can report tokens without a known price (or vice
+   * versa in a future adapter).
+   */
+  promptTokens?: number;
+  completionTokens?: number;
 }
 
 /**
@@ -194,6 +204,27 @@ export function currentMonth(now: Date): string {
 /** Redis key for an agent's spend in a given month: spend:{agent_id}:{month}. */
 export function spendKey(agentId: string, month: string): string {
   return `spend:${agentId}:${month}`;
+}
+
+/**
+ * Redis key for an agent's LLM token usage (prompt + completion, summed) in a
+ * given month: tokens:{agent_id}:{month}. A separate counter from spend —
+ * money and token count are metered independently, since a provider adapter
+ * can report one without the other (see ProviderCost).
+ */
+export function tokenKey(agentId: string, month: string): string {
+  return `tokens:${agentId}:${month}`;
+}
+
+/**
+ * Redis key for an agent's current in-flight request body: transient
+ * "what's happening right now" state for the dashboard sidebar. Written by
+ * the proxy with a short TTL before forwarding, and never persisted to
+ * Postgres — this is the one place in the system that holds prompt text at
+ * all, and only briefly.
+ */
+export function currentPromptKey(agentId: string): string {
+  return `current_prompt:${agentId}`;
 }
 
 /**

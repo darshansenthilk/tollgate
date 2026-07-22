@@ -58,15 +58,22 @@ export const openaiAdapter: ProviderAdapter = {
     const usage = readUsage(responseBody);
     if (usage === null) return { costCents: 0 };
 
+    // Token counts are reported independently of whether we know how to
+    // price the model — always surface them once genuinely parsed.
+    const tokenCounts = {
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+    };
+
     // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
     // and is left for reconciliation rather than guessed at.
     const price = PRICES[usage.model];
-    if (price === undefined) return { costCents: 0 };
+    if (price === undefined) return { costCents: 0, ...tokenCounts };
 
     const costCents =
       (usage.promptTokens * price.inputCentsPerMTok) / MTOK +
       (usage.completionTokens * price.outputCentsPerMTok) / MTOK;
 
-    return { costCents };
+    return { costCents, ...tokenCounts };
   },
 };

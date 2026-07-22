@@ -13,6 +13,9 @@ import {
 import type { SpendLog } from "../lib/spend-log.js";
 import type { Vault } from "../lib/vault.js";
 import type { FreezeStore } from "../lib/freeze.js";
+import type { TokenUsageStore } from "../lib/token-usage.js";
+import { tokenKey } from "../lib/token-usage.js";
+import type { CurrentPromptStore } from "../lib/current-prompt.js";
 
 /**
  * Everything the hot path talks to is injected. That's what lets the route stay
@@ -26,6 +29,8 @@ export interface ProxyDeps {
   spendLog: SpendLog;
   vault: Vault;
   freeze: FreezeStore;
+  tokenUsage: TokenUsageStore;
+  currentPrompt: CurrentPromptStore;
   fetchImpl: typeof fetch;
   now: () => Date;
 }
@@ -121,6 +126,14 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       };
       const body = req.body === undefined ? undefined : JSON.stringify(req.body);
 
+      // Transient "what's happening now" state for the dashboard sidebar —
+      // short TTL, Redis-only, never a Postgres row (see current-prompt.ts).
+      // Written before the network call so it's visible for the duration of
+      // a slow request, not just after it settles.
+      if (body !== undefined) {
+        await deps.currentPrompt.setCurrentPrompt(agent.id, body);
+      }
+
       const startedAt = Date.now();
       const upstream = await deps.fetchImpl(url, {
         method: "POST",
@@ -131,10 +144,18 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       const upstreamText = await upstream.text();
 
       // 6. Meter: parse cost via the adapter, then atomically bump the counter.
-      const { costCents, estimatedCostCents } = adapter.parseCost(
-        parseJson(upstreamText),
-      );
+      const { costCents, estimatedCostCents, promptTokens, completionTokens } =
+        adapter.parseCost(parseJson(upstreamText));
       await deps.budget.addSpendMicroCents(key, centsToMicroCents(costCents));
+
+      // Token counter is independent of cost — only bumped when the adapter
+      // actually reported usage (see ProviderCost's doc comment).
+      if (promptTokens !== undefined && completionTokens !== undefined) {
+        await deps.tokenUsage.addTokens(
+          tokenKey(agent.id, month),
+          promptTokens + completionTokens,
+        );
+      }
 
       // 7. Settle: write the audit event without blocking the response.
       void deps.spendLog

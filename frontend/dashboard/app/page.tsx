@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Flag } from "lucide-react";
 import type { AgentStatus } from "@tollgate/shared";
 import { useToastManager } from "@/components/ui/toast";
 import {
@@ -19,10 +20,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { StopAgentButton } from "@/components/stop-agent-button";
 import { DeleteAgentButton } from "@/components/delete-agent-button";
+import { SelectionToolbar } from "@/components/selection-toolbar";
+import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import {
   ApiError,
   listAgents,
@@ -38,6 +50,18 @@ const FROZEN_STATUSES: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
   "hard_frozen",
 ]);
 
+/** Sort choices for the control above the table. "Usage" sorts by
+ *  currentMonthSpendCents (dollars), not currentMonthTokens — the Tokens
+ *  column is display-only for now, not wired into this sort. */
+const SORT_OPTIONS = [
+  { value: "name-asc", label: "Name (A–Z)" },
+  { value: "spend-desc", label: "Usage (high to low)" },
+  { value: "model-asc", label: "Model (A–Z)" },
+  { value: "model-desc", label: "Model (Z–A)" },
+] as const;
+
+type SortKey = (typeof SORT_OPTIONS)[number]["value"];
+
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
@@ -50,23 +74,47 @@ function spendFraction(spend: number, max: number | null): number | null {
 }
 
 /** Single source of truth for "over budget" — used by sorting, the "needs
- *  attention" banner, and over-budget transition detection alike. */
+ *  attention" banner, the flagged badge, and over-budget transition
+ *  detection alike. Also what "flagged" means: derived, not a persisted
+ *  status — there's no backend column for it. */
 function isOverBudget(agent: AgentListItem): boolean {
   return (spendFraction(agent.currentMonthSpendCents, agent.maxBudgetCents) ?? 0) >= 1;
 }
 
-/** Over-budget agents first; within each group, alphabetical by name
- *  (case-insensitive). */
-function compareAgents(a: AgentListItem, b: AgentListItem): number {
+/** The user-selected secondary sort, applied within the flagged/unflagged
+ *  groups (see compareAgents) — never overrides the flagged-first grouping. */
+function compareBySortKey(a: AgentListItem, b: AgentListItem, sortKey: SortKey): number {
+  switch (sortKey) {
+    case "name-asc":
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    case "spend-desc":
+      return b.currentMonthSpendCents - a.currentMonthSpendCents;
+    case "model-asc":
+    case "model-desc": {
+      if (a.model === null && b.model === null) return 0;
+      if (a.model === null) return 1; // nulls last regardless of direction
+      if (b.model === null) return -1;
+      const cmp = a.model.toLowerCase().localeCompare(b.model.toLowerCase());
+      return sortKey === "model-asc" ? cmp : -cmp;
+    }
+  }
+}
+
+/** Flagged (over-budget) agents first — this is the primary key and always
+ *  wins; the chosen sort is only the secondary, within-group tiebreaker. */
+function compareAgents(a: AgentListItem, b: AgentListItem, sortKey: SortKey): number {
   const aOver = isOverBudget(a);
   const bOver = isOverBudget(b);
   if (aOver !== bOver) return aOver ? -1 : 1;
-  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  return compareBySortKey(a, b, sortKey);
 }
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("name-asc");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [sidebarAgentId, setSidebarAgentId] = useState<string | null>(null);
 
   const { add: addToast } = useToastManager();
   // Read via a ref inside refresh() so refresh's identity (and therefore the
@@ -84,6 +132,19 @@ export default function AgentsPage() {
       const data = await listAgents();
       setAgents(data);
       setError(null);
+
+      // Drop any selected id that no longer exists (deleted elsewhere) so
+      // the toolbar's count never lags reality.
+      const validIds = new Set(data.map((a) => a.id));
+      setSelectedIds((prev) => {
+        let changed = false;
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (validIds.has(id)) next.add(id);
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
 
       const previous = prevOverBudgetRef.current;
       const next = new Map<string, boolean>();
@@ -120,6 +181,8 @@ export default function AgentsPage() {
       status: agent.status,
       maxBudgetCents: agent.maxBudgetCents,
       currentMonthSpendCents: 0,
+      currentMonthTokens: 0,
+      currentPrompt: null,
     };
     setAgents((prev) => (prev === null ? [item] : [item, ...prev]));
   }
@@ -132,14 +195,58 @@ export default function AgentsPage() {
 
   function handleDeleted(id: string) {
     setAgents((prev) => (prev === null ? prev : prev.filter((a) => a.id !== id)));
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function handleBatchDeleted(ids: string[]) {
+    const idSet = new Set(ids);
+    setAgents((prev) => (prev === null ? prev : prev.filter((a) => !idSet.has(a.id))));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
   }
 
   const needsAttention = (agents ?? []).filter(
     (a) => FROZEN_STATUSES.has(a.status) || isOverBudget(a),
   );
 
-  // Over-budget agents first, then alphabetical — see compareAgents.
-  const sortedAgents = agents === null ? null : [...agents].sort(compareAgents);
+  // Flagged agents first (primary key), then the chosen sort (secondary,
+  // within each group) — see compareAgents.
+  const sortedAgents =
+    agents === null ? null : [...agents].sort((a, b) => compareAgents(a, b, sortKey));
+
+  const allIds = (sortedAgents ?? []).map((a) => a.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = allIds.some((id) => selectedIds.has(id));
+  const selectedAgents = (agents ?? []).filter((a) => selectedIds.has(a.id));
+
+  // Re-derived from the live (polled) list every render, not a snapshot from
+  // when the row was clicked — see AgentPromptSidebar's prop doc comment.
+  const sidebarAgent = (agents ?? []).find((a) => a.id === sidebarAgentId) ?? null;
+
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(allIds));
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
@@ -185,6 +292,39 @@ export default function AgentsPage() {
           <CardDescription>Polling every 3s</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-3 flex items-center gap-2">
+            <Label htmlFor="agent-sort" className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+              Sort by
+            </Label>
+            <Select
+              items={SORT_OPTIONS}
+              value={sortKey}
+              onValueChange={(value) => {
+                if (value !== null) setSortKey(value);
+              }}
+            >
+              <SelectTrigger id="agent-sort" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedAgents.length > 0 && (
+            <SelectionToolbar
+              selectedAgents={selectedAgents}
+              onDeleted={handleBatchDeleted}
+              onStatusChange={handleStatusChange}
+              onClearSelection={clearSelection}
+            />
+          )}
+
           {sortedAgents === null ? (
             <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
               Loading…
@@ -197,10 +337,19 @@ export default function AgentsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allSelected}
+                      indeterminate={someSelected && !allSelected}
+                      onCheckedChange={toggleSelectAll}
+                      aria-label="Select all agents"
+                    />
+                  </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Provider</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Spend / budget</TableHead>
+                  <TableHead>Tokens</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -224,7 +373,28 @@ export default function AgentsPage() {
 
                   return (
                     <TableRow key={agent.id}>
-                      <TableCell className="font-medium">{agent.name}</TableCell>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.has(agent.id)}
+                          onCheckedChange={() => toggleSelected(agent.id)}
+                          aria-label={`Select ${agent.name}`}
+                        />
+                      </TableCell>
+                      <TableCell
+                        className="cursor-pointer font-medium"
+                        onClick={() => setSidebarAgentId(agent.id)}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {overBudget && (
+                            <Flag
+                              className="size-3.5 shrink-0"
+                              style={{ color: "var(--err)" }}
+                              aria-label="Flagged: over budget"
+                            />
+                          )}
+                          {agent.name}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         <span className="font-mono text-xs">{agent.providerSlug}</span>
                       </TableCell>
@@ -263,6 +433,11 @@ export default function AgentsPage() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs">
+                          {agent.currentMonthTokens.toLocaleString()}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <StopAgentButton
@@ -286,6 +461,13 @@ export default function AgentsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AgentPromptSidebar
+        agent={sidebarAgent}
+        onOpenChange={(open) => {
+          if (!open) setSidebarAgentId(null);
+        }}
+      />
     </main>
   );
 }

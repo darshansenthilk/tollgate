@@ -22,6 +22,13 @@
       "when": 1784168363904,
       "tag": "0002_narrow_mimic",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784669191024,
+      "tag": "0003_silly_catseye",
+      "breakpoints": true
     }
   ]
 }

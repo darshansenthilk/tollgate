@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { eq, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
   currentMonth,
   spendKey,
+  tokenKey,
+  currentPromptKey,
   freezeKey,
   microCentsToCents,
   type AgentStatus,
@@ -139,10 +141,15 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       };
     }
 
+    // Archived agents don't count as "taken" — DELETE /v1/agents/:id archives
+    // rather than hard-deletes (see that route), so without this exclusion a
+    // deleted agent's name would stay permanently claimed. Mirrors the
+    // partial unique index on agents.name (schema.ts) that enforces the same
+    // scoping at the DB level.
     const existing = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(eq(agents.name, body.name));
+      .where(and(eq(agents.name, body.name), ne(agents.status, "archived")));
     if (existing.length > 0) {
       reply.code(409);
       return {
@@ -211,8 +218,13 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
 
     const withSpend = await Promise.all(
       rows.map(async (row) => {
-        const raw = await redis.get(spendKey(row.id, month));
-        const spentMicroCents = raw === null ? 0 : Number.parseInt(raw, 10);
+        const [spendRaw, tokensRaw, currentPrompt] = await Promise.all([
+          redis.get(spendKey(row.id, month)),
+          redis.get(tokenKey(row.id, month)),
+          redis.get(currentPromptKey(row.id)),
+        ]);
+        const spentMicroCents = spendRaw === null ? 0 : Number.parseInt(spendRaw, 10);
+        const tokens = tokensRaw === null ? 0 : Number.parseInt(tokensRaw, 10);
         return {
           id: row.id,
           name: row.name,
@@ -223,6 +235,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           currentMonthSpendCents: microCentsToCents(
             Number.isNaN(spentMicroCents) ? 0 : spentMicroCents,
           ),
+          currentMonthTokens: Number.isNaN(tokens) ? 0 : tokens,
+          currentPrompt,
         };
       }),
     );

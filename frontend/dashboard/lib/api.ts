@@ -11,6 +11,13 @@ export interface AgentListItem {
   status: AgentStatus;
   maxBudgetCents: number | null;
   currentMonthSpendCents: number;
+  /** Summed prompt+completion tokens metered this month — read live from the
+   *  same Redis counter pattern as currentMonthSpendCents. */
+  currentMonthTokens: number;
+  /** Transient: the agent's most recent in-flight request body, kept in
+   *  Redis for ~2 minutes by the proxy, never persisted to Postgres. null
+   *  once nothing has run recently (or the TTL has lapsed). */
+  currentPrompt: string | null;
 }
 
 /** Exact shape returned by POST /v1/agents — token is present ONLY here. */

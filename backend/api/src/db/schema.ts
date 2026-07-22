@@ -6,7 +6,9 @@ import {
   integer,
   numeric,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Single-tenant placeholder. This milestone has no auth/org model on the api
@@ -82,29 +84,41 @@ export const policies = pgTable("policies", {
 // Agents
 // ---------------------------------------------------------------------------
 
-export const agents = pgTable("agents", {
-  id: uuid("id").primaryKey(),
-  orgId: uuid("org_id").notNull().default(DEFAULT_ORG_ID),
-  /** Unique (exact-string) so two agents can't share a name; enforced at the
-   *  DB level to close the race an application-only check would leave open. */
-  name: text("name").notNull().unique(),
-  /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
-  providerSlug: text("provider_slug").notNull(),
-  /** Descriptive only, same as providerSlug — not enforced by the proxy.
-   *  Nullable: optional at creation, and existing rows predate this column. */
-  model: text("model"),
-  status: agentStatusEnum("status").notNull().default("active"),
-  policyId: uuid("policy_id").references(() => policies.id),
-  /**
-   * SHA-256 hex digest of the raw token (backend/proxy/src/lib/agents.ts hashToken).
-   * Never present in the shared Agent type or any api response — like a
-   * password hash, it's a DB-only secret-adjacent field. Unique because it's
-   * an exact-match auth lookup key.
-   */
-  tokenHash: text("token_hash").notNull().unique(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const agents = pgTable(
+  "agents",
+  {
+    id: uuid("id").primaryKey(),
+    orgId: uuid("org_id").notNull().default(DEFAULT_ORG_ID),
+    /** Unique among non-archived agents only — see the partial index below.
+     *  DELETE /v1/agents/:id archives rather than hard-deletes, so a
+     *  deleted agent's old name must be free to reuse. */
+    name: text("name").notNull(),
+    /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
+    providerSlug: text("provider_slug").notNull(),
+    /** Descriptive only, same as providerSlug — not enforced by the proxy.
+     *  Nullable: optional at creation, and existing rows predate this column. */
+    model: text("model"),
+    status: agentStatusEnum("status").notNull().default("active"),
+    policyId: uuid("policy_id").references(() => policies.id),
+    /**
+     * SHA-256 hex digest of the raw token (backend/proxy/src/lib/agents.ts hashToken).
+     * Never present in the shared Agent type or any api response — like a
+     * password hash, it's a DB-only secret-adjacent field. Unique because it's
+     * an exact-match auth lookup key.
+     */
+    tokenHash: text("token_hash").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Partial unique index: only agents that AREN'T archived contend for a
+    // name. Without the "where", an archived (soft-deleted) agent would
+    // permanently squat on its name — exactly the bug this fixes.
+    uniqueIndex("agents_name_unique_when_not_archived")
+      .on(table.name)
+      .where(sql`${table.status} != 'archived'`),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Spend events

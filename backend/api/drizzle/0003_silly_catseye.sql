@@ -1,0 +1,2 @@
+ALTER TABLE "agents" DROP CONSTRAINT "agents_name_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "agents_name_unique_when_not_archived" ON "agents" USING btree ("name") WHERE "agents"."status" != 'archived';

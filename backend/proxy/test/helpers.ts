@@ -10,6 +10,8 @@ import type { BudgetStore } from "../src/lib/budget.js";
 import type { SpendLog, SpendRecord } from "../src/lib/spend-log.js";
 import type { Vault } from "../src/lib/vault.js";
 import type { FreezeStore } from "../src/lib/freeze.js";
+import type { TokenUsageStore } from "../src/lib/token-usage.js";
+import type { CurrentPromptStore } from "../src/lib/current-prompt.js";
 import { registerProxyRoute, type ProxyDeps } from "../src/routes/proxy.js";
 
 /** In-memory AgentStore keyed by raw token (hashed on insert, like production). */
@@ -78,6 +80,27 @@ export class FakeFreezeStore implements FreezeStore {
   }
 }
 
+/** In-memory TokenUsageStore mirroring Redis INCRBY semantics on integers. */
+export class FakeTokenUsageStore implements TokenUsageStore {
+  readonly counters = new Map<string, number>();
+
+  async addTokens(key: string, delta: number): Promise<number> {
+    const next = (this.counters.get(key) ?? 0) + delta;
+    this.counters.set(key, next);
+    return next;
+  }
+}
+
+/** In-memory CurrentPromptStore. Records the latest write per agent (no TTL
+ *  simulation needed — tests assert on the write itself, not its expiry). */
+export class FakeCurrentPromptStore implements CurrentPromptStore {
+  readonly prompts = new Map<string, string>();
+
+  async setCurrentPrompt(agentId: string, prompt: string): Promise<void> {
+    this.prompts.set(agentId, prompt);
+  }
+}
+
 export interface FetchCall {
   url: string;
   init: RequestInit | undefined;
@@ -116,6 +139,8 @@ export interface HarnessOverrides {
   spendLog?: SpendLog;
   vault?: Vault;
   freeze?: FreezeStore;
+  tokenUsage?: TokenUsageStore;
+  currentPrompt?: CurrentPromptStore;
   fetchImpl?: typeof fetch;
   now?: () => Date;
 }
@@ -127,6 +152,8 @@ export interface Harness {
   budget: FakeBudgetStore;
   spendLog: FakeSpendLog;
   freeze: FakeFreezeStore;
+  tokenUsage: FakeTokenUsageStore;
+  currentPrompt: FakeCurrentPromptStore;
   upstream: MockUpstream;
 }
 
@@ -157,6 +184,14 @@ export async function buildHarness(
     overrides.freeze instanceof FakeFreezeStore
       ? overrides.freeze
       : new FakeFreezeStore();
+  const tokenUsage =
+    overrides.tokenUsage instanceof FakeTokenUsageStore
+      ? overrides.tokenUsage
+      : new FakeTokenUsageStore();
+  const currentPrompt =
+    overrides.currentPrompt instanceof FakeCurrentPromptStore
+      ? overrides.currentPrompt
+      : new FakeCurrentPromptStore();
   const upstream = new MockUpstream();
 
   const deps: ProxyDeps = {
@@ -166,6 +201,8 @@ export async function buildHarness(
     spendLog: overrides.spendLog ?? spendLog,
     vault: overrides.vault ?? new FakeVault("sk-upstream-test"),
     freeze: overrides.freeze ?? freeze,
+    tokenUsage: overrides.tokenUsage ?? tokenUsage,
+    currentPrompt: overrides.currentPrompt ?? currentPrompt,
     fetchImpl: overrides.fetchImpl ?? upstream.fetchImpl,
     now: overrides.now ?? (() => FIXED_NOW),
   };
@@ -174,5 +211,5 @@ export async function buildHarness(
   registerProxyRoute(app, deps);
   await app.ready();
 
-  return { app, deps, agents, budget, spendLog, freeze, upstream };
+  return { app, deps, agents, budget, spendLog, freeze, tokenUsage, currentPrompt, upstream };
 }
