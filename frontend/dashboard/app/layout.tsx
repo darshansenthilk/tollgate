@@ -33,7 +33,7 @@ export default function RootLayout({
               Tollgate
             </span>
             <Link href="/" className="text-foreground hover:opacity-80">
-              Agents
+              Agent Dashboard
             </Link>
             <Link
               href="/status"

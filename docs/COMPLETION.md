@@ -1,6 +1,8 @@
 # COMPLETION.md
 
-**Purpose:** This file details the features and changes shipped on the current branch (`Eshaan`) so far. It exists as context for Claude (or any future contributor) to pick up this branch's history without needing to re-derive it from scratch — read this before starting new work here.
+**Purpose:** This file details the features and changes shipped on the current branch so far. It exists as context for Claude (or any future contributor) to pick up this branch's history without needing to re-derive it from scratch — read this before starting new work here.
+
+**Branch note:** work moved `Eshaan` → `Eshaan-next` on 2026-07-23. `Eshaan` was rebased onto `origin/main`, fast-forwarded into it, and retired (`origin/Eshaan` deleted). `Eshaan-next` was cut from the new `origin/main` and tracks `origin/Eshaan-next`.
 
 ---
 
@@ -61,3 +63,55 @@
 - Scope change (recorded in Claude's memory, not code): the branch moved from a strict backend/frontend ownership split to feature-based work — full-repo edits are now in scope, superseding an earlier "backend-only" restriction.
 
 **Full test status as of this writing:** `pnpm --filter @tollgate/proxy test` → 18/18 passing. `pnpm --filter @tollgate/proxy typecheck` and `@tollgate/shared typecheck` → clean.
+
+---
+
+## Session summary — 2026-07-23
+
+### Feature 4: Opt-in "Select agents" mode (replaces the Actions column)
+
+**Shipped in commit `613ae0a`.**
+
+**Problem:** The dashboard offered two overlapping ways to stop or delete an agent — a per-row **Actions** column and always-visible checkboxes feeding a batch `SelectionToolbar`. The Actions column was redundant (ticking one checkbox does the same thing), it cost a permanent table column, and the checkboxes cluttered the table even when you never intended to select anything.
+
+**What changed:** The table now shows no checkboxes and no Actions column by default. An amber **"Select agents"** button under "Create agent" toggles selection mode.
+
+- `frontend/dashboard/app/page.tsx` — added `selectionMode` state + `exitSelectionMode()`; checkbox column gated behind it; Actions `TableHead`/`TableCell` deleted; toolbar renders on `selectionMode && selectedAgents.length > 0`.
+- `frontend/dashboard/components/ui/button.tsx` — new `amber` variant reusing the existing `--amber: #f5b83d` token (defined only in `:root`, never overridden in `.dark`, so one value covers both themes).
+- `frontend/dashboard/components/batch-stop-dialog.tsx` — parameterized with `mode: "stop" | "resume"` rather than cloned, driving the API call (`freezeAgent` vs `unfreezeAgent`), labels, and copy. Added `onCompleted?: () => void`.
+- `frontend/dashboard/components/batch-delete-dialog.tsx` — added the same `onCompleted`, fired only on full success so partial failures stay selected for retry.
+- `frontend/dashboard/components/selection-toolbar.tsx` — splits the selection into `stoppable` / `resumable` (excluding `archived`), rendering **Stop** and **Resume** only when their subset is non-empty.
+- `frontend/dashboard/lib/agent-status.ts` (new) — `STOPPED_STATUSES` / `isStopped()`, extracted from what had been duplicated in `page.tsx` and `stop-agent-button.tsx`.
+- **Deleted** `components/stop-agent-button.tsx` and `components/delete-agent-button.tsx` — `page.tsx` was their only importer.
+
+**The trap this design exists to avoid:** removing the Actions column naively would have destroyed the **only** path to resume a stopped agent. `StopAgentButton` was the sole caller of `unfreezeAgent`; `BatchStopDialog` hardcoded `freezeAgent`. Any `soft_frozen`/`hard_frozen` agent — including ones auto-frozen for exceeding budget — would have become permanently unreactivatable. Hence the toolbar Resume button. Delete needed no equivalent fix; `BatchDeleteDialog` was already at full parity.
+
+**Verified live:** created a disposable agent, froze it via the API, resumed it *through the new UI* (API confirmed `status: active`), then deleted it through the UI — which doubled as the delete auto-exit test. Confirmed Stop-only for active selections, Resume-only for stopped, both for mixed, and that the Resume dialog scoped itself to just the stopped agent ("Resume 1 agent") when 2 were selected.
+
+### Feature 5: Selection-mode animations
+
+**Uncommitted as of this writing.** `frontend/dashboard/app/page.tsx` only.
+
+- **Pop** — checkbox mounts with `animate-in fade-in zoom-in-75 duration-200` (scale 0.75 → 1 + fade, no overshoot).
+- **Slide** — the checkbox column's width transitions `0 → 40px` over 300ms `ease-out`, so the other columns glide instead of snapping.
+- `motion-reduce:` variants on both.
+
+**Non-obvious constraint, documented in code comments:** the transition must live on a plain `<div>` *inside* the cell, not on the `<th>`/`<td>`. With `table-layout: auto` the browser derives column widths from content and **ignores a width set on the cell** (measured 16px when 40px was requested). The cell carries `w-0 p-0` so it shrink-wraps to that inner div — without `w-0`, auto-layout hands the new column a share of leftover table width and it opened to 76px instead of 40px.
+
+**Verified by measurement:** collapsed 0px / expanded 40px, "Name" column shifts exactly 40px, returns to 0px with no drift.
+
+### Feature 6: Heading, nav label, and poll re-render fix
+
+**Uncommitted as of this writing.**
+
+- `frontend/dashboard/app/page.tsx` — `<h1>` is now "Agent Dashboard" at `text-3xl` (30px, up from `text-2xl`/24px) with a white → `#9CA3AF` gradient via `bg-linear-to-r from-white to-[#9CA3AF] bg-clip-text text-transparent`. It is `inline-block` deliberately: as a block element the `h1` spans the full container, so the text would only ever sample the leftmost near-white slice of the ramp. Note Tailwind v4 renamed `bg-gradient-*` → `bg-linear-*`, and interpolates in oklab by default.
+- `frontend/dashboard/app/layout.tsx:36` — nav link "Agents" → "Agent Dashboard" (href unchanged).
+- `frontend/dashboard/app/page.tsx`, `refresh()` — **performance fix.** The 3s poll called `setAgents(data)` unconditionally with a fresh array, re-rendering the whole table every tick even when nothing changed; landing mid-animation, that was a visible frame hitch. Now returns the previous reference when the payload is unchanged so React bails out — the same pattern the selection pruning below it already used. **Measured: 1 × 60ms long task per 10s idle → 0 long tasks, 0ms blocking.**
+
+### Other session activity (non-feature)
+- `Eshaan` rebased onto `origin/main` (conflicts in `proxy.ts` and `create-agent-dialog.tsx`), fast-forwarded into `origin/main`, then retired in favour of `Eshaan-next`. Applied drizzle migrations `0002`/`0003` to the local dev DB.
+- Rebase surfaced a latent bug git had auto-merged cleanly: `MODELS_BY_PROVIDER` was keyed `openai`/`anthropic` while `ProviderSlug` was `chatgpt`/`claude` — a type error and a runtime `undefined`. Rekeyed per `assistantAdapterSlugs`.
+
+**Known open issue (pre-existing, not introduced here):** the create-agent model dropdown offers `opus`/`sonnet`/`haiku`, but the Claude adapter prices full model IDs like `claude-3-5-sonnet-20241022` (`backend/proxy/src/adapters/claude.ts:14`). Agents created with those values never match a price entry and meter at 0.
+
+**Test status:** `pnpm -r test` → 18/18 passing. `pnpm typecheck` → clean across all 4 workspaces.

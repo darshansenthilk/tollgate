@@ -35,6 +35,7 @@ import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import { isStopped } from "@/lib/agent-status";
+import { cn } from "@/lib/utils";
 import {
   ApiError,
   listAgents,
@@ -126,7 +127,15 @@ export default function AgentsPage() {
   const refresh = useCallback(async () => {
     try {
       const data = await listAgents();
-      setAgents(data);
+      // Successive polls are identical most of the time. Swapping in a fresh
+      // array every 3s re-renders the whole table for nothing, and when that
+      // lands mid-animation (opening the sidebar or the create dialog) it
+      // shows up as a frame hitch. Keeping the previous reference when the
+      // payload is unchanged lets React bail out of the render entirely —
+      // same trick the selection pruning below already uses.
+      setAgents((prev) =>
+        prev !== null && JSON.stringify(prev) === JSON.stringify(data) ? prev : data,
+      );
       setError(null);
 
       // Drop any selected id that no longer exists (deleted elsewhere) so
@@ -255,7 +264,11 @@ export default function AgentsPage() {
     <main className="mx-auto max-w-5xl px-6 py-12">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
+          {/* inline-block so the gradient box hugs the text — on a full-width
+              block the text would only ever sample the left end of the ramp. */}
+          <h1 className="inline-block bg-linear-to-r from-white to-[#9CA3AF] bg-clip-text text-3xl font-semibold tracking-tight text-transparent">
+            Agent Dashboard
+          </h1>
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
             Spend and enforcement status, live from Redis.
           </p>
@@ -353,16 +366,32 @@ export default function AgentsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {selectionMode && (
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={allSelected}
-                        indeterminate={someSelected && !allSelected}
-                        onCheckedChange={toggleSelectAll}
-                        aria-label="Select all agents"
-                      />
-                    </TableHead>
-                  )}
+                  {/* Always mounted so the column can animate open and closed —
+                      conditionally rendering it would snap the other columns
+                      sideways instead of sliding them. The width transition
+                      lives on the inner div, not the cell: `table-layout: auto`
+                      derives column widths from content and ignores a width set
+                      on the <th> itself. */}
+                  <TableHead className="w-0 p-0">
+                    <div
+                      className={cn(
+                        "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                        selectionMode ? "w-10" : "w-0",
+                      )}
+                    >
+                      <div className="flex w-10 items-center justify-center">
+                        {selectionMode && (
+                          <Checkbox
+                            checked={allSelected}
+                            indeterminate={someSelected && !allSelected}
+                            onCheckedChange={toggleSelectAll}
+                            aria-label="Select all agents"
+                            className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Assistant</TableHead>
                   <TableHead>Status</TableHead>
@@ -390,15 +419,25 @@ export default function AgentsPage() {
 
                   return (
                     <TableRow key={agent.id}>
-                      {selectionMode && (
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedIds.has(agent.id)}
-                            onCheckedChange={() => toggleSelected(agent.id)}
-                            aria-label={`Select ${agent.name}`}
-                          />
-                        </TableCell>
-                      )}
+                      <TableCell className="w-0 p-0">
+                        <div
+                          className={cn(
+                            "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                            selectionMode ? "w-10" : "w-0",
+                          )}
+                        >
+                          <div className="flex w-10 items-center justify-center">
+                            {selectionMode && (
+                              <Checkbox
+                                checked={selectedIds.has(agent.id)}
+                                onCheckedChange={() => toggleSelected(agent.id)}
+                                aria-label={`Select ${agent.name}`}
+                                className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
                       <TableCell
                         className="cursor-pointer font-medium"
                         onClick={() => setSidebarAgentId(agent.id)}
