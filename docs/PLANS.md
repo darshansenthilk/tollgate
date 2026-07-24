@@ -4,36 +4,43 @@
 
 ---
 
-## Status as of 2026-07-24
+## Status as of 2026-07-24 (end of the UI session)
 
 Current branch is `Eshaan-2` (tracks `origin/Eshaan-2`). Merges into `main` are done manually by the user — never push a feature branch to `main` on their behalf.
 
-Committed and **merged into `main`** (commit `4bdfe04`; `Eshaan-2`, `origin/Eshaan-2`, `main`, `origin/main` all there): the opt-in "Select agents" mode + animations, the heading/nav rename and poll re-render fix (Features 4–6), the **Edit agent** feature (Feature 7, commit `69859c7`), and the **"industrial glass" colour/type overhaul** + refinements (Feature 8, commit `4bdfe04`).
+**Everything is committed and in sync with `origin/main`** at **`77432c6`** ("Redid the UI") — `git rev-list --left-right --count HEAD...origin/main` → `0 0`. The 2026-07-24 UI session landed as four commits: `47c808f` (needs-attention banner removed, selection toolbar with disabled action buttons), `29e3c08` (System status overhaul), `168cf45` (bracket animation + table-header hover fix), `77432c6` (dashboard restyled to the reference mock). Earlier work — the opt-in "Select agents" mode, heading/nav rename, poll re-render fix (Features 4–6), **Edit agent** (Feature 7, `69859c7`) and the **"industrial glass" overhaul** (Feature 8, `4bdfe04`) — is all in `main` too.
 
-**Uncommitted on `Eshaan-2` (this session, 2026-07-24):** (1) selection-toolbar changes — the action bar now shows for all of selection mode, Stop/Resume/Delete are disabled-not-hidden when their subset is empty, and the "Clear" button was removed (an earlier same-session "move Clear next to the count" step was superseded by the removal and never committed); (2) the "X agents need attention" banner was removed from the dashboard, held back for a planned **flag feature** (see the `needs-attention-banner` memory); (3) the `/status` (System status) page was overhauled to the dashboard's conventions (bracketed coral title, `Card` surfaces, new `HealthBadge`) and the navbar "System status" hover-highlight was fixed (per the root-level `PLAN.md`). See `docs/COMPLETION.md` for the full detail. Not yet committed or pushed.
+**One small change is still uncommitted:** the "Sort by" select trigger's hover highlight (`components/ui/select.tsx`) plus its `docs/COMPLETION.md` entry. Nothing else is pending.
+
+`docs/COMPLETION.md` has the full detail of every item. The root-level `PLAN.md` holds the (now implemented) plan for the mock restyle, kept only for reference — `docs/PLANS.md` is the canonical planner.
 
 **The agent filter feature is cancelled** — documented 2026-07-15, never started, dropped by the user. Do not implement it.
 
 ## Next task
 
-**None assigned.** The Clear-button reposition shipped 2026-07-24 (details in
-`docs/COMPLETION.md`). Awaiting the user's next task — do not self-assign. Candidate
-follow-ups are listed under "Candidate next steps" below, and there is a live open item
-under "Open: finish the 'Create agent' dialog perf work"; the user picks which, if any.
+**Auth — but do NOT start, and do NOT plan it yet.**
+
+The user has said the next area of work is **authentication**, and has explicitly asked that
+nothing be designed, planned, or written for it until they give the go-ahead with their own
+requirements. **Do not** research an approach, propose a schema, sketch a plan, or touch code
+for it on your own initiative.
+
+When the user does open the topic: ask for their requirements first (what's being
+authenticated — dashboard users vs. the existing agent tokens; session model; whether it
+touches `backend/api`, `backend/proxy`, or both), then write a plan into this section before
+implementing, per "How to use this file" below.
+
+Until then: **await instructions.** Do not self-assign from the candidate list below.
 
 ### Setup reminders (don't relearn these)
 - Dev stack may already be up (`docker ps`, ports 3000/4000/8080). If not, start it **detached**
   per the `running-the-dev-server` memory. **Never `next build` while `next dev` runs** — shared
   `.next`, corrupts the dev server.
-- Everything through Feature 8 is committed and merged into `main` (`4bdfe04`). The
-  2026-07-24 changes (selection-toolbar + needs-attention-banner removal + status-page
-  overhaul + navbar hover fix) are **uncommitted** in the working tree — 7 files:
-  `components/selection-toolbar.tsx`, `components/batch-stop-dialog.tsx`,
-  `components/batch-delete-dialog.tsx`, `components/health-badge.tsx` (new),
-  `components/main-nav.tsx` (new), `components/ui/table.tsx`, `components/ui/button.tsx`,
-  `components/agent-status-badge.tsx`, `components/create-agent-dialog.tsx`, `app/page.tsx`,
-  `app/layout.tsx`, `app/status/page.tsx` (plus `PLAN.md` and these docs). Don't push to
-  `main` — the user merges manually.
+- Working tree is clean apart from the select-hover change noted above. Don't push to `main` —
+  the user merges manually.
+- **Never edit source files with PowerShell `Get-Content | Set-Content`** — it corrupts every
+  non-ASCII character (it bit this session and mangled the user-visible `Name (A–Z)` sort
+  labels). Use the Edit tool. See the `powershell-file-encoding` memory.
 
 ---
 

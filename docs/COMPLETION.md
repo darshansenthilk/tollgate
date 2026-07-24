@@ -506,6 +506,23 @@ tint also matches the Active badge's own treatment.
 token — over a 12% green wash with a 45% green border. (Read while disabled, since both local
 agents are Active; `disabled` only changes opacity, not the colour values.) Date: 2026-07-24.
 
+### Select trigger highlights on hover
+
+**Problem:** the "Sort by" control had `transition-colors` but no hover state, so it never
+acknowledged the pointer — unlike every button around it.
+
+**What changed — `components/ui/select.tsx`:** `SelectTrigger` gained `hover:bg-muted` +
+`dark:hover:bg-input/50`, the *exact* pair the `outline` button variant uses. The two share the
+same bordered, transparent-fill shape, so they now lift identically. Applied to the shared
+primitive, so the dialogs' Assistant/Model selects get it too.
+
+**Verified:** typecheck clean; the sort trigger and an `outline` button carry an identical hover
+class pair with identical resting backgrounds (`oklab(1 0 0 / 0.045)`), so the lift is the same
+0.045 → 0.075 alpha — deliberately slight. All three utility rules confirmed generated. A
+`disabled:hover:` guard was written and then removed as redundant: `disabled:pointer-events-none`
+already makes `:hover` unreachable. **Needs an eyeball** for the painted hover (a backgrounded tab
+can't trigger `:hover`). Date: 2026-07-24.
+
 **Process note (cost me a repair):** re-indenting the wrapped table block with PowerShell
 `Get-Content | Set-Content -Encoding utf8` **corrupted every non-ASCII character** (em/en dashes
 → mojibake), including the user-visible `Name (A–Z)` sort labels — `Get-Content` decoded the
