@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Flag, Pencil } from "lucide-react";
+import { Bot, Flag, Pencil, Users } from "lucide-react";
 import type { AgentStatus } from "@tollgate/shared";
 import { useToastManager } from "@/components/ui/toast";
 import {
@@ -317,20 +317,27 @@ export default function AgentsPage() {
             Your group of agents, all managed in one place.
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
+        <div className="flex items-center gap-2">
           <CreateAgentDialog
             onCreated={handleCreated}
             existingNames={(agents ?? []).map((a) => a.name)}
           />
           <Button
             type="button"
-            variant={selectionMode ? "outline" : "amber"}
+            variant={selectionMode ? "outline" : "amberOutline"}
             onClick={() => {
               if (selectionMode) exitSelectionMode();
               else setSelectionMode(true);
             }}
           >
-            {selectionMode ? "Done" : "Select agents"}
+            {selectionMode ? (
+              "Done"
+            ) : (
+              <>
+                <Users />
+                Select agents
+              </>
+            )}
           </Button>
         </div>
       </header>
@@ -341,10 +348,37 @@ export default function AgentsPage() {
         </p>
       )}
 
-      <Card>
+      <Card className="relative">
+        {/* Coral hairline along the card's top edge, fading out at both ends.
+            Tailwind v4 renames bg-gradient-* → bg-linear-*. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-brand to-transparent"
+        />
         <CardHeader>
-          <CardTitle>All agents</CardTitle>
-          <CardDescription>Polling every 3s</CardDescription>
+          <div className="flex items-center gap-3">
+            <span
+              aria-hidden
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg border text-brand"
+              style={{
+                borderColor: "color-mix(in oklch, var(--brand) 35%, transparent)",
+                backgroundColor: "color-mix(in oklch, var(--brand) 12%, transparent)",
+              }}
+            >
+              <Users className="size-4" />
+            </span>
+            <div>
+              <CardTitle>All agents</CardTitle>
+              <CardDescription className="flex items-center gap-1.5">
+                Polling every 3s
+                <span
+                  aria-hidden
+                  className="size-1.5 rounded-full animate-pulse motion-reduce:animate-none"
+                  style={{ backgroundColor: "var(--ok)" }}
+                />
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex items-center gap-2">
@@ -389,166 +423,182 @@ export default function AgentsPage() {
               No agents yet — create one to get started.
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {/* Always mounted so the column can animate open and closed —
-                      conditionally rendering it would snap the other columns
-                      sideways instead of sliding them. The width transition
-                      lives on the inner div, not the cell: `table-layout: auto`
-                      derives column widths from content and ignores a width set
-                      on the <th> itself. */}
-                  <TableHead className="w-0 p-0">
-                    <div
-                      className={cn(
-                        "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
-                        selectionMode ? "w-10" : "w-0",
-                      )}
-                    >
-                      <div className="flex w-10 items-center justify-center">
-                        {selectionMode && (
-                          <Checkbox
-                            checked={allSelected}
-                            indeterminate={someSelected && !allSelected}
-                            onCheckedChange={toggleSelectAll}
-                            aria-label="Select all agents"
-                            className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
-                          />
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {/* Always mounted so the column can animate open and closed —
+                        conditionally rendering it would snap the other columns
+                        sideways instead of sliding them. The width transition
+                        lives on the inner div, not the cell: `table-layout: auto`
+                        derives column widths from content and ignores a width set
+                        on the <th> itself. */}
+                    <TableHead className="w-0 p-0">
+                      <div
+                        className={cn(
+                          "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                          selectionMode ? "w-10" : "w-0",
                         )}
-                      </div>
-                    </div>
-                  </TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Assistant</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Spend / budget</TableHead>
-                  <TableHead>Tokens</TableHead>
-                  <TableHead className="w-0">
-                    <span className="sr-only">Edit</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedAgents.map((agent) => {
-                  const fraction = spendFraction(
-                    agent.currentMonthSpendCents,
-                    agent.maxBudgetCents,
-                  );
-                  const pct = fraction === null ? null : Math.round(fraction * 100);
-                  const isFrozen = isStopped(agent.status);
-                  const overBudget = fraction !== null && fraction >= 1;
-                  const warning =
-                    fraction !== null && fraction >= WARNING_THRESHOLD && !overBudget;
-                  const barColor =
-                    overBudget || isFrozen
-                      ? "var(--err)"
-                      : warning
-                        ? "var(--amber)"
-                        : "var(--ok)";
-
-                  return (
-                    <TableRow key={agent.id}>
-                      <TableCell className="w-0 p-0">
-                        <div
-                          className={cn(
-                            "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
-                            selectionMode ? "w-10" : "w-0",
-                          )}
-                        >
-                          <div className="flex w-10 items-center justify-center">
-                            {selectionMode && (
-                              <Checkbox
-                                checked={selectedIds.has(agent.id)}
-                                onCheckedChange={() => toggleSelected(agent.id)}
-                                aria-label={`Select ${agent.name}`}
-                                className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
-                              />
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell
-                        className="cursor-pointer font-medium"
-                        onClick={() => setSidebarAgentId(agent.id)}
                       >
-                        <span className="flex items-center gap-1.5">
-                          {overBudget && (
-                            <Flag
-                              className="size-3.5 shrink-0"
-                              style={{ color: "var(--err)" }}
-                              aria-label="Flagged: over budget"
+                        <div className="flex w-10 items-center justify-center">
+                          {selectionMode && (
+                            <Checkbox
+                              checked={allSelected}
+                              indeterminate={someSelected && !allSelected}
+                              onCheckedChange={toggleSelectAll}
+                              aria-label="Select all agents"
+                              className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
                             />
                           )}
-                          {agent.name}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-mono text-xs">{agent.providerSlug}</span>
-                      </TableCell>
-                      <TableCell>
-                        <AgentStatusBadge status={agent.status} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex min-w-[180px] flex-col gap-1">
-                          <div className="flex items-center justify-between text-xs">
-                            <span>
+                        </div>
+                      </div>
+                    </TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Assistant</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Spend / budget</TableHead>
+                    <TableHead>Tokens</TableHead>
+                    <TableHead className="w-0">
+                      <span className="sr-only">Edit</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedAgents.map((agent) => {
+                    const fraction = spendFraction(
+                      agent.currentMonthSpendCents,
+                      agent.maxBudgetCents,
+                    );
+                    const pct = fraction === null ? null : Math.round(fraction * 100);
+                    const isFrozen = isStopped(agent.status);
+                    const overBudget = fraction !== null && fraction >= 1;
+                    const warning =
+                      fraction !== null && fraction >= WARNING_THRESHOLD && !overBudget;
+                    const barColor =
+                      overBudget || isFrozen
+                        ? "var(--err)"
+                        : warning
+                          ? "var(--amber)"
+                          : "var(--ok)";
+
+                    return (
+                      <TableRow key={agent.id}>
+                        <TableCell className="w-0 p-0">
+                          <div
+                            className={cn(
+                              "overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                              selectionMode ? "w-10" : "w-0",
+                            )}
+                          >
+                            <div className="flex w-10 items-center justify-center">
+                              {selectionMode && (
+                                <Checkbox
+                                  checked={selectedIds.has(agent.id)}
+                                  onCheckedChange={() => toggleSelected(agent.id)}
+                                  aria-label={`Select ${agent.name}`}
+                                  className="animate-in fade-in zoom-in-75 duration-200 motion-reduce:animate-none"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer font-medium"
+                          onClick={() => setSidebarAgentId(agent.id)}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="flex size-7 shrink-0 items-center justify-center rounded-md border text-brand"
+                              style={{
+                                borderColor:
+                                  "color-mix(in oklch, var(--brand) 35%, transparent)",
+                                backgroundColor:
+                                  "color-mix(in oklch, var(--brand) 12%, transparent)",
+                              }}
+                            >
+                              <Bot className="size-3.5" strokeWidth={1.75} />
+                            </span>
+                            {overBudget && (
+                              <Flag
+                                className="size-3.5 shrink-0"
+                                style={{ color: "var(--err)" }}
+                                aria-label="Flagged: over budget"
+                              />
+                            )}
+                            {agent.name}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-mono text-xs">{agent.providerSlug}</span>
+                        </TableCell>
+                        <TableCell>
+                          <AgentStatusBadge status={agent.status} />
+                        </TableCell>
+                        <TableCell>
+                          {/* Amount on its own line; the bar and the percentage
+                              then share a row beneath it. */}
+                          <div className="flex min-w-[180px] flex-col gap-1">
+                            <span className="text-xs">
                               {formatCents(agent.currentMonthSpendCents)}
                               {agent.maxBudgetCents !== null &&
                                 ` / ${formatCents(agent.maxBudgetCents)}`}
                             </span>
-                            {pct !== null && (
-                              <span
-                                style={{
-                                  color: overBudget
-                                    ? "var(--err)"
-                                    : warning
-                                      ? "var(--amber)"
-                                      : "var(--muted-foreground)",
-                                }}
-                              >
-                                {pct}%
-                                {warning && !overBudget && " ⚠"}
-                              </span>
+                            {(agent.maxBudgetCents !== null || pct !== null) && (
+                              <div className="flex items-center gap-2">
+                                {agent.maxBudgetCents !== null && (
+                                  <Progress
+                                    value={Math.min(fraction ?? 0, 1) * 100}
+                                    className="flex-1 [&_[data-slot=progress-indicator]]:bg-(--progress-color)"
+                                    style={{ "--progress-color": barColor } as CSSProperties}
+                                  />
+                                )}
+                                {pct !== null && (
+                                  <span
+                                    className="shrink-0 text-xs tabular-nums"
+                                    style={{
+                                      color: overBudget
+                                        ? "var(--err)"
+                                        : warning
+                                          ? "var(--amber)"
+                                          : "var(--muted-foreground)",
+                                    }}
+                                  >
+                                    {pct}%
+                                    {warning && !overBudget && " ⚠"}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
-                          {agent.maxBudgetCents !== null && (
-                            <Progress
-                              value={Math.min(fraction ?? 0, 1) * 100}
-                              className="[&_[data-slot=progress-indicator]]:bg-(--progress-color)"
-                              style={{ "--progress-color": barColor } as CSSProperties}
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-mono text-xs">
+                            {agent.currentMonthTokens.toLocaleString()}
+                          </span>
+                        </TableCell>
+                        {/* No stopPropagation needed: only the Name cell above
+                            carries an onClick, so this can't open the sidebar. */}
+                        <TableCell className="w-0 text-right">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            aria-label={`Edit ${agent.name}`}
+                            onClick={() => setEditingAgentId(agent.id)}
+                          >
+                            <Pencil
+                              className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
+                              strokeWidth={1.75}
                             />
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-mono text-xs">
-                          {agent.currentMonthTokens.toLocaleString()}
-                        </span>
-                      </TableCell>
-                      {/* No stopPropagation needed: only the Name cell above
-                          carries an onClick, so this can't open the sidebar. */}
-                      <TableCell className="w-0 text-right">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Edit ${agent.name}`}
-                          onClick={() => setEditingAgentId(agent.id)}
-                          // No square on hover — just the pen. Overrides the
-                          // ghost variant's hover fill (both themes).
-                          className="hover:bg-transparent dark:hover:bg-transparent"
-                        >
-                          <Pencil
-                            className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
-                            strokeWidth={1.75}
-                          />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

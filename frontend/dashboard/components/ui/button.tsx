@@ -19,6 +19,17 @@ const buttonVariants = cva(
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         amber:
           "bg-[var(--amber)] text-[#1a1205] hover:bg-[color-mix(in_oklch,var(--amber),black_12%)] focus-visible:border-[var(--amber)] focus-visible:ring-[var(--amber)]/30",
+        // Tinted outline CTAs — coloured text on a low-alpha wash of the same
+        // token, with a matching border. Built with color-mix like
+        // AgentStatusBadge/HealthBadge so one token drives all three layers.
+        brandOutline:
+          "border-[color-mix(in_oklch,var(--brand)_45%,transparent)] bg-[color-mix(in_oklch,var(--brand)_12%,transparent)] text-brand hover:bg-[color-mix(in_oklch,var(--brand)_20%,transparent)] focus-visible:border-[var(--brand)] focus-visible:ring-[var(--brand)]/30",
+        amberOutline:
+          "border-[color-mix(in_oklch,var(--amber)_45%,transparent)] bg-[color-mix(in_oklch,var(--amber)_12%,transparent)] text-[var(--amber)] hover:bg-[color-mix(in_oklch,var(--amber)_20%,transparent)] focus-visible:border-[var(--amber)] focus-visible:ring-[var(--amber)]/30",
+        // Green on --ok, the same token the "Active" status badge uses. The
+        // affirmative counterpart to `destructive` — Resume vs. Delete.
+        okOutline:
+          "border-[color-mix(in_oklch,var(--ok)_45%,transparent)] bg-[color-mix(in_oklch,var(--ok)_12%,transparent)] text-[var(--ok)] hover:bg-[color-mix(in_oklch,var(--ok)_20%,transparent)] focus-visible:border-[var(--ok)] focus-visible:ring-[var(--ok)]/30",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

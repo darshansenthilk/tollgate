@@ -51,8 +51,11 @@ const MODE_COPY = {
   },
   resume: {
     action: "Resume",
-    triggerVariant: "default",
-    confirmVariant: "default",
+    // Green, matching the "Active" status badge — resuming is what puts an
+    // agent back into that state. Tinted rather than solid so it sits level
+    // with its Delete/Stop siblings in the toolbar.
+    triggerVariant: "okOutline",
+    confirmVariant: "okOutline",
     rowSuccess: "Resumed",
     description:
       "This restores each agent to active — its next proxy request will be evaluated normally again.",

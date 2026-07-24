@@ -27,6 +27,9 @@ export function AgentStatusBadge({ status }: { status: AgentStatus }) {
         backgroundColor: `color-mix(in oklch, ${color} 15%, transparent)`,
       }}
     >
+      {/* Leading dot reuses the status colour, so all five states get one for
+          free — currentColor, no extra mapping. */}
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />
       {label}
     </Badge>
   );

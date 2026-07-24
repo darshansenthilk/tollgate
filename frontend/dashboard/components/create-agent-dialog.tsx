@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -131,7 +132,10 @@ export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialo
         else setOpen(true);
       }}
     >
-      <DialogTrigger render={<Button />}>Create agent</DialogTrigger>
+      <DialogTrigger render={<Button variant="brandOutline" />}>
+        <Plus />
+        Create agent
+      </DialogTrigger>
       <DialogContent>
         {created === null ? (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">

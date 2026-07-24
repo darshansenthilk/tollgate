@@ -30,8 +30,10 @@ under "Open: finish the 'Create agent' dialog perf work"; the user picks which, 
   overhaul + navbar hover fix) are **uncommitted** in the working tree — 7 files:
   `components/selection-toolbar.tsx`, `components/batch-stop-dialog.tsx`,
   `components/batch-delete-dialog.tsx`, `components/health-badge.tsx` (new),
-  `components/ui/table.tsx`, `app/page.tsx`, `app/layout.tsx`, `app/status/page.tsx` (plus
-  `PLAN.md` and these docs). Don't push to `main` — the user merges manually.
+  `components/main-nav.tsx` (new), `components/ui/table.tsx`, `components/ui/button.tsx`,
+  `components/agent-status-badge.tsx`, `components/create-agent-dialog.tsx`, `app/page.tsx`,
+  `app/layout.tsx`, `app/status/page.tsx` (plus `PLAN.md` and these docs). Don't push to
+  `main` — the user merges manually.
 
 ---
 

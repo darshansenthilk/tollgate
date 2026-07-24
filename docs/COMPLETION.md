@@ -440,6 +440,80 @@ against the immediate parent's `selectorText` will fail to find the declaration 
 report the rule missing. Also, dev-server CSS rebuilds lag the file edit — an immediately-queried
 stylesheet can legitimately not contain a just-added utility yet.
 
+### Dashboard UI restyle to match the reference mock
+
+**Problem:** the dashboard's structure/iconography lagged the reference design. Palette, fonts,
+ambient glow and the bracketed title already matched (Feature 8 + this session); the gaps were
+13 specific deltas — see the root `PLAN.md`, which this implements. **Constraint honoured: the
+mock is rendered at a much larger zoom, so its *design* was adopted but not its dimensions —
+every existing size token is unchanged and new elements were sized to the current small scale.**
+
+- **`components/main-nav.tsx` (new, client)** — the nav moved out of `layout.tsx` so it can call
+  `usePathname()` for an active-tab coral underline (`after:-bottom-3`, which equals the nav's
+  `py-3`, so the bar lands on the nav's bottom border). Active link is `text-foreground` +
+  `aria-current="page"`; inactive keeps `text-muted-foreground … hover:text-brand`. `layout.tsx`
+  stays a server component and just renders `<MainNav />`. Wordmark brightened to
+  `text-foreground/90`. **Colour is set with classes, never an inline `style`** — an inline style
+  outranks the hover variant and would re-break the hover fixed earlier today.
+- **`components/ui/button.tsx`** — two variants added beside `amber`: `brandOutline` and
+  `amberOutline` (coloured text + 45% `color-mix` border + 12% wash, hover → 20%), the mock's
+  tinted-outline CTA treatment. Same `color-mix` construction as `AgentStatusBadge`/`HealthBadge`.
+- **`components/create-agent-dialog.tsx`** — trigger → `variant="brandOutline"` with a `Plus`
+  icon. **`app/page.tsx`** — "Select agents" → `amberOutline` + `Users` icon; the toggled "Done"
+  state stays neutral `outline` so the amber pill reads as "not yet in selection mode".
+- **`components/agent-status-badge.tsx`** — badges gained a leading dot using `bg-current`, so
+  all five statuses inherit the right colour with no extra mapping.
+- **`components/ui/table.tsx`** — `TableHead` is now `text-xs uppercase tracking-wider
+  text-muted-foreground`. Done in CSS so the JSX keeps readable sentence-case strings.
+- **`app/page.tsx`** — coral hairline across the card's top edge
+  (`bg-linear-to-r from-transparent via-brand to-transparent`; note v4's `bg-linear-*` rename);
+  a `size-9` coral-tinted icon tile beside "All agents"; a pulsing green dot after "Polling every
+  3s" (`motion-reduce:animate-none`); the table wrapped in `overflow-hidden rounded-lg border`;
+  a `size-7` coral-tinted `Bot` avatar per row; the edit pen changed from bare ghost to
+  `variant="outline"`; and the spend cell restructured so the amount sits on its own line with
+  the bar and `%` sharing a row beneath it.
+
+**Verified** (`pnpm --filter @tollgate/dashboard typecheck` clean; computed styles on :3000):
+nav — active link carries `aria-current="page"` with a 2px coral `::after`, inactive has
+`display: none`, and the indicator correctly follows the route (checked on both `/` and
+`/status`). Buttons — coral/amber text with matching 12%/45% `color-mix` fill and border, one
+icon each. Card — gradient hairline present, icon tile 36px coral, green dot. Table — headers
+compute `text-transform: uppercase` at 12px/0.6px tracking, row avatar 28px coral with an svg,
+status badge has a green dot matching its text colour, edit button has a real border, container
+radius 10px. Spend cell — amount above; bar and `%` vertically centred with `%` to the bar's
+right. **Needs an eyeball:** overall fidelity to the mock, hover states, and the pulse/pen
+animations. Date: 2026-07-24.
+
+### Resume button is green
+
+**What:** the batch **Resume** button was `variant="default"` — solid brand coral, which read as
+generic-primary and clashed with coral's brand-only rule. It's now green, matching the **Active**
+status badge, since resuming is exactly what returns an agent to that state.
+
+- `components/ui/button.tsx` — new `okOutline` variant on `--ok` (45% `color-mix` border, 12%
+  wash, 20% on hover), built identically to `brandOutline`/`amberOutline`. It's the affirmative
+  counterpart to `destructive`: Resume vs. Delete.
+- `components/batch-stop-dialog.tsx` — `MODE_COPY.resume` now uses `okOutline` for **both** the
+  toolbar trigger and the dialog's confirm button, mirroring how `stop` uses `destructive` for
+  both.
+
+**Tinted, not solid:** its siblings in the toolbar are Stop (neutral outline) and Delete (tinted
+`bg-destructive/10`), so a solid green fill would have shouted over the destructive action. The
+tint also matches the Active badge's own treatment.
+
+**Verified:** typecheck clean; in selection mode the Resume trigger computes
+`color: rgb(70,196,127)` — byte-identical to both the Active badge's colour and the raw `--ok`
+token — over a 12% green wash with a 45% green border. (Read while disabled, since both local
+agents are Active; `disabled` only changes opacity, not the colour values.) Date: 2026-07-24.
+
+**Process note (cost me a repair):** re-indenting the wrapped table block with PowerShell
+`Get-Content | Set-Content -Encoding utf8` **corrupted every non-ASCII character** (em/en dashes
+→ mojibake), including the user-visible `Name (A–Z)` sort labels — `Get-Content` decoded the
+UTF-8 file as ANSI. Reversed by re-encoding through Windows-1252 back to UTF-8 and verified by
+enumerating the file's non-ASCII inventory. **Use the Edit tool for source edits; if a bulk
+rewrite is unavoidable, round-trip via `[System.IO.File]::ReadAllText/WriteAllText` with an
+explicit UTF-8 encoding.**
+
 **Verified:** `pnpm --filter @tollgate/dashboard typecheck` clean. In the running dashboard
 (:3000), via computed styles (valid in a backgrounded tab — no animation involved): with
 **0 selected** the toolbar is present, reads "0 agents selected", has **no Clear button**, and
