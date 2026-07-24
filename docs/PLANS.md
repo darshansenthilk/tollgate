@@ -29,9 +29,9 @@ under "Open: finish the 'Create agent' dialog perf work"; the user picks which, 
   2026-07-24 changes (selection-toolbar + needs-attention-banner removal + status-page
   overhaul + navbar hover fix) are **uncommitted** in the working tree — 7 files:
   `components/selection-toolbar.tsx`, `components/batch-stop-dialog.tsx`,
-  `components/batch-delete-dialog.tsx`, `components/health-badge.tsx` (new), `app/page.tsx`,
-  `app/layout.tsx`, `app/status/page.tsx` (plus `PLAN.md` and these docs). Don't push to
-  `main` — the user merges manually.
+  `components/batch-delete-dialog.tsx`, `components/health-badge.tsx` (new),
+  `components/ui/table.tsx`, `app/page.tsx`, `app/layout.tsx`, `app/status/page.tsx` (plus
+  `PLAN.md` and these docs). Don't push to `main` — the user merges manually.
 
 ---
 

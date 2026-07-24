@@ -23,7 +23,12 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      // TableRow carries hover:bg-muted/50 for data rows; the header row uses
+      // that same component but isn't interactive, so the highlight is undone
+      // here. Scoped to thead (not passed at the call site) because a descendant
+      // selector outranks TableRow's own hover utility — same-element overrides
+      // tie on specificity and would be decided by stylesheet order.
+      className={cn("[&_tr]:border-b [&_tr]:hover:bg-transparent", className)}
       {...props}
     />
   )

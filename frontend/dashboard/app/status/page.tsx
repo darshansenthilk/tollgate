@@ -101,13 +101,23 @@ export default async function StatusPage() {
         <div className="flex items-baseline gap-2">
           {/* -6px pulls the bracket's inset glyph ink left to line up under the
               subtitle's first character, as on the dashboard. */}
-          <span aria-hidden className="-ml-[6px] font-mono text-3xl font-normal text-brand">
+          {/* Brackets converge inward on load: the left one enters from farther
+              left, the right from farther right, settling onto the stationary
+              title. inline-block so the translate applies; motion-reduce opts
+              out. Matches the dashboard title. */}
+          <span
+            aria-hidden
+            className="-ml-[6px] inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-left-6 duration-500 ease-out motion-reduce:animate-none"
+          >
             [
           </span>
           <h1 className="inline-block bg-linear-to-r from-white to-brand bg-clip-text font-heading text-[2.34rem] font-semibold tracking-tight text-transparent">
             System status
           </h1>
-          <span aria-hidden className="font-mono text-3xl font-normal text-brand">
+          <span
+            aria-hidden
+            className="inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-right-6 duration-500 ease-out motion-reduce:animate-none"
+          >
             ]
           </span>
         </div>

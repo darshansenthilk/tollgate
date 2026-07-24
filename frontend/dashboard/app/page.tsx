@@ -293,13 +293,23 @@ export default function AgentsPage() {
             {/* -6px pulls the bracket's glyph ink (which the monospace font
                 insets ~5px from its box) left to line up under the subtitle's
                 first character. Measured, not eyeballed. */}
-            <span aria-hidden className="-ml-[6px] font-mono text-3xl font-normal text-brand">
+            {/* Brackets converge inward on load: the left one enters from
+                farther left, the right from farther right, settling onto the
+                stationary title. inline-block so the translate applies (transform
+                is a no-op on inline boxes). motion-reduce opts out. */}
+            <span
+              aria-hidden
+              className="-ml-[6px] inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-left-6 duration-500 ease-out motion-reduce:animate-none"
+            >
               [
             </span>
             <h1 className="inline-block bg-linear-to-r from-white to-brand bg-clip-text font-heading text-[2.34rem] font-semibold tracking-tight text-transparent">
               Agent Dashboard
             </h1>
-            <span aria-hidden className="font-mono text-3xl font-normal text-brand">
+            <span
+              aria-hidden
+              className="inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-right-6 duration-500 ease-out motion-reduce:animate-none"
+            >
               ]
             </span>
           </div>

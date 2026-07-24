@@ -383,6 +383,63 @@ Agent Dashboard link. **Not verified (needs an eyeball):** the actual coral-on-h
 hidden tab can't reliably trigger `:hover` — and perceived colour/glyph rendering. Date:
 2026-07-24.
 
+### Bracketed-title load animation (both titles)
+
+**What:** on tab load / route switch, each coral bracket now glides inward to its resting
+place — the left `[` enters from farther left, the right `]` from farther right, settling onto
+the stationary title.
+
+- `frontend/dashboard/app/page.tsx` and `frontend/dashboard/app/status/page.tsx` — both bracket
+  `<span>`s gained `animate-in slide-in-from-left-6` / `slide-in-from-right-6` (±1.5rem/24px
+  start offset), `duration-500 ease-out`, and `motion-reduce:animate-none`. Also added
+  `inline-block` to each bracket span: `transform` (which the slide uses) is a no-op on inline
+  boxes, so the spans must be block-level for the translate to apply. Reuses the existing
+  `animate-in` family (same as the checkbox pop); no new keyframes. The `<h1>` stays put so the
+  brackets converge onto it.
+- Replays on client-side navigation (destination page remounts) and on hard load (CSS animation
+  plays on first paint).
+
+**Verified (structural — a hidden tab pauses CSS animations, so the motion itself needs an
+eyeball):** on both `/` and `/status`, each bracket has `animation-name: enter`, `duration 0.5s`,
+`ease-out`; the paused-at-start transform reads `translateX(-24px)` (left) / `translateX(+24px)`
+(right) — proving the offset, direction, and that the transform applies (`display: block`). The
+actual glide needs a foreground tab to watch. Date: 2026-07-24.
+
+**Note:** the bracketed-title markup is now duplicated across the two pages (title + brackets +
+animation). Extracting a shared `BracketedTitle` component is a reasonable future tidy-up (same
+precedent as `lib/agent-status.ts` / `HealthBadge`) — not done here to keep this change focused.
+
+### Table header row no longer highlights on hover
+
+**Problem:** hovering the header row (Name / Assistant / Status / …) highlighted it exactly like
+a data row. `TableRow` carries `hover:bg-muted/50` (`components/ui/table.tsx:60`) and the same
+component renders both the header row and the body rows, so the header picked up an interactive
+affordance it doesn't have.
+
+**What changed — `frontend/dashboard/components/ui/table.tsx`:** `TableHeader` gained
+`[&_tr]:hover:bg-transparent` alongside its existing `[&_tr]:border-b`, undoing the highlight for
+rows inside `<thead>` only.
+
+**Why scoped to `TableHeader` rather than the call site:** passing `hover:bg-transparent` to the
+header's `<TableRow>` in `page.tsx` would put both utilities on the *same element* at equal
+specificity `(0,2,0)`, leaving the winner to Tailwind's stylesheet order — fragile. As a
+descendant rule it resolves to `.<class> tr:hover` at `(0,2,1)`, which strictly outranks
+`.hover\:bg-muted\/50:hover` at `(0,2,0)`. It also makes any future table correct by default.
+
+**Verified (CSSOM rule analysis — real `:hover` can't be triggered in a backgrounded tab):** the
+generated rule resolves to `.[&_tr]:hover:bg-transparent tr:hover { background-color: transparent }`
+inside `@media (hover: hover)` (supported here). Structural match test: the **header row** is
+matched by both the transparent rule and the muted rule — transparent wins on specificity, so no
+highlight; the **body row** is matched only by the muted rule, so data rows still highlight.
+`pnpm --filter @tollgate/dashboard typecheck` clean. **Needs an eyeball** for the actual painted
+hover. Date: 2026-07-24.
+
+**Gotcha worth remembering:** Tailwind v4 emits this as a 4-level *nested* rule (class → `& tr` →
+`&:hover` → `@media` → `CSSNestedDeclarations`), so a naive CSSOM walker that resolves `&` only
+against the immediate parent's `selectorText` will fail to find the declaration and wrongly
+report the rule missing. Also, dev-server CSS rebuilds lag the file edit — an immediately-queried
+stylesheet can legitimately not contain a just-added utility yet.
+
 **Verified:** `pnpm --filter @tollgate/dashboard typecheck` clean. In the running dashboard
 (:3000), via computed styles (valid in a backgrounded tab — no animation involved): with
 **0 selected** the toolbar is present, reads "0 agents selected", has **no Clear button**, and
