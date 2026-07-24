@@ -283,3 +283,59 @@ backgrounded tab can't be judged for that and can't be foregrounded here; needs 
   character. Measured, not eyeballed: the monospace `[` ink sits +5px inset from its box
   while the sans first char sits −1px, a 6px gap → −6px closes it (residual 0px). Technique
   saved to the `browser-verification-gotchas` memory.
+
+### Selection toolbar: always-visible, disabled-not-hidden actions, Clear removed
+
+**Problem:** The batch-selection toolbar only rendered once at least one agent was selected
+(`selectionMode && selectedAgents.length > 0`), so it popped in and out; Stop/Resume/Delete
+were conditionally rendered per eligibility, so the bar changed shape as the selection
+changed; and a "Clear" button duplicated what "Done"/deselecting already does.
+
+**What was requested:** the action bar should show for the whole of selection mode (even with
+nothing ticked); when an action doesn't apply, its button should be **greyed and unclickable**
+(slight transparency) rather than vanish; and "Clear" should be removed.
+
+**What changed (frontend only):**
+- `frontend/dashboard/app/page.tsx:385` — toolbar render gate relaxed from
+  `selectionMode && selectedAgents.length > 0` to just `selectionMode`; the now-unused
+  `onClearSelection={clearSelection}` prop dropped from the render (`clearSelection` itself is
+  still live — `exitSelectionMode` calls it).
+- `frontend/dashboard/components/selection-toolbar.tsx` — removed the Clear `<Button>` (and the
+  `Button` import and `onClearSelection` prop). Stop/Resume/Delete are now **always rendered**
+  and passed `disabled` when their eligible subset is empty: `disabled={stoppable.length === 0}`
+  / `resumable.length === 0` / `selectedAgents.length === 0`. Layout back to the simple
+  `[N agents selected] …… [Stop][Resume][Delete]` split.
+- `frontend/dashboard/components/batch-stop-dialog.tsx`, `batch-delete-dialog.tsx` — each gained
+  an optional `disabled?: boolean` prop, threaded onto the `DialogTrigger`'s `<Button>`. The
+  base `Button` already carries `disabled:opacity-50 disabled:pointer-events-none`
+  (`components/ui/button.tsx:7`), so disabled = the exact "slightly transparent + unclickable"
+  the request asked for, no new styling. `handleOpenChange` also guards `if (next && disabled)
+  return` so no keyboard/programmatic path can open an empty-subset dialog.
+
+**Design note:** Resume gets the same disabled-not-hidden treatment as Stop/Delete (disabled
+when no *stopped* agent is selected) so the bar keeps a stable shape — the user named only Stop
+and Delete, but hiding just Resume would reintroduce the shape-shifting the change is meant to
+remove.
+
+### Removed the "X agents need attention" banner
+
+**What changed:** the red banner that listed stopped/over-budget agents at the top of the
+dashboard was removed at the user's request — both the `needsAttention` computation and its
+JSX block in `frontend/dashboard/app/page.tsx`. The `isStopped` / `isOverBudget` helpers stay
+(still used by row rendering and `compareAgents`), as does the rest of the flagged plumbing
+(the `Flag` icon on over-budget rows, flagged-first sort).
+
+**Why / follow-up:** deliberately held back to be folded into a **planned flag feature** rather
+than kept as a standalone banner. Saved to Claude's memory (`needs-attention-banner`) so the
+concept — and the surviving `isOverBudget`/flag plumbing to build it on — is picked up when
+that feature is built. **Verified:** typecheck clean; the banner text is absent from the
+rendered dashboard (:3000), table still renders. Date: 2026-07-24.
+
+**Verified:** `pnpm --filter @tollgate/dashboard typecheck` clean. In the running dashboard
+(:3000), via computed styles (valid in a backgrounded tab — no animation involved): with
+**0 selected** the toolbar is present, reads "0 agents selected", has **no Clear button**, and
+Stop/Resume/Delete are all `disabled` with `opacity: 0.5` + `pointer-events: none`. Selecting
+1 then 2 active agents flipped Stop and Delete to enabled while Resume stayed disabled (no
+stopped agent in the selection) — confirming eligibility drives the disabled state. Resume's
+enable path is the symmetric `resumable.length === 0` and was not exercised live (both test
+agents were Active); an eyeball on the greyed styling is still worth a glance. Date: 2026-07-24.

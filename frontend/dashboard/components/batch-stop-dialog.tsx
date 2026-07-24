@@ -22,6 +22,10 @@ type BatchStopMode = "stop" | "resume";
 interface BatchStopDialogProps {
   agents: { id: string; name: string }[];
   mode: BatchStopMode;
+  /** When true the trigger is greyed and unclickable — used when no selected
+   *  agent is eligible for this action, so the toolbar keeps a stable shape
+   *  instead of the button appearing/disappearing. */
+  disabled?: boolean;
   onStatusChange: (id: string, status: AgentStatus) => void;
   /** Fired only when every agent succeeded — deliberately not on a partial
    *  failure, so the failed rows stay selected for a retry. */
@@ -63,6 +67,7 @@ const MODE_COPY = {
 export function BatchStopDialog({
   agents,
   mode,
+  disabled = false,
   onStatusChange,
   onCompleted,
 }: BatchStopDialogProps) {
@@ -74,6 +79,9 @@ export function BatchStopDialog({
   const copy = MODE_COPY[mode];
 
   function handleOpenChange(next: boolean) {
+    // Belt-and-braces: the disabled trigger already can't be clicked, but guard
+    // the state too so nothing (e.g. a keyboard path) can open an empty dialog.
+    if (next && disabled) return;
     setOpen(next);
     if (!next) {
       setTimeout(() => {
@@ -129,7 +137,7 @@ export function BatchStopDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button variant={copy.triggerVariant} size="sm" />}>
+      <DialogTrigger render={<Button variant={copy.triggerVariant} size="sm" disabled={disabled} />}>
         {copy.action}
       </DialogTrigger>
       <DialogContent>

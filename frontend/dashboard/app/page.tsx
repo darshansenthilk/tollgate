@@ -262,10 +262,6 @@ export default function AgentsPage() {
     setSelectionMode(false);
   }
 
-  const needsAttention = (agents ?? []).filter(
-    (a) => isStopped(a.status) || isOverBudget(a),
-  );
-
   // Flagged agents first (primary key), then the chosen sort (secondary,
   // within each group) — see compareAgents.
   const sortedAgents =
@@ -329,23 +325,6 @@ export default function AgentsPage() {
         </div>
       </header>
 
-      {needsAttention.length > 0 && (
-        <div
-          className="mb-4 rounded-lg border px-4 py-3 text-sm"
-          style={{
-            borderColor: "var(--err)",
-            background: "color-mix(in oklch, var(--err) 10%, transparent)",
-            color: "var(--err)",
-          }}
-        >
-          <strong>
-            {needsAttention.length} agent{needsAttention.length === 1 ? "" : "s"} need
-            attention:
-          </strong>{" "}
-          {needsAttention.map((a) => a.name).join(", ")}
-        </div>
-      )}
-
       {error !== null && (
         <p className="mb-4 text-sm" style={{ color: "var(--err)" }}>
           {error}
@@ -382,12 +361,11 @@ export default function AgentsPage() {
             </Select>
           </div>
 
-          {selectionMode && selectedAgents.length > 0 && (
+          {selectionMode && (
             <SelectionToolbar
               selectedAgents={selectedAgents}
               onDeleted={handleBatchDeleted}
               onStatusChange={handleStatusChange}
-              onClearSelection={clearSelection}
               onCompleted={exitSelectionMode}
             />
           )}

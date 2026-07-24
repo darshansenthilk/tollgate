@@ -16,6 +16,10 @@ import { ApiError, deleteAgent } from "@/lib/api";
 
 interface BatchDeleteDialogProps {
   agents: { id: string; name: string }[];
+  /** When true the trigger is greyed and unclickable — used when nothing is
+   *  selected, so the toolbar keeps a stable shape instead of the button
+   *  appearing/disappearing. */
+  disabled?: boolean;
   onDeleted: (ids: string[]) => void;
   /** Fired only when every agent deleted successfully — deliberately not on a
    *  partial failure, so the failed rows stay selected for a retry. */
@@ -28,12 +32,20 @@ interface BatchDeleteDialogProps {
  * Failures stay listed and selected so the toolbar's count reflects what's
  * actually left to retry.
  */
-export function BatchDeleteDialog({ agents, onDeleted, onCompleted }: BatchDeleteDialogProps) {
+export function BatchDeleteDialog({
+  agents,
+  disabled = false,
+  onDeleted,
+  onCompleted,
+}: BatchDeleteDialogProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [failures, setFailures] = useState<{ name: string; message: string }[]>([]);
 
   function handleOpenChange(next: boolean) {
+    // Belt-and-braces: the disabled trigger already can't be clicked, but guard
+    // the state too so nothing (e.g. a keyboard path) can open an empty dialog.
+    if (next && disabled) return;
     setOpen(next);
     if (!next) {
       setTimeout(() => setFailures([]), 150);
@@ -75,7 +87,7 @@ export function BatchDeleteDialog({ agents, onDeleted, onCompleted }: BatchDelet
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button variant="destructive" size="sm" />}>
+      <DialogTrigger render={<Button variant="destructive" size="sm" disabled={disabled} />}>
         Delete
       </DialogTrigger>
       <DialogContent>
