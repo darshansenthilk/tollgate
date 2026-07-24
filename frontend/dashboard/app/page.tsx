@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Flag } from "lucide-react";
+import { Flag, Pencil } from "lucide-react";
 import type { AgentStatus } from "@tollgate/shared";
 import { useToastManager } from "@/components/ui/toast";
 import {
@@ -32,6 +32,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
+import { EditAgentDialog } from "@/components/edit-agent-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import { isStopped } from "@/lib/agent-status";
@@ -41,6 +42,7 @@ import {
   listAgents,
   type AgentListItem,
   type CreateAgentResponse,
+  type UpdateAgentResponse,
 } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 3000;
@@ -112,6 +114,7 @@ export default function AgentsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [sidebarAgentId, setSidebarAgentId] = useState<string | null>(null);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
 
   const { add: addToast } = useToastManager();
   // Read via a ref inside refresh() so refresh's identity (and therefore the
@@ -198,6 +201,27 @@ export default function AgentsPage() {
     );
   }
 
+  /** PATCH /v1/agents/:id returns the committed row, so swap it straight in
+   *  rather than waiting for the next poll. Mirrors handleStatusChange. */
+  function handleUpdated(updated: UpdateAgentResponse) {
+    setAgents((prev) =>
+      prev === null
+        ? prev
+        : prev.map((a) =>
+            a.id === updated.id
+              ? {
+                  ...a,
+                  name: updated.name,
+                  providerSlug: updated.providerSlug,
+                  model: updated.model,
+                  status: updated.status,
+                  maxBudgetCents: updated.maxBudgetCents,
+                }
+              : a,
+          ),
+    );
+  }
+
   function handleDeleted(id: string) {
     setAgents((prev) => (prev === null ? prev : prev.filter((a) => a.id !== id)));
     setSelectedIds((prev) => {
@@ -255,6 +279,7 @@ export default function AgentsPage() {
   // Re-derived from the live (polled) list every render, not a snapshot from
   // when the row was clicked — see AgentPromptSidebar's prop doc comment.
   const sidebarAgent = (agents ?? []).find((a) => a.id === sidebarAgentId) ?? null;
+  const editingAgent = (agents ?? []).find((a) => a.id === editingAgentId) ?? null;
 
   function toggleSelectAll() {
     setSelectedIds(allSelected ? new Set() : new Set(allIds));
@@ -397,6 +422,9 @@ export default function AgentsPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Spend / budget</TableHead>
                   <TableHead>Tokens</TableHead>
+                  <TableHead className="w-0">
+                    <span className="sr-only">Edit</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -496,6 +524,25 @@ export default function AgentsPage() {
                           {agent.currentMonthTokens.toLocaleString()}
                         </span>
                       </TableCell>
+                      {/* No stopPropagation needed: only the Name cell above
+                          carries an onClick, so this can't open the sidebar. */}
+                      <TableCell className="w-0 text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Edit ${agent.name}`}
+                          onClick={() => setEditingAgentId(agent.id)}
+                          // No square on hover — just the pen. Overrides the
+                          // ghost variant's hover fill (both themes).
+                          className="hover:bg-transparent dark:hover:bg-transparent"
+                        >
+                          <Pencil
+                            className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
+                            strokeWidth={1.75}
+                          />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -510,6 +557,18 @@ export default function AgentsPage() {
         onOpenChange={(open) => {
           if (!open) setSidebarAgentId(null);
         }}
+      />
+
+      {/* One dialog for the whole table, driven by an id — not one per row.
+          Base UI dialog mount costs ~60-110ms, so a per-row instance would
+          multiply that across every row. */}
+      <EditAgentDialog
+        agent={editingAgent}
+        onOpenChange={(open) => {
+          if (!open) setEditingAgentId(null);
+        }}
+        onUpdated={handleUpdated}
+        existingNames={(agents ?? []).map((a) => a.name)}
       />
     </main>
   );

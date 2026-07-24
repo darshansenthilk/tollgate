@@ -21,31 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ApiError, createAgent, type CreateAgentResponse } from "@/lib/api";
-
-/** The only assistants selectable from the dashboard today. */
-const PROVIDERS = [
-  { value: "chatgpt", label: "ChatGPT" },
-  { value: "claude", label: "Claude" },
-] as const;
-
-type ProviderSlug = (typeof PROVIDERS)[number]["value"];
-
-/** Model choices per assistant. Keyed by the assistant slug above, not by the
- *  adapter slug the proxy routes on ("chatgpt" the label vs. "openai" the
- *  adapter) — backend/proxy/src/adapters/registry.ts's assistantAdapterSlugs is
- *  the one place that bridges the two. Persisted server-side via the `model`
- *  column on the agents table (backend/api/src/db/schema.ts). */
-const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: string }[]> = {
-  chatgpt: [
-    { value: "gpt-4o", label: "gpt-4o" },
-    { value: "gpt-4o-mini", label: "gpt-4o-mini" },
-  ],
-  claude: [
-    { value: "opus", label: "Opus" },
-    { value: "sonnet", label: "Sonnet" },
-    { value: "haiku", label: "Haiku" },
-  ],
-};
+import {
+  MODELS_BY_PROVIDER,
+  PROVIDERS,
+  type ProviderSlug,
+} from "@/lib/agent-options";
 
 interface CreateAgentDialogProps {
   onCreated: (agent: CreateAgentResponse) => void;

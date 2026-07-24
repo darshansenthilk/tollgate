@@ -14,9 +14,38 @@ Shipped and closed: the opt-in "Select agents" mode, its pop/slide animations, t
 
 ## Next task
 
-**Make the "Create agent" dialog and the agent-info sidebar open smoothly.** Both still feel laggy on open; the whole app hitches a frame or two.
+**Nothing committed.** The Edit agent feature shipped 2026-07-24 (`docs/COMPLETION.md`
+Feature 7). The perf task below is Step-1-complete and still open — pick it up or replace
+this section.
+
+---
+
+## Open: finish the "Create agent" dialog perf work
+
+**Step 1 is done — the lag is NOT dev-mode-only, so the stop-condition did not fire.**
+Full numbers and method in `docs/COMPLETION.md` (2026-07-24). Headline: in a *production*
+build the dialog costs a 58–112 ms long task, the sidebar costs 21 ms with none, and a bare
+`Select` popup with no dialog costs 63 ms / 76 ms long task. **The cost is Base UI's popup
+machinery**, not app code and not dev overhead (that same `Select` is only ~1.3× slower in
+dev, against a ~16× bundle-size gap).
 
 ### What is already known — do not re-derive
+
+- Hypothesis #1 below (dialog subtree mount cost) is the live one. #2, #3, #4 are **not**
+  implicated — measured, not assumed.
+- The sidebar is already fine (21 ms, zero long tasks). Don't optimize it.
+- **The open question:** is the ~60 ms one-time popup init (→ warm it during idle) or
+  per-open (→ different fix)? Untestable via automation here: synthetic `.click()` cannot
+  close a Base UI popup, so every trial is a cold open. Needs real user input, or a
+  reload-between-trials harness.
+- **Do not run `next build` while `next dev` is running** — they share
+  `frontend/dashboard/.next` and the build corrupts the dev server
+  (`500 __webpack_modules__[moduleId] is not a function`, no self-recovery). Measure prod
+  first, then restore dev, or use a second working copy.
+- A backgrounded tab pauses CSS animations/rAF and cannot be foregrounded programmatically
+  on this machine — ask the user to click the tab before trusting any animation measurement.
+
+### Older context (still accurate)
 
 - **The idle-poll re-render is already fixed and is NOT the remaining cause.** `refresh()` in `frontend/dashboard/app/page.tsx` used to call `setAgents(data)` unconditionally every 3s, re-rendering the whole table each tick. It now returns the previous array reference when the payload is unchanged so React bails out. Measured before/after over 10s idle: **1 × 60ms long task → 0 long tasks, 0ms blocking.**
 - **Polling less often will not help.** Idle polls now cost ~0. Dropping 3s → 10s only reduces HTTP volume, at the cost of the sidebar's `currentPrompt` live feel (it is a ~2min Redis TTL "what's happening now" view). This was considered and rejected.

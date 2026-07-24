@@ -115,3 +115,116 @@
 **Known open issue (pre-existing, not introduced here):** the create-agent model dropdown offers `opus`/`sonnet`/`haiku`, but the Claude adapter prices full model IDs like `claude-3-5-sonnet-20241022` (`backend/proxy/src/adapters/claude.ts:14`). Agents created with those values never match a price entry and meter at 0.
 
 **Test status:** `pnpm -r test` → 18/18 passing. `pnpm typecheck` → clean across all 4 workspaces.
+
+---
+
+## Session summary — 2026-07-24
+
+### Perf investigation: "Create agent" / sidebar lag — Step 1 result
+
+**Not dev-mode-only. The plan's stop-condition did not trigger.** Production build
+(`183 kB` First Load JS, 593 KB decoded JS / 31 requests, vs dev's ~3 MB / ~70) served on
+:3100 while dev stayed on :3000:
+
+| Interaction (production build) | Mount | Long task |
+|---|---|---|
+| "Create agent" dialog, cold trial 1 | 110 ms | 112 ms |
+| "Create agent" dialog, cold trial 2 | 58 ms | 59 ms |
+| Agent-info sidebar | 21 ms | none |
+| Bare "Sort by" `Select` popup (no dialog) | 63 ms | 76 ms |
+
+**Cause is Base UI's popup machinery, not app code and not dev overhead.** The clincher is
+the last row — a plain 4-item `Select` with no dialog involved costs a 76 ms long task by
+itself. That same `Select` cost 82 ms in dev vs 63 ms in prod (~1.3×), nowhere near the
+~16× bundle-size gap; if dev overhead drove this, that ratio would be huge.
+
+So PLANS.md hypothesis #1 (dialog subtree mount cost) is live; #2/#3/#4 are not implicated.
+The sidebar at 21 ms / zero long tasks is already fine. **Still open:** whether the ~60 ms
+is one-time popup init or per-open — untestable here because synthetic `.click()` cannot
+close a Base UI popup, so every trial is a cold open.
+
+**Measurement caveat:** taken with `document.visibilityState === "hidden"` (the tab cannot
+be foregrounded programmatically on this machine). Only throttle-immune techniques were
+used — synchronous timing around `click()`, `MutationObserver` for the async portal mount,
+`PerformanceObserver` longtask. Hidden tabs skip paint, so these are a **lower bound**;
+dev-vs-prod is apples-to-apples since both ran in the same tab.
+
+**Environment gotcha found the hard way:** `next build` and `next dev` share
+`frontend/dashboard/.next`, so building while the dev server runs corrupts it —
+`500 __webpack_modules__[moduleId] is not a function` on every request, no self-recovery.
+Fix: kill the dashboard process, delete `.next` (gitignored), relaunch.
+
+### Feature 7: Edit agent
+
+**Problem:** agents were immutable after creation. Fixing a typo or a wrong model meant
+delete-and-recreate, which issues a **new token** and abandons the month's accumulated
+spend. `PATCH /v1/agents/:id` was a 501 stub; only `maxBudgetCents` was reachable, via
+`PATCH /v1/agents/:id/policy`.
+
+**What changed:** a pen button at the right of every row opens a dialog mirroring "Create
+agent", pre-filled, editing **Name / Model / Max budget**. The agent keeps its id, token,
+and spend.
+
+- `backend/api/src/routes/agents.ts` — new `PATCH /v1/agents/:id` plus `parseUpdateBody`
+  (partial update: an absent key means "leave alone", which is why it can't reuse
+  `parseCreateBody`, where absent and null both mean null). Name uniqueness reuses create's
+  non-archived-scoped query plus `ne(agents.id, id)` so an agent can't collide with itself.
+  Budget writes the same `policies` row `PATCH .../policy` targets. `findAgent` extended
+  with `status` so archived agents 404.
+- **`providerSlug` is rejected with `400 provider_slug_immutable`**, not silently ignored.
+  Since Feature 3 it is the proxy's authorization boundary for which upstream an agent's
+  token may reach, so editing it would silently repoint a live token at another vendor.
+- `backend/api/src/routes/stubs.ts` — removed the `PATCH /v1/agents/:id` stub. **This was
+  mandatory, not cleanup:** `registerStubRoutes` runs before `registerAgentRoutes`
+  (`index.ts:37-38`) and Fastify throws on duplicate registration, so leaving it would have
+  broken api boot. Noted in that file's doc comment.
+- `frontend/dashboard/lib/agent-options.ts` (new) — `PROVIDERS` / `MODELS_BY_PROVIDER`
+  extracted from `create-agent-dialog.tsx` now that two dialogs need them (same precedent as
+  `lib/agent-status.ts`), plus `providerLabel()` / `modelsForProvider()` for safe lookup of
+  a slug that arrives from the api as a plain `string`.
+- `frontend/dashboard/components/edit-agent-dialog.tsx` (new) — **one dialog for the whole
+  table, driven by an id, not one per row.** Given the 58–110 ms Base UI dialog mount
+  measured above, a per-row instance would multiply that across every row. Seeds form state
+  via React's render-time "adjusting state when a prop changes" pattern keyed on the agent's
+  **id, not the object** — `agent` is re-derived from the 3 s poll every render, so keying on
+  identity would wipe in-progress edits each tick. The snapshot deliberately survives close
+  so the dialog doesn't blank mid close-animation. Sends only changed fields; Save disabled
+  until dirty; duplicate-name check excludes the agent's own name.
+- `frontend/dashboard/lib/api.ts` — `updateAgent()`, `UpdateAgentInput` (no `providerSlug`),
+  `UpdateAgentResponse`, and a `provider_slug_immutable` friendly message.
+- `frontend/dashboard/app/page.tsx` — `editingAgentId` state, `editingAgent` derived from
+  the live list, `handleUpdated`, a rightmost edit column, and one `<EditAgentDialog>`.
+  No `stopPropagation` needed: only the Name cell carries an `onClick`.
+- `frontend/dashboard/app/globals.css` — `pen-shake` keyframe + `--animate-pen-shake`,
+  nested inside `@theme` per Tailwind v4. Applied as
+  `group-hover/button:animate-pen-shake motion-reduce:animate-none`, reusing the
+  `group/button` class already in `button.tsx`'s base cva — no wrapper element needed.
+
+**Icon:** lucide's `Pencil` (already a dependency) — the supplied icon minus the half-square.
+`size-3.5` at `strokeWidth={1.75}` so it reads lighter than lucide's default 2.
+
+**Verified live:** `PATCH` exercised directly — rename, model change, budget change, budget
+→ null, multi-field, all 200. Negatives: duplicate name → 409 with a ready-to-display
+message, `providerSlug` → 400 `provider_slug_immutable`, empty body → 400, negative budget →
+400, blank name → 400, unknown id → 404, archived agent → 404. Renaming an agent to a
+different case of its own name → 200 (self-collision correctly excluded), and a name freed
+by archiving is reusable.
+
+**Proxy enforcement proven end-to-end:** a probe agent at budget 100 passed the budget gate
+and reached the real OpenAI (genuine `invalid_api_key`); immediately after
+`PATCH maxBudgetCents → 0` the same call was denied `403 budget_exceeded` before any
+upstream request — confirming edits take effect on the very next call, with no cache to bust
+(`pgAgentStore.findByTokenHash` re-reads per request).
+
+**Verified in the UI:** 7 columns with the edit button as the last cell of every row; pen
+renders 2 paths at stroke-width 1.75; `pen-shake` keyframe confirmed present in the compiled
+stylesheet. Dialog opens pre-filled with the assistant field **disabled**, Save **disabled
+until dirty**, and clicking the pen does **not** open the sidebar. An edit through the UI
+updated the row and **survived two 3 s poll ticks**, proving it persisted server-side rather
+than only updating local state.
+
+**Not verified:** the hover shake animation itself — a backgrounded tab pauses CSS
+animations and the tab cannot be foregrounded programmatically here. Needs an eyeball.
+
+**Test status:** `pnpm -r test` → 18/18 (unchanged; the api workspace still has no test
+setup, by decision). `pnpm typecheck` → clean across all 4 workspaces.

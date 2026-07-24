@@ -62,6 +62,57 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
   return { name, providerSlug, maxBudgetCents, model };
 }
 
+/** Partial update from PATCH /v1/agents/:id. Every field is optional; an
+ *  absent key means "leave alone", which is why this can't reuse
+ *  parseCreateBody — there, absent and null both mean null. */
+interface UpdateAgentBody {
+  name?: string;
+  model?: string | null;
+  maxBudgetCents?: number | null;
+}
+
+type UpdateParseResult =
+  | { ok: true; body: UpdateAgentBody }
+  | { ok: false; error: "invalid_body" | "provider_slug_immutable" };
+
+function parseUpdateBody(body: unknown): UpdateParseResult {
+  if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
+  const rec = body as Record<string, unknown>;
+
+  // providerSlug is the proxy's authorization boundary (the assistant gate in
+  // backend/proxy/src/routes/proxy.ts decides which upstream an agent's token
+  // may reach). Editing it would silently repoint a live token at a different
+  // vendor, so reject the attempt loudly instead of ignoring the field.
+  if ("providerSlug" in rec) return { ok: false, error: "provider_slug_immutable" };
+
+  const out: UpdateAgentBody = {};
+
+  if ("name" in rec) {
+    const name = rec["name"];
+    if (typeof name !== "string" || name.trim() === "") return { ok: false, error: "invalid_body" };
+    out.name = name.trim();
+  }
+
+  if ("model" in rec) {
+    const model = rec["model"];
+    if (model === null) out.model = null;
+    else if (typeof model === "string" && model.trim() !== "") out.model = model;
+    else return { ok: false, error: "invalid_body" };
+  }
+
+  if ("maxBudgetCents" in rec) {
+    const raw = rec["maxBudgetCents"];
+    if (raw === null) out.maxBudgetCents = null;
+    else if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) out.maxBudgetCents = raw;
+    else return { ok: false, error: "invalid_body" };
+  }
+
+  // An empty patch is a caller mistake, not a no-op success.
+  if (Object.keys(out).length === 0) return { ok: false, error: "invalid_body" };
+
+  return { ok: true, body: out };
+}
+
 function parsePolicyBody(body: unknown): { maxBudgetCents: number | null } | null {
   if (typeof body !== "object" || body === null) return null;
   const rec = body as Record<string, unknown>;
@@ -91,14 +142,23 @@ function extractBearer(header: string | undefined): string | null {
   return token === undefined ? null : token.trim() || null;
 }
 
-/** Shared lookup used by the policy/freeze/unfreeze/delete routes: agent
- *  must exist. tokenHash is included so freeze/unfreeze can verify the
- *  caller-supplied token without a second query. */
-async function findAgent(
-  id: string,
-): Promise<{ id: string; policyId: string | null; tokenHash: string } | null> {
+/** Shared lookup used by the policy/freeze/unfreeze/delete/update routes:
+ *  agent must exist. tokenHash is included so freeze/unfreeze can verify the
+ *  caller-supplied token without a second query; status so PATCH can refuse
+ *  to edit an archived agent. */
+async function findAgent(id: string): Promise<{
+  id: string;
+  policyId: string | null;
+  tokenHash: string;
+  status: AgentStatus;
+} | null> {
   const rows = await db
-    .select({ id: agents.id, policyId: agents.policyId, tokenHash: agents.tokenHash })
+    .select({
+      id: agents.id,
+      policyId: agents.policyId,
+      tokenHash: agents.tokenHash,
+      status: agents.status,
+    })
     .from(agents)
     .where(eq(agents.id, id));
 
@@ -244,6 +304,103 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
 
     return withSpend;
   });
+
+  app.patch<{ Params: { id: string }; Body: unknown }>(
+    "/v1/agents/:id",
+    async (req, reply) => {
+      const agent = await findAgent(req.params.id);
+      // Archived agents are hidden from GET /v1/agents (DELETE archives rather
+      // than hard-deletes), so they must not be editable either — treat them
+      // as gone rather than 200-ing an edit nobody can see.
+      if (agent === null || agent.status === "archived") {
+        reply.code(404);
+        return { error: "agent_not_found" };
+      }
+
+      const parsed = parseUpdateBody(req.body);
+      if (!parsed.ok) {
+        reply.code(400);
+        return parsed.error === "provider_slug_immutable"
+          ? {
+              error: "provider_slug_immutable",
+              message: "An agent's assistant can't be changed after it's created.",
+            }
+          : { error: "invalid_body" };
+      }
+      const body = parsed.body;
+
+      if (body.name !== undefined) {
+        // Same non-archived scoping as POST /v1/agents (and the partial unique
+        // index in db/schema.ts), plus ne(id) so an agent doesn't collide with
+        // its own row when the name is submitted unchanged.
+        const clash = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(
+            and(
+              eq(agents.name, body.name),
+              ne(agents.status, "archived"),
+              ne(agents.id, agent.id),
+            ),
+          );
+        if (clash.length > 0) {
+          reply.code(409);
+          return {
+            error: "agent_name_taken",
+            message: `An agent named "${body.name}" already exists`,
+          };
+        }
+      }
+
+      if (body.maxBudgetCents !== undefined && agent.policyId === null) {
+        reply.code(409);
+        return { error: "agent_has_no_policy" };
+      }
+
+      const agentFields: { name?: string; model?: string | null } = {};
+      if (body.name !== undefined) agentFields.name = body.name;
+      if (body.model !== undefined) agentFields.model = body.model;
+
+      if (Object.keys(agentFields).length > 0) {
+        await db
+          .update(agents)
+          .set({ ...agentFields, updatedAt: new Date() })
+          .where(eq(agents.id, agent.id));
+      }
+
+      // Budget lives on the agent's dedicated 1:1 policy row, same target
+      // PATCH /v1/agents/:id/policy writes to.
+      if (body.maxBudgetCents !== undefined && agent.policyId !== null) {
+        await db
+          .update(policies)
+          .set({ maxBudgetCents: body.maxBudgetCents, updatedAt: new Date() })
+          .where(eq(policies.id, agent.policyId));
+      }
+
+      // Re-read so the response reflects committed state including the fields
+      // the caller didn't send — same column set as a GET /v1/agents row minus
+      // the live Redis spend counters. Never includes the token.
+      const rows = await db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          providerSlug: agents.providerSlug,
+          model: agents.model,
+          status: agents.status,
+          maxBudgetCents: policies.maxBudgetCents,
+        })
+        .from(agents)
+        .leftJoin(policies, eq(policies.id, agents.policyId))
+        .where(eq(agents.id, agent.id));
+
+      const updated = rows[0];
+      if (updated === undefined) {
+        reply.code(404);
+        return { error: "agent_not_found" };
+      }
+      return updated;
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: unknown }>(
     "/v1/agents/:id/policy",

@@ -38,6 +38,29 @@ export interface CreateAgentInput {
   model: string | null;
 }
 
+/**
+ * Partial update for PATCH /v1/agents/:id. Every field is optional and an
+ * omitted key means "leave alone", so only genuinely-changed fields should be
+ * sent. `providerSlug` is deliberately absent: the api rejects any attempt to
+ * change it (provider_slug_immutable) because it's the proxy's authorization
+ * boundary for which upstream an agent's token can reach.
+ */
+export interface UpdateAgentInput {
+  name?: string;
+  model?: string | null;
+  maxBudgetCents?: number | null;
+}
+
+/** Exact shape returned by PATCH /v1/agents/:id — a committed agent row, no token. */
+export interface UpdateAgentResponse {
+  id: string;
+  name: string;
+  providerSlug: string;
+  model: string | null;
+  status: AgentStatus;
+  maxBudgetCents: number | null;
+}
+
 /** Shared shape of POST .../freeze, POST .../unfreeze, PATCH .../policy. */
 export interface AgentMutationResponse {
   id: string;
@@ -65,6 +88,7 @@ export class ApiError extends Error {
  */
 const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_provider_slug: "That provider isn't supported.",
+  provider_slug_immutable: "An agent's assistant can't be changed after it's created.",
   agent_not_found: "That agent no longer exists.",
   agent_has_no_policy: "This agent has no budget policy to update.",
   invalid_body: "That request wasn't valid — check the fields and try again.",
@@ -105,6 +129,20 @@ export function listAgents(): Promise<AgentListItem[]> {
 export function createAgent(input: CreateAgentInput): Promise<CreateAgentResponse> {
   return request<CreateAgentResponse>("/v1/agents", {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Edits an existing agent in place — keeps its id, token, and accumulated
+ * spend. Send only the fields that actually changed; see UpdateAgentInput.
+ */
+export function updateAgent(
+  id: string,
+  input: UpdateAgentInput,
+): Promise<UpdateAgentResponse> {
+  return request<UpdateAgentResponse>(`/v1/agents/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }

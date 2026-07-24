@@ -93,6 +93,27 @@ body {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Hover cue for the pen on each row's Edit button. Deliberately restrained —
+   a 1px nudge with a slight tilt, not a wobble. Keyframes live inside @theme
+   per Tailwind v4, which registers the `animate-pen-shake` utility from the
+   --animate-* key. */
+@theme {
+  --animate-pen-shake: pen-shake 0.4s ease-in-out;
+
+  @keyframes pen-shake {
+    0%,
+    100% {
+      transform: translateX(0) rotate(0deg);
+    }
+    25% {
+      transform: translateX(-1px) rotate(-4deg);
+    }
+    75% {
+      transform: translateX(1px) rotate(4deg);
+    }
+  }
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
