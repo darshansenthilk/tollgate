@@ -331,6 +331,58 @@ concept — and the surviving `isOverBudget`/flag plumbing to build it on — is
 that feature is built. **Verified:** typecheck clean; the banner text is absent from the
 rendered dashboard (:3000), table still renders. Date: 2026-07-24.
 
+### System status page overhaul + navbar hover fix
+
+**Problem:** the `/status` page predated the "industrial glass" overhaul (Feature 8) and still
+used raw `<section>`/`<div>` panels with inline styles, a plain `text-3xl` heading, a duplicate
+"Tollgate" eyebrow, and bare `UP/DEGRADED/DOWN` mono text — visually a different product from
+the dashboard. Separately, the navbar's "System status" link never highlighted coral on hover
+the way "Agent Dashboard" does.
+
+**Navbar hover fix — `frontend/dashboard/app/layout.tsx`:** the link already had
+`hover:text-brand`, but also set its colour via an **inline `style` attribute**, which wins the
+cascade over Tailwind's `:hover` class, so the hover never fired. Replaced the inline
+`style={{ color: "var(--muted-foreground)" }}` with the `text-muted-foreground` utility class,
+so `hover:text-brand` can take effect — now structurally identical to the working "Agent
+Dashboard" link (`text-foreground … hover:text-brand`).
+
+**Status page — `frontend/dashboard/app/status/page.tsx` (kept a server component; probe +
+refresh-to-re-probe model unchanged):**
+- Container widened to the dashboard's `max-w-5xl px-6 py-12`.
+- Header adopts the bracketed title idiom copied from `app/page.tsx`: coral mono `[ ]` brackets
+  (left one `-ml-[6px]`) flanking an `<h1>` with the white→`--brand` gradient, `bg-clip-text`,
+  `font-heading` (Space Grotesk), `text-[2.34rem]`. The duplicate "Tollgate" eyebrow was
+  removed (the nav already brands). Subtitle kept as a plain muted line with the health `Dot`.
+- Each service is now a shared `Card` (`CardHeader`/`CardTitle`/`CardDescription`/`CardAction`/
+  `CardContent`) instead of a hand-styled `<section>`, so it matches the dashboard's "All
+  agents" surface. The `HealthBadge` sits in the `CardAction` (top-right).
+- Inline styles swapped for utility classes (`text-muted-foreground`, `font-mono`,
+  `divide-border`); `style` retained only for dynamic status colour (the `Dot`, the unreachable
+  error line) — same idiom `AgentStatusBadge` uses.
+- Added `formatUptime()` (uptimeSec → "1h 04m") and a footer "Last checked <time> · refresh to
+  re-probe." from the report's newest `timestamp`.
+
+**`frontend/dashboard/components/health-badge.tsx` (new):** the health-domain analogue of
+`AgentStatusBadge` — an outline `Badge` tinted via `color-mix` from a functional token, mapping
+`up→--ok` / `degraded→--amber` / `down→--err`, in `font-mono`. Marked **`"use client"`** because
+`Badge` calls a hook (`useRender`) and the status page is a server component, so the badge must
+be a client leaf across that boundary (`state` is a plain string, crosses cleanly).
+
+**Design guardrail honoured:** brand coral stays title-only; the functional UP/DEGRADED/DOWN
+chips and dep dots use the green/amber/red trio, kept away from the coral title (coral and
+`--err` are close in hue — `globals.css` mandates they never share a component context).
+
+**Verified:** `pnpm --filter @tollgate/dashboard typecheck` clean; `/status` serves 200. Via
+computed styles on :3000/status (valid in a hidden tab — no animation): title is a
+white→`rgb(255,74,61)` gradient in Space Grotesk between coral brackets; both service panels are
+`Card`s on `oklch(0.205 0.004 60)` with the ring; UP badges render `--ok` green
+(`rgb(70,196,127)`) with a color-mix border in JetBrains Mono; both fonts loaded; the "Tollgate"
+eyebrow is absent from the page body. Navbar: the "System status" link's inline `style` is gone
+and it now carries `text-muted-foreground transition-colors hover:text-brand`, matching the
+Agent Dashboard link. **Not verified (needs an eyeball):** the actual coral-on-hover paint — a
+hidden tab can't reliably trigger `:hover` — and perceived colour/glyph rendering. Date:
+2026-07-24.
+
 **Verified:** `pnpm --filter @tollgate/dashboard typecheck` clean. In the running dashboard
 (:3000), via computed styles (valid in a backgrounded tab — no animation involved): with
 **0 selected** the toolbar is present, reads "0 agents selected", has **no Clear button**, and

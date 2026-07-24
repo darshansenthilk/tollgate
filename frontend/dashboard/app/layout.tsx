@@ -56,8 +56,7 @@ export default function RootLayout({
             </Link>
             <Link
               href="/status"
-              className="transition-colors hover:text-brand"
-              style={{ color: "var(--muted-foreground)" }}
+              className="text-muted-foreground transition-colors hover:text-brand"
             >
               System status
             </Link>

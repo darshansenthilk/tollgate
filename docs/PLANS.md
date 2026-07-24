@@ -10,7 +10,7 @@ Current branch is `Eshaan-2` (tracks `origin/Eshaan-2`). Merges into `main` are 
 
 Committed and **merged into `main`** (commit `4bdfe04`; `Eshaan-2`, `origin/Eshaan-2`, `main`, `origin/main` all there): the opt-in "Select agents" mode + animations, the heading/nav rename and poll re-render fix (Features 4–6), the **Edit agent** feature (Feature 7, commit `69859c7`), and the **"industrial glass" colour/type overhaul** + refinements (Feature 8, commit `4bdfe04`).
 
-**Uncommitted on `Eshaan-2` (this session, 2026-07-24):** (1) selection-toolbar changes — the action bar now shows for all of selection mode, Stop/Resume/Delete are disabled-not-hidden when their subset is empty, and the "Clear" button was removed (an earlier same-session "move Clear next to the count" step was superseded by the removal and never committed); (2) the "X agents need attention" banner was removed from the dashboard, held back for a planned **flag feature** (see the `needs-attention-banner` memory). See `docs/COMPLETION.md` for the full detail. Not yet committed or pushed.
+**Uncommitted on `Eshaan-2` (this session, 2026-07-24):** (1) selection-toolbar changes — the action bar now shows for all of selection mode, Stop/Resume/Delete are disabled-not-hidden when their subset is empty, and the "Clear" button was removed (an earlier same-session "move Clear next to the count" step was superseded by the removal and never committed); (2) the "X agents need attention" banner was removed from the dashboard, held back for a planned **flag feature** (see the `needs-attention-banner` memory); (3) the `/status` (System status) page was overhauled to the dashboard's conventions (bracketed coral title, `Card` surfaces, new `HealthBadge`) and the navbar "System status" hover-highlight was fixed (per the root-level `PLAN.md`). See `docs/COMPLETION.md` for the full detail. Not yet committed or pushed.
 
 **The agent filter feature is cancelled** — documented 2026-07-15, never started, dropped by the user. Do not implement it.
 
@@ -26,10 +26,12 @@ under "Open: finish the 'Create agent' dialog perf work"; the user picks which, 
   per the `running-the-dev-server` memory. **Never `next build` while `next dev` runs** — shared
   `.next`, corrupts the dev server.
 - Everything through Feature 8 is committed and merged into `main` (`4bdfe04`). The
-  2026-07-24 changes (selection-toolbar + needs-attention-banner removal) are **uncommitted**
-  in the working tree — 4 files: `components/selection-toolbar.tsx`,
-  `components/batch-stop-dialog.tsx`, `components/batch-delete-dialog.tsx`, `app/page.tsx`
-  (plus these docs). Don't push to `main` — the user merges manually.
+  2026-07-24 changes (selection-toolbar + needs-attention-banner removal + status-page
+  overhaul + navbar hover fix) are **uncommitted** in the working tree — 7 files:
+  `components/selection-toolbar.tsx`, `components/batch-stop-dialog.tsx`,
+  `components/batch-delete-dialog.tsx`, `components/health-badge.tsx` (new), `app/page.tsx`,
+  `app/layout.tsx`, `app/status/page.tsx` (plus `PLAN.md` and these docs). Don't push to
+  `main` — the user merges manually.
 
 ---
 

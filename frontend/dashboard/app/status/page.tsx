@@ -1,4 +1,13 @@
 import type { DependencyHealth, HealthReport } from "@tollgate/shared";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { HealthBadge, type HealthState } from "@/components/health-badge";
 
 const SERVICES = [
   {
@@ -32,6 +41,22 @@ async function probe(url: string): Promise<Probe> {
   }
 }
 
+/** Map a probe to the three functional health states the HealthBadge renders. */
+function healthState(p: Probe): HealthState {
+  if (!p.reachable) return "down";
+  return p.report.ok ? "up" : "degraded";
+}
+
+/** uptimeSec → "1h 04m" / "5m 03s" / "42s". Reads more finished than raw seconds. */
+function formatUptime(totalSec: number): string {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
 function Dot({ ok }: { ok: boolean }) {
   return (
     <span
@@ -46,9 +71,9 @@ function DepRow({ name, dep }: { name: string; dep: DependencyHealth }) {
     <div className="flex items-center justify-between py-2 text-sm">
       <span className="flex items-center gap-2">
         <Dot ok={dep.state === "ok"} />
-        <span style={{ color: "var(--muted-foreground)" }}>{name}</span>
+        <span className="text-muted-foreground">{name}</span>
       </span>
-      <span className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>
+      <span className="font-mono text-xs text-muted-foreground">
         {dep.state === "ok" ? `${dep.latencyMs}ms` : dep.detail ?? "error"}
       </span>
     </div>
@@ -59,19 +84,34 @@ export default async function StatusPage() {
   const probes = await Promise.all(SERVICES.map((s) => probe(s.url)));
   const allOk = probes.every((p) => p.reachable && p.report.ok);
 
+  // Newest timestamp across the reachable probes, for the "last checked" line.
+  // flatMap narrows the union so `p.report` is accessible; ISO strings sort
+  // chronologically as plain strings.
+  const lastChecked = probes
+    .flatMap((p) => (p.reachable ? [p.report.timestamp] : []))
+    .sort()
+    .at(-1);
+
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
-      <header className="mb-10">
-        <p
-          className="mb-2 font-mono text-xs uppercase tracking-[0.25em]"
-          style={{ color: "var(--muted-foreground)" }}
-        >
-          Tollgate
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          System status
-        </h1>
-        <p className="mt-2 flex items-center gap-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+    <main className="mx-auto max-w-5xl px-6 py-12">
+      <header className="mb-6">
+        {/* Bracketed title in the dashboard's idiom — coral mono brackets
+            flanking the wordmark, whose white→coral gradient samples across the
+            text (inline-block keeps bg-clip-text hugging it). Matches app/page.tsx. */}
+        <div className="flex items-baseline gap-2">
+          {/* -6px pulls the bracket's inset glyph ink left to line up under the
+              subtitle's first character, as on the dashboard. */}
+          <span aria-hidden className="-ml-[6px] font-mono text-3xl font-normal text-brand">
+            [
+          </span>
+          <h1 className="inline-block bg-linear-to-r from-white to-brand bg-clip-text font-heading text-[2.34rem] font-semibold tracking-tight text-transparent">
+            System status
+          </h1>
+          <span aria-hidden className="font-mono text-3xl font-normal text-brand">
+            ]
+          </span>
+        </div>
+        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
           <Dot ok={allOk} />
           {allOk
             ? "All services reporting. Redis and Postgres reachable from both planes."
@@ -82,49 +122,44 @@ export default async function StatusPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         {SERVICES.map((svc, i) => {
           const p = probes[i]!;
-          const up = p.reachable && p.report.ok;
           return (
-            <section
-              key={svc.key}
-              className="rounded-lg border p-5"
-              style={{ background: "var(--panel)", borderColor: "var(--line)" }}
-            >
-              <div className="mb-1 flex items-center justify-between">
-                <h2 className="font-medium">{svc.label}</h2>
-                <span
-                  className="font-mono text-xs"
-                  style={{ color: up ? "var(--ok)" : "var(--err)" }}
-                >
-                  {p.reachable ? (p.report.ok ? "UP" : "DEGRADED") : "DOWN"}
-                </span>
-              </div>
-              <p className="mb-4 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                {svc.role} · <span className="font-mono">{svc.url}</span>
-              </p>
-
-              {p.reachable ? (
-                <div className="divide-y" style={{ borderColor: "var(--line)" }}>
-                  <DepRow name="Redis" dep={p.report.redis} />
-                  <DepRow name="Postgres" dep={p.report.postgres} />
-                  <div className="flex items-center justify-between py-2 text-sm">
-                    <span style={{ color: "var(--muted-foreground)" }}>Uptime</span>
-                    <span className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>
-                      {p.report.uptimeSec}s
-                    </span>
+            <Card key={svc.key}>
+              <CardHeader>
+                <CardTitle>{svc.label}</CardTitle>
+                <CardDescription>
+                  {svc.role} · <span className="font-mono">{svc.url}</span>
+                </CardDescription>
+                <CardAction>
+                  <HealthBadge state={healthState(p)} />
+                </CardAction>
+              </CardHeader>
+              <CardContent>
+                {p.reachable ? (
+                  <div className="divide-y divide-border">
+                    <DepRow name="Redis" dep={p.report.redis} />
+                    <DepRow name="Postgres" dep={p.report.postgres} />
+                    <div className="flex items-center justify-between py-2 text-sm">
+                      <span className="text-muted-foreground">Uptime</span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {formatUptime(p.report.uptimeSec)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <p className="font-mono text-xs" style={{ color: "var(--err)" }}>
-                  {p.error}
-                </p>
-              )}
-            </section>
+                ) : (
+                  <p className="font-mono text-xs" style={{ color: "var(--err)" }}>
+                    {p.error}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           );
         })}
       </div>
 
-      <footer className="mt-10 text-xs" style={{ color: "var(--muted-foreground)" }}>
-        Refresh to re-probe.
+      <footer className="mt-8 text-xs text-muted-foreground">
+        {lastChecked
+          ? `Last checked ${new Date(lastChecked).toLocaleTimeString()} · refresh to re-probe.`
+          : "Refresh to re-probe."}
       </footer>
     </main>
   );
