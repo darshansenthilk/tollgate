@@ -228,3 +228,58 @@ animations and the tab cannot be foregrounded programmatically here. Needs an ey
 
 **Test status:** `pnpm -r test` → 18/18 (unchanged; the api workspace still has no test
 setup, by decision). `pnpm typecheck` → clean across all 4 workspaces.
+
+### Feature 8: "Industrial glass" color + type overhaul
+
+**Problem:** the dashboard used a cool neutral palette (gray/green/amber/red) and Geist
+everywhere. The `docs/` style template defines a warm "industrial glass" identity — warm
+near-black surfaces, a single coral accent, Space Grotesk / JetBrains Mono type, bracketed
+mono labels. Requested: adopt that colorway + fonts only (no layout/component restructure).
+
+**Design decisions (confirmed with the user):** coral **#ff4a3d** is "the orange"; it stays
+**brand-only** (danger keeps its own red — the functional green→amber→red budget signal is
+untouched); adopt Space Grotesk (headings) + JetBrains Mono (mono labels), keep Geist for
+body; title becomes `[ Agent Dashboard ]`.
+
+**What changed — almost entirely a token remap, so it cascades to every surface (Cards,
+Dialogs, Selects, Badges, sidebar, and the `/status` page) with no per-component edits:**
+
+- `frontend/dashboard/app/globals.css` —
+  - `:root` custom tokens warmed: `--bg #0c0f12→#08080a`, `--ink #e8edf2→#ecebe6`,
+    `--line` → `rgba(255,255,255,.09)`, `--panel #14181d→#121011`, `--ok #35d07f→#46c47f`,
+    `--amber #f5b83d→#f0b03a`. `--err` kept (danger). New `--brand: #ff4a3d`.
+  - `body` — added a fixed low-alpha coral `radial-gradient` ambient glow (switched
+    `background`→`background-color` so the image isn't wiped).
+  - `@theme inline` — `--font-heading` → Space Grotesk, added `--font-mono` → JetBrains
+    Mono and `--color-brand` (enables `text-brand`/`bg-brand`/`to-brand`).
+  - `.dark` — neutrals warmed with a whisper of chroma (~0.004 @ hue 60–80); `--primary`,
+    `--ring`, `--sidebar-primary` set to coral; `--destructive` kept as danger red.
+- `frontend/dashboard/app/layout.tsx` — load `Space_Grotesk` + `JetBrains_Mono` via
+  `next/font/google` (variable-weight, no `weight` array), append their `.variable`s to
+  `<html>`; nav gains a 10px sharp coral brand square and `hover:text-brand` links.
+- `frontend/dashboard/app/page.tsx` — title wrapped as `[ Agent Dashboard ]`: coral mono
+  brackets flanking the h1, whose gradient endpoint moved `#9CA3AF`→`--brand` (white→coral)
+  and which now carries `font-heading` (Space Grotesk).
+
+**Coral is confined to brand chrome** (nav mark, title, primary CTAs, focus rings) — never
+functional status. Caveat noted in the CSS: coral and danger-red `#ff5c5c` are close in hue
+but never co-occur in one component; deepen `--err` if it ever reads muddy.
+
+**Verified (computed styles + `document.fonts`, valid in a hidden tab):** page bg
+`rgb(8,8,10)`; body ambient glow present; title gradient `white → rgb(255,74,61)` in Space
+Grotesk between `[` `]`; mono labels in JetBrains Mono; primary button, nav square, and
+dialog submit all `rgb(255,74,61)`; dialog popover warmed (`oklch(0.205 0.004 60)`) with a
+Space Grotesk title. `pnpm --filter @tollgate/dashboard typecheck` clean; dashboard serves
+200 with no webpack error. **Not verified:** true perceived color/glyph rendering — a
+backgrounded tab can't be judged for that and can't be foregrounded here; needs an eyeball.
+
+**Test status:** `pnpm -r test` → 18/18 (no backend touched). `pnpm typecheck` → clean.
+
+**Refinements after the initial overhaul (same `page.tsx`, all verified):**
+- Title enlarged ~25%: h1 `text-3xl` → `text-[2.34rem]` (30px → 37.44px, measured 1.248×),
+  brackets `text-2xl` → `text-3xl` to keep enclosing it.
+- Subtitle copy → "Your group of agents, all managed in one place."
+- Left bracket got `-ml-[6px]` so its glyph ink lines up under the subtitle's first
+  character. Measured, not eyeballed: the monospace `[` ink sits +5px inset from its box
+  while the sans first char sits −1px, a 6px gap → −6px closes it (residual 0px). Technique
+  saved to the `browser-verification-gotchas` memory.

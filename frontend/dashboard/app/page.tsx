@@ -289,13 +289,26 @@ export default function AgentsPage() {
     <main className="mx-auto max-w-5xl px-6 py-12">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          {/* inline-block so the gradient box hugs the text — on a full-width
-              block the text would only ever sample the left end of the ramp. */}
-          <h1 className="inline-block bg-linear-to-r from-white to-[#9CA3AF] bg-clip-text text-3xl font-semibold tracking-tight text-transparent">
-            Agent Dashboard
-          </h1>
+          {/* Bracketed title in the template's eyebrow idiom — coral mono
+              brackets flanking the wordmark. inline-block on the h1 keeps
+              bg-clip-text hugging the text so the white→coral ramp samples
+              across the word, not the whole row. */}
+          <div className="flex items-baseline gap-2">
+            {/* -6px pulls the bracket's glyph ink (which the monospace font
+                insets ~5px from its box) left to line up under the subtitle's
+                first character. Measured, not eyeballed. */}
+            <span aria-hidden className="-ml-[6px] font-mono text-3xl font-normal text-brand">
+              [
+            </span>
+            <h1 className="inline-block bg-linear-to-r from-white to-brand bg-clip-text font-heading text-[2.34rem] font-semibold tracking-tight text-transparent">
+              Agent Dashboard
+            </h1>
+            <span aria-hidden className="font-mono text-3xl font-normal text-brand">
+              ]
+            </span>
+          </div>
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Spend and enforcement status, live from Redis.
+            Your group of agents, all managed in one place.
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

@@ -6,17 +6,40 @@
 
 ## Status as of 2026-07-23
 
-Branch is `Eshaan-next` (tracks `origin/Eshaan-next`; merges into `main` are done manually by the user — never push a feature branch to `main` on their behalf).
+Current branch is `Eshaan-2` (cut from `main` after Feature 7 merged; tracks `origin/Eshaan-2`). `Eshaan-next` was merged into `main` (fast-forward) and is retired. Merges into `main` are done manually by the user — never push a feature branch to `main` on their behalf.
 
-Shipped and closed: the opt-in "Select agents" mode, its pop/slide animations, the "Agent Dashboard" heading + nav rename, and a poll re-render fix. See `docs/COMPLETION.md` (Features 4–6) for the full detail.
+Shipped: the opt-in "Select agents" mode + animations, the heading/nav rename and poll re-render fix (Features 4–6) and the **Edit agent** feature (Feature 7) are **committed and merged into `main`** (commit `69859c7`). The **"industrial glass" colour/type overhaul** + refinements (Feature 8) is **uncommitted**, on `Eshaan-2`. See `docs/COMPLETION.md` for the full detail.
 
 **The agent filter feature is cancelled** — documented 2026-07-15, never started, dropped by the user. Do not implement it.
 
 ## Next task
 
-**Nothing committed.** The Edit agent feature shipped 2026-07-24 (`docs/COMPLETION.md`
-Feature 7). The perf task below is Step-1-complete and still open — pick it up or replace
-this section.
+**Move the "Clear" button next to the selection count.** In the batch-selection toolbar,
+"Clear" currently sits in the right-hand action group with Stop/Resume/Delete, pushed far
+from the "X agents selected" label by `justify-between`. Put it **immediately to the right
+of the count label** instead; leave Stop/Resume/Delete on the right.
+
+- **Only file:** `frontend/dashboard/components/selection-toolbar.tsx`. Its root is a
+  `flex items-center justify-between` div with two children today: the count `<span>` (left)
+  and a `<div class="flex items-center gap-2">` action group (right) holding **Clear** +
+  the Stop/Resume/Delete dialogs (`selection-toolbar.tsx:34–64`).
+- **The change (pure layout):** wrap the count `<span>` and the Clear `<Button>` together in
+  a left `<div class="flex items-center gap-2">`; keep Stop/Resume/Delete in the right group.
+  `justify-between` then splits as
+  `[N agents selected] [Clear] …… [Stop][Resume][Delete]`. Clear stays
+  `variant="ghost" size="sm"`; no props/logic change — `onClearSelection` is already wired.
+- **Verify:** enter selection mode (amber "Select agents"), tick ≥1 row; confirm Clear renders
+  immediately right of the count and still clears; the count is live, so re-check at 2 and 3
+  selected. `pnpm --filter @tollgate/dashboard typecheck` clean. Inspect per the browser
+  caveat below (hidden tab — ask the user to look; a `computed`/`read_page` check is enough
+  here since there's no animation).
+
+### Setup reminders (don't relearn these)
+- Dev stack may already be up (`docker ps`, ports 3000/4000/8080). If not, start it **detached**
+  per the `running-the-dev-server` memory. **Never `next build` while `next dev` runs** — shared
+  `.next`, corrupts the dev server.
+- Feature 8 (the colour/type overhaul) is **uncommitted** on `Eshaan-2` — `globals.css`,
+  `layout.tsx`, `page.tsx`, plus `docs/`. Feature 7 is already in `main`. Don't push to `main`.
 
 ---
 
