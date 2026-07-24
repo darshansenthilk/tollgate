@@ -15,11 +15,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ApiError, freezeAgent } from "@/lib/api";
+import { ApiError, freezeAgent, unfreezeAgent } from "@/lib/api";
+
+type BatchStopMode = "stop" | "resume";
 
 interface BatchStopDialogProps {
   agents: { id: string; name: string }[];
+  mode: BatchStopMode;
   onStatusChange: (id: string, status: AgentStatus) => void;
+  /** Fired only when every agent succeeded — deliberately not on a partial
+   *  failure, so the failed rows stay selected for a retry. */
+  onCompleted?: () => void;
 }
 
 interface RowResult {
@@ -27,17 +33,45 @@ interface RowResult {
   message?: string;
 }
 
+/** Everything that differs between stopping and resuming. The two flows are
+ *  otherwise identical — same per-agent token prompt, same retry semantics —
+ *  so they share one component rather than two near-copies. */
+const MODE_COPY = {
+  stop: {
+    action: "Stop",
+    triggerVariant: "outline",
+    confirmVariant: "destructive",
+    rowSuccess: "Stopped",
+    description:
+      "This denies each agent's next proxy request immediately — in-flight work drains, new requests are refused.",
+  },
+  resume: {
+    action: "Resume",
+    triggerVariant: "default",
+    confirmVariant: "default",
+    rowSuccess: "Resumed",
+    description:
+      "This restores each agent to active — its next proxy request will be evaluated normally again.",
+  },
+} as const;
+
 /**
- * There is no master/admin credential — each agent's OWN token is required,
- * same as the single-agent StopAgentButton. Batching here only means "ask
- * for every token up front and fire the requests in one pass"; it does not
- * skip or weaken the per-agent auth check in any way.
+ * There is no master/admin credential — each agent's OWN token is required.
+ * Batching here only means "ask for every token up front and fire the requests
+ * in one pass"; it does not skip or weaken the per-agent auth check in any way.
  */
-export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps) {
+export function BatchStopDialog({
+  agents,
+  mode,
+  onStatusChange,
+  onCompleted,
+}: BatchStopDialogProps) {
   const [open, setOpen] = useState(false);
   const [tokens, setTokens] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [results, setResults] = useState<Record<string, RowResult>>({});
+
+  const copy = MODE_COPY[mode];
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
@@ -64,7 +98,13 @@ export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps
         continue;
       }
       try {
-        const result = await freezeAgent(agent.id, "soft", token);
+        // "Stop" always maps to a soft freeze under the hood — the backend
+        // still models soft vs. hard separately, but the UI no longer exposes
+        // that choice.
+        const result =
+          mode === "stop"
+            ? await freezeAgent(agent.id, "soft", token)
+            : await unfreezeAgent(agent.id, token);
         if (result.status !== undefined) onStatusChange(agent.id, result.status);
         nextResults[agent.id] = { status: "success" };
       } catch (err) {
@@ -79,25 +119,28 @@ export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps
     setPending(false);
 
     const allSucceeded = agents.every((agent) => nextResults[agent.id]?.status === "success");
-    if (allSucceeded) setOpen(false);
+    if (allSucceeded) {
+      setOpen(false);
+      onCompleted?.();
+    }
   }
 
   const anyResults = Object.keys(results).length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button variant="outline" size="sm" />}>
-        Stop
+      <DialogTrigger render={<Button variant={copy.triggerVariant} size="sm" />}>
+        {copy.action}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            Stop {agents.length} agent{agents.length === 1 ? "" : "s"}
+            {copy.action} {agents.length} agent{agents.length === 1 ? "" : "s"}
           </DialogTitle>
           <DialogDescription>
-            Each agent&apos;s own token is required — there&apos;s no master
-            key. Paste each one below; agents left blank are skipped and
-            reported, not silently stopped.
+            {copy.description} Each agent&apos;s own token is required — there&apos;s no
+            master key. Paste each one below; agents left blank are skipped and
+            reported, not silently changed.
           </DialogDescription>
         </DialogHeader>
 
@@ -107,9 +150,9 @@ export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps
             const succeeded = result?.status === "success";
             return (
               <div key={agent.id} className="flex flex-col gap-1.5">
-                <Label htmlFor={`batch-stop-token-${agent.id}`}>{agent.name}</Label>
+                <Label htmlFor={`batch-${mode}-token-${agent.id}`}>{agent.name}</Label>
                 <Input
-                  id={`batch-stop-token-${agent.id}`}
+                  id={`batch-${mode}-token-${agent.id}`}
                   type="password"
                   autoComplete="off"
                   value={tokens[agent.id] ?? ""}
@@ -121,7 +164,7 @@ export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps
                 />
                 {succeeded && (
                   <p className="text-xs" style={{ color: "var(--ok)" }}>
-                    Stopped
+                    {copy.rowSuccess}
                   </p>
                 )}
                 {result?.status === "error" && (
@@ -139,11 +182,11 @@ export function BatchStopDialog({ agents, onStatusChange }: BatchStopDialogProps
             {anyResults ? "Close" : "Cancel"}
           </DialogClose>
           <Button
-            variant="destructive"
+            variant={copy.confirmVariant}
             onClick={handleConfirm}
             disabled={pending || agents.length === 0}
           >
-            {pending ? "Working…" : "Stop"}
+            {pending ? "Working…" : copy.action}
           </Button>
         </DialogFooter>
       </DialogContent>

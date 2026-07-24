@@ -17,6 +17,9 @@ import { ApiError, deleteAgent } from "@/lib/api";
 interface BatchDeleteDialogProps {
   agents: { id: string; name: string }[];
   onDeleted: (ids: string[]) => void;
+  /** Fired only when every agent deleted successfully — deliberately not on a
+   *  partial failure, so the failed rows stay selected for a retry. */
+  onCompleted?: () => void;
 }
 
 /**
@@ -25,7 +28,7 @@ interface BatchDeleteDialogProps {
  * Failures stay listed and selected so the toolbar's count reflects what's
  * actually left to retry.
  */
-export function BatchDeleteDialog({ agents, onDeleted }: BatchDeleteDialogProps) {
+export function BatchDeleteDialog({ agents, onDeleted, onCompleted }: BatchDeleteDialogProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [failures, setFailures] = useState<{ name: string; message: string }[]>([]);
@@ -66,6 +69,7 @@ export function BatchDeleteDialog({ agents, onDeleted }: BatchDeleteDialogProps)
       setFailures(newFailures);
     } else {
       setOpen(false);
+      onCompleted?.();
     }
   }
 

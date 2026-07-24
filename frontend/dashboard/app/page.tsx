@@ -29,12 +29,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
-import { StopAgentButton } from "@/components/stop-agent-button";
-import { DeleteAgentButton } from "@/components/delete-agent-button";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
+import { isStopped } from "@/lib/agent-status";
 import {
   ApiError,
   listAgents,
@@ -44,11 +44,6 @@ import {
 
 const POLL_INTERVAL_MS = 3000;
 const WARNING_THRESHOLD = 0.8;
-
-const FROZEN_STATUSES: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
-  "soft_frozen",
-  "hard_frozen",
-]);
 
 /** Sort choices for the control above the table. "Usage" sorts by
  *  currentMonthSpendCents (dollars), not currentMonthTokens — the Tokens
@@ -114,6 +109,7 @@ export default function AgentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
   const [sidebarAgentId, setSidebarAgentId] = useState<string | null>(null);
 
   const { add: addToast } = useToastManager();
@@ -226,8 +222,15 @@ export default function AgentsPage() {
     setSelectedIds(new Set());
   }
 
+  /** Leaving selection mode always drops the selection, so re-entering starts
+   *  clean. Also what a completed batch action calls to auto-exit. */
+  function exitSelectionMode() {
+    clearSelection();
+    setSelectionMode(false);
+  }
+
   const needsAttention = (agents ?? []).filter(
-    (a) => FROZEN_STATUSES.has(a.status) || isOverBudget(a),
+    (a) => isStopped(a.status) || isOverBudget(a),
   );
 
   // Flagged agents first (primary key), then the chosen sort (secondary,
@@ -257,10 +260,22 @@ export default function AgentsPage() {
             Spend and enforcement status, live from Redis.
           </p>
         </div>
-        <CreateAgentDialog
-          onCreated={handleCreated}
-          existingNames={(agents ?? []).map((a) => a.name)}
-        />
+        <div className="flex flex-col items-end gap-2">
+          <CreateAgentDialog
+            onCreated={handleCreated}
+            existingNames={(agents ?? []).map((a) => a.name)}
+          />
+          <Button
+            type="button"
+            variant={selectionMode ? "outline" : "amber"}
+            onClick={() => {
+              if (selectionMode) exitSelectionMode();
+              else setSelectionMode(true);
+            }}
+          >
+            {selectionMode ? "Done" : "Select agents"}
+          </Button>
+        </div>
       </header>
 
       {needsAttention.length > 0 && (
@@ -316,12 +331,13 @@ export default function AgentsPage() {
             </Select>
           </div>
 
-          {selectedAgents.length > 0 && (
+          {selectionMode && selectedAgents.length > 0 && (
             <SelectionToolbar
               selectedAgents={selectedAgents}
               onDeleted={handleBatchDeleted}
               onStatusChange={handleStatusChange}
               onClearSelection={clearSelection}
+              onCompleted={exitSelectionMode}
             />
           )}
 
@@ -337,20 +353,21 @@ export default function AgentsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={allSelected}
-                      indeterminate={someSelected && !allSelected}
-                      onCheckedChange={toggleSelectAll}
-                      aria-label="Select all agents"
-                    />
-                  </TableHead>
+                  {selectionMode && (
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={allSelected}
+                        indeterminate={someSelected && !allSelected}
+                        onCheckedChange={toggleSelectAll}
+                        aria-label="Select all agents"
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Name</TableHead>
                   <TableHead>Assistant</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Spend / budget</TableHead>
                   <TableHead>Tokens</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -360,7 +377,7 @@ export default function AgentsPage() {
                     agent.maxBudgetCents,
                   );
                   const pct = fraction === null ? null : Math.round(fraction * 100);
-                  const isFrozen = FROZEN_STATUSES.has(agent.status);
+                  const isFrozen = isStopped(agent.status);
                   const overBudget = fraction !== null && fraction >= 1;
                   const warning =
                     fraction !== null && fraction >= WARNING_THRESHOLD && !overBudget;
@@ -373,13 +390,15 @@ export default function AgentsPage() {
 
                   return (
                     <TableRow key={agent.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedIds.has(agent.id)}
-                          onCheckedChange={() => toggleSelected(agent.id)}
-                          aria-label={`Select ${agent.name}`}
-                        />
-                      </TableCell>
+                      {selectionMode && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedIds.has(agent.id)}
+                            onCheckedChange={() => toggleSelected(agent.id)}
+                            aria-label={`Select ${agent.name}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell
                         className="cursor-pointer font-medium"
                         onClick={() => setSidebarAgentId(agent.id)}
@@ -437,21 +456,6 @@ export default function AgentsPage() {
                         <span className="font-mono text-xs">
                           {agent.currentMonthTokens.toLocaleString()}
                         </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <StopAgentButton
-                            agentId={agent.id}
-                            agentName={agent.name}
-                            status={agent.status}
-                            onStatusChange={(status) => handleStatusChange(agent.id, status)}
-                          />
-                          <DeleteAgentButton
-                            agentId={agent.id}
-                            agentName={agent.name}
-                            onDeleted={handleDeleted}
-                          />
-                        </div>
                       </TableCell>
                     </TableRow>
                   );
