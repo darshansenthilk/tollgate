@@ -539,3 +539,98 @@ Stop/Resume/Delete are all `disabled` with `opacity: 0.5` + `pointer-events: non
 stopped agent in the selection) — confirming eligibility drives the disabled state. Resume's
 enable path is the symmetric `resumable.length === 0` and was not exercised live (both test
 agents were Active); an eyeball on the greyed styling is still worth a glance. Date: 2026-07-24.
+
+---
+
+## Session summary — 2026-07-24 (Auth)
+
+### Feature 9: Email + password auth — the api as authority, per-account org isolation
+
+**Built 2026-07-24, UNCOMMITTED. Backend verified; browser flow + eyeball still pending — see the
+"Next task" in `docs/PLANS.md`.** This is the "Auth" milestone.
+
+**Problem:** the dashboard's api was wide open. `backend/api` ran `cors: { origin: true }` and every
+`/v1/agents*` route was reachable anonymously — anyone who could reach `:4000` could CRUD every
+agent. There was no account/user concept (single-tenant `DEFAULT_ORG_ID` placeholder).
+
+**What changed:** **Better Auth (v1.6.25) now runs on the Fastify api as the auth authority.**
+Email+password sign-in/sign-up, httpOnly SameSite=Lax session cookies, every `/v1/*` route gated
+deny-by-default, and all agent data scoped to the caller's **organization** (one org per account,
+provisioned on first session). Anonymous -> 401; another account's agent id -> 404. The dashboard
+is a client that carries the cookie. Decisions (from the user): library Better Auth; the API (not
+just the UI) enforces auth; per-account isolation; the scoping unit is the organization (seeds the
+future host/invite/delegate model — NOT built this cut).
+
+**Backend (`backend/api`):**
+- `src/lib/auth.ts` (new) — `betterAuth({ database: pool, emailAndPassword, plugins:
+  [organization()], trustedOrigins, rateLimit, databaseHooks })`. Uses Better Auth's **built-in
+  Postgres (Kysely) adapter over the existing `pg` Pool** (not the drizzle adapter — see gotcha).
+  **Org bootstrap lives in ONE `databaseHooks.session.create.before` hook:** it finds the user's
+  membership and, if none, lazily creates a personal `organization` + owner `member` via
+  `ctx.context.adapter`, then pins `activeOrganizationId` on the session. Consolidated there on
+  purpose — a `user.create.after` hook runs deferred relative to session creation, so the
+  membership wouldn't exist yet (that was the actual bug behind an initial `403
+  no_active_organization`).
+- `src/lib/require-auth.ts` (new) — `requireAuth` preHandler: `auth.api.getSession({ headers:
+  fromNodeHeaders(req.headers) })` -> 401 if no session, 403 if no active org, else stamps
+  `req.authUser` + `req.activeOrgId` (Fastify module augmentation declares them).
+- `src/lib/auth-mount.ts` (new) — mounts `toNodeHandler(auth)` at `/api/auth/*` inside an
+  **encapsulated Fastify plugin with pass-through content-type parsers**, so Better Auth reads the
+  raw request body while the agent routes keep Fastify's JSON parser; `reply.hijack()` hands the
+  socket to Better Auth.
+- `src/db/auth-migrate.ts` + `src/db/run-auth-migrate.ts` (new) — apply Better Auth's own schema via
+  `getMigrations(auth.options).runMigrations()` (`better-auth/db/migration`). Runs on api boot after
+  the drizzle migrations, and via `pnpm --filter @tollgate/api db:auth-migrate`.
+- `src/index.ts` — registers `@fastify/helmet` (CSP off, CORP cross-origin), `@fastify/rate-limit`
+  (300/min global), CORS **locked** to `[DASHBOARD_ORIGIN]` with `credentials:true` (was
+  `origin:true`); mounts auth (public); wraps stub+agent routes in an encapsulated scope with
+  `preHandler: requireAuth`; runs both migration sets on boot.
+- `src/db/schema.ts` — `agents.org_id` / `policies.org_id` changed **`uuid` -> `text`** (dropped the
+  `DEFAULT_ORG_ID` default); the partial unique index moved from `(name)` to **`(org_id, name)`**
+  (name unique per org). `DEFAULT_ORG_ID` export removed. Migration `drizzle/0004_married_ben_parker.sql`
+  (applied).
+- `src/routes/agents.ts` — every handler reads `req.activeOrgId!`; `findAgent(id, orgId)` filters by
+  org (cross-org -> null -> 404); create stamps `org_id`; list + name-clash checks scoped by org;
+  **freeze/unfreeze/policy/delete no longer require the agent's Bearer token** — session+org
+  membership authorizes them (`extractBearer`/`checkStopAuth` removed). The raw agent token remains
+  the auth only for the agent->proxy path.
+- `backend/proxy/src/index.ts` — parity hardening: `@fastify/helmet` + a generous
+  `@fastify/rate-limit` (1000/min). No CORS (server-to-server); the per-agent token + budget stay the
+  real controls, so the data-plane cap is deliberately generous rather than throttling.
+- `.env` / `.env.example` — `BETTER_AUTH_SECRET` (real 32-byte in `.env`, placeholder in the
+  example), `BETTER_AUTH_URL=http://localhost:4000`, `DASHBOARD_ORIGIN=http://localhost:3000`.
+
+**Frontend (`frontend/dashboard`):**
+- `lib/auth-client.ts` (new) — `createAuthClient({ baseURL: API_URL, fetchOptions: { credentials:
+  "include" }, plugins: [organizationClient()] })`; re-exports `signIn/signUp/signOut/useSession`.
+- `lib/api.ts` — every fetch now sends `credentials: "include"`; a 401 bounces to `/sign-in`;
+  `freezeAgent(id, mode)` / `unfreezeAgent(id)` dropped their `token` params.
+- `middleware.ts` (new) — optimistic gate via `getSessionCookie` (`better-auth/cookies`): redirect to
+  `/sign-in` when the cookie is absent, off the auth pages when present. The api is the real gate.
+- `components/auth-form.tsx` + `app/sign-in/page.tsx` + `app/sign-up/page.tsx` (new) — email+password
+  form in the industrial-glass style (bracketed `[ Tollgate ]`, Card/Input/Button); sign-in errors
+  are generic (no enumeration); the account name defaults to the email; success -> dashboard.
+- `components/main-nav.tsx` — right cluster shows the signed-in email + a **Sign out** control
+  (`authClient.signOut()` -> `/sign-in`); the whole nav returns `null` on `/sign-in` / `/sign-up`.
+  Colour via classes only (respects the hover gotcha).
+- `components/batch-stop-dialog.tsx` — per-agent **token inputs removed** (session+org authz now);
+  it's a plain confirm dialog with per-row success/error + retry.
+
+**Gotcha worth remembering (Better Auth + this stack):** hand-matching Better Auth's drizzle schema
+is brittle, so Better Auth OWNS its tables via its built-in adapter + `getMigrations`; drizzle-kit
+keeps only the app tables. Org IDs are Better Auth's default text ids, so `org_id` became `text`.
+Org provisioning must live in `session.create.before` (not `user.create.after`) because of hook
+ordering. Cross-origin cookies work because `:3000` and `:4000` are the same site (host `localhost`),
+so a SameSite=Lax host-only cookie set by the api rides to the dashboard — with `credentials:"include"`
++ CORS `credentials:true`.
+
+**Verified (2026-07-24):** `pnpm -r typecheck` clean across all 4 workspaces; `pnpm -r test` 18/18
+(proxy). Backend proven live via curl against the running api (:4000): anonymous `GET /v1/agents` ->
+**401**; sign-up provisions an org and returns a session; a fresh account's list is **empty** (does
+NOT include another account's agent); cross-account `PATCH`/`DELETE` -> **404**; **freeze with no
+token** (session+org authz) -> **200 soft_frozen**.
+
+**NOT yet verified (resume here):** the browser cross-origin cookie flow end-to-end (sign up in the
+UI -> land on dashboard -> email shows -> create agent -> sign out). The dashboard dev server still
+runs pre-`better-auth` code and needs a restart. A backgrounded tab can't judge the auth-page/nav
+visuals or animations — needs a user eyeball. Nothing committed yet.

@@ -1,5 +1,7 @@
 import "./lib/env.js";
 import Fastify from "fastify";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 import type { HealthReport } from "@tollgate/shared";
 import { redis, checkRedis } from "./lib/redis.js";
 import { pool, checkPostgres } from "./lib/db.js";
@@ -17,6 +19,13 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const startedAt = Date.now();
 
 const app = Fastify({ logger: true });
+
+// Security-header hygiene. The proxy is a server-to-server data plane (agents
+// call it with a Tollgate token), not browser-facing, so no CORS. A generous
+// flood cap sits above the real controls — per-agent token auth + budgets in
+// registerProxyRoute — rather than throttling legitimate agent throughput.
+await app.register(helmet);
+await app.register(rateLimit, { max: 1000, timeWindow: "1 minute" });
 
 /**
  * Proof of life: verifies this service can reach Redis (enforcement hot path)

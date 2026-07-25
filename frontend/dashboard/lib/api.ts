@@ -104,9 +104,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // hits this, so only set the header when there's actually a body to send.
     headers: init?.body === undefined ? init?.headers : { "content-type": "application/json", ...init?.headers },
     cache: "no-store",
+    // Carry the Better Auth session cookie cross-origin (dashboard :3000 -> api
+    // :4000). The api gates every /v1/* route on this session; without it every
+    // call is 401.
+    credentials: "include",
   });
 
   if (!res.ok) {
+    // A 401 means the session is missing/expired. Bounce to sign-in rather than
+    // surfacing a raw error into the table. (The middleware also guards routes,
+    // but this covers a session that lapses mid-session.)
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.location.href = "/sign-in";
+    }
     const body: unknown = await res.json().catch(() => null);
     const rec = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
     const code = rec !== null && "error" in rec ? String(rec["error"]) : null;
@@ -158,28 +168,22 @@ export function updateAgentPolicy(
 }
 
 /**
- * `token` is sent as `Authorization: Bearer <token>` and checked by
- * backend/api/src/routes/agents.ts's freeze handler against the agent's own
- * token hash — a missing or mismatched token gets a 401 (missing_token /
- * invalid_token).
+ * Stop (soft-freeze) an agent. Authorized by the caller's session + org
+ * membership — the api gates /v1/* and scopes to the active org, so no per-agent
+ * token is needed anymore. An agent in another org (or a missing one) returns
+ * 404.
  */
-export function freezeAgent(
-  id: string,
-  mode: "soft" | "hard",
-  token: string,
-): Promise<AgentMutationResponse> {
+export function freezeAgent(id: string, mode: "soft" | "hard"): Promise<AgentMutationResponse> {
   return request<AgentMutationResponse>(`/v1/agents/${id}/freeze`, {
     method: "POST",
     body: JSON.stringify({ mode }),
-    headers: { authorization: `Bearer ${token}` },
   });
 }
 
-/** See freezeAgent's doc comment — same token enforcement applies here. */
-export function unfreezeAgent(id: string, token: string): Promise<AgentMutationResponse> {
+/** Resume (unfreeze) an agent — same session + org authorization as freezeAgent. */
+export function unfreezeAgent(id: string): Promise<AgentMutationResponse> {
   return request<AgentMutationResponse>(`/v1/agents/${id}/unfreeze`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}` },
   });
 }
 

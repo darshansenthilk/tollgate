@@ -131,63 +131,38 @@ function parseFreezeBody(body: unknown): { mode: "soft" | "hard" } | null {
   return { mode };
 }
 
-/** Same shape/behavior as backend/proxy/src/routes/proxy.ts's extractBearer —
- *  duplicated rather than shared, matching this codebase's existing pattern
- *  of keeping small per-service auth helpers local (see lib/tokens.ts). */
-function extractBearer(header: string | undefined): string | null {
-  if (header === undefined) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (match === null) return null;
-  const token = match[1];
-  return token === undefined ? null : token.trim() || null;
-}
-
-/** Shared lookup used by the policy/freeze/unfreeze/delete/update routes:
- *  agent must exist. tokenHash is included so freeze/unfreeze can verify the
- *  caller-supplied token without a second query; status so PATCH can refuse
- *  to edit an archived agent. */
-async function findAgent(id: string): Promise<{
+/** Shared lookup for the policy/freeze/unfreeze/delete/update routes. Scoped to
+ *  the caller's org: an id belonging to another org resolves to null (-> 404),
+ *  so cross-account isolation is enforced right here rather than in each
+ *  handler. status lets PATCH refuse to edit an archived agent. */
+async function findAgent(
+  id: string,
+  orgId: string,
+): Promise<{
   id: string;
   policyId: string | null;
-  tokenHash: string;
   status: AgentStatus;
 } | null> {
   const rows = await db
     .select({
       id: agents.id,
       policyId: agents.policyId,
-      tokenHash: agents.tokenHash,
       status: agents.status,
     })
     .from(agents)
-    .where(eq(agents.id, id));
+    .where(and(eq(agents.id, id), eq(agents.orgId, orgId)));
 
   return rows[0] ?? null;
 }
 
 /**
- * Freeze/unfreeze require the caller to prove they hold the agent's own
- * token.
+ * Every route here is gated by the requireAuth preHandler (see index.ts), which
+ * 401s anonymous callers and stamps req.activeOrgId. The `!` on req.activeOrgId
+ * below is safe for that reason: a handler never runs without it.
  */
-type StopAuthResult =
-  | { ok: true }
-  | { ok: false; error: "missing_token" | "invalid_token" };
-
-function checkStopAuth(
-  req: { headers: { authorization?: string } },
-  agent: { tokenHash: string },
-): StopAuthResult {
-  const token = extractBearer(req.headers.authorization);
-  if (token === null) return { ok: false, error: "missing_token" };
-
-  const tokenHash = hashToken(token);
-  if (tokenHash !== agent.tokenHash) return { ok: false, error: "invalid_token" };
-
-  return { ok: true };
-}
-
 export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   app.post<{ Body: unknown }>("/v1/agents", async (req, reply) => {
+    const orgId = req.activeOrgId!;
     const body = parseCreateBody(req.body);
     if (body === null) {
       reply.code(400);
@@ -202,15 +177,20 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       };
     }
 
-    // Archived agents don't count as "taken" — DELETE /v1/agents/:id archives
-    // rather than hard-deletes (see that route), so without this exclusion a
-    // deleted agent's name would stay permanently claimed. Mirrors the
-    // partial unique index on agents.name (schema.ts) that enforces the same
-    // scoping at the DB level.
+    // Scoped to this org (+ non-archived): a name only needs to be free within
+    // the caller's own org. Archived agents don't count as "taken" — DELETE
+    // /v1/agents/:id archives rather than hard-deletes (see that route). Mirrors
+    // the partial unique index on (org_id, name) in schema.ts.
     const existing = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.name, body.name), ne(agents.status, "archived")));
+      .where(
+        and(
+          eq(agents.name, body.name),
+          eq(agents.orgId, orgId),
+          ne(agents.status, "archived"),
+        ),
+      );
     if (existing.length > 0) {
       reply.code(409);
       return {
@@ -229,6 +209,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     // blast radius onto other agents.
     await db.insert(policies).values({
       id: policyId,
+      orgId,
       name: `${body.name} policy`,
       budgetCents: body.maxBudgetCents ?? 0,
       maxBudgetCents: body.maxBudgetCents,
@@ -236,6 +217,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
 
     await db.insert(agents).values({
       id: agentId,
+      orgId,
       name: body.name,
       providerSlug: body.providerSlug,
       model: body.model,
@@ -257,7 +239,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     };
   });
 
-  app.get("/v1/agents", async () => {
+  app.get("/v1/agents", async (req) => {
+    const orgId = req.activeOrgId!;
     const rows = await db
       .select({
         id: agents.id,
@@ -268,12 +251,13 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         maxBudgetCents: policies.maxBudgetCents,
       })
       .from(agents)
+      // Scoped to the caller's org so one account never sees another's agents.
       // Archived agents are DELETE /v1/agents/:id's result (an archive, not a
       // hard row delete — see that route). Excluding them here is what makes
       // delete actually stick from the dashboard's perspective: without this,
       // an archived agent would reappear on the very next 3s poll.
       .leftJoin(policies, eq(policies.id, agents.policyId))
-      .where(ne(agents.status, "archived"));
+      .where(and(eq(agents.orgId, orgId), ne(agents.status, "archived")));
 
     const month = currentMonth(new Date());
 
@@ -308,7 +292,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   app.patch<{ Params: { id: string }; Body: unknown }>(
     "/v1/agents/:id",
     async (req, reply) => {
-      const agent = await findAgent(req.params.id);
+      const orgId = req.activeOrgId!;
+      const agent = await findAgent(req.params.id, orgId);
+      // findAgent is org-scoped, so another org's id already reads as null here.
       // Archived agents are hidden from GET /v1/agents (DELETE archives rather
       // than hard-deletes), so they must not be editable either — treat them
       // as gone rather than 200-ing an edit nobody can see.
@@ -330,15 +316,16 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       const body = parsed.body;
 
       if (body.name !== undefined) {
-        // Same non-archived scoping as POST /v1/agents (and the partial unique
-        // index in db/schema.ts), plus ne(id) so an agent doesn't collide with
-        // its own row when the name is submitted unchanged.
+        // Same org + non-archived scoping as POST /v1/agents (and the partial
+        // unique index in db/schema.ts), plus ne(id) so an agent doesn't collide
+        // with its own row when the name is submitted unchanged.
         const clash = await db
           .select({ id: agents.id })
           .from(agents)
           .where(
             and(
               eq(agents.name, body.name),
+              eq(agents.orgId, orgId),
               ne(agents.status, "archived"),
               ne(agents.id, agent.id),
             ),
@@ -405,7 +392,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   app.patch<{ Params: { id: string }; Body: unknown }>(
     "/v1/agents/:id/policy",
     async (req, reply) => {
-      const agent = await findAgent(req.params.id);
+      const orgId = req.activeOrgId!;
+      const agent = await findAgent(req.params.id, orgId);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
@@ -434,16 +422,15 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   app.post<{ Params: { id: string }; Body: unknown }>(
     "/v1/agents/:id/freeze",
     async (req, reply) => {
-      const agent = await findAgent(req.params.id);
+      const orgId = req.activeOrgId!;
+      // Authorization is now the session + org membership (requireAuth + the
+      // org-scoped findAgent), not the agent's own token: a logged-in org member
+      // can stop any agent in their org. The raw agent token remains the auth
+      // only for the agent -> proxy path.
+      const agent = await findAgent(req.params.id, orgId);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
-      }
-
-      const auth = checkStopAuth(req, agent);
-      if (!auth.ok) {
-        reply.code(401);
-        return { error: auth.error };
       }
 
       const body = parseFreezeBody(req.body);
@@ -470,16 +457,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   app.post<{ Params: { id: string } }>(
     "/v1/agents/:id/unfreeze",
     async (req, reply) => {
-      const agent = await findAgent(req.params.id);
+      const orgId = req.activeOrgId!;
+      // Session + org membership authorizes this (see the freeze route).
+      const agent = await findAgent(req.params.id, orgId);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
-      }
-
-      const auth = checkStopAuth(req, agent);
-      if (!auth.ok) {
-        reply.code(401);
-        return { error: auth.error };
       }
 
       await db
@@ -494,7 +477,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
   );
 
   app.delete<{ Params: { id: string } }>("/v1/agents/:id", async (req, reply) => {
-    const agent = await findAgent(req.params.id);
+    const orgId = req.activeOrgId!;
+    const agent = await findAgent(req.params.id, orgId);
     if (agent === null) {
       reply.code(404);
       return { error: "agent_not_found" };

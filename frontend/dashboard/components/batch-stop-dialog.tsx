@@ -13,8 +13,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ApiError, freezeAgent, unfreezeAgent } from "@/lib/api";
 
 type BatchStopMode = "stop" | "resume";
@@ -38,8 +36,8 @@ interface RowResult {
 }
 
 /** Everything that differs between stopping and resuming. The two flows are
- *  otherwise identical — same per-agent token prompt, same retry semantics —
- *  so they share one component rather than two near-copies. */
+ *  otherwise identical — same confirm-and-fire, same retry semantics — so they
+ *  share one component rather than two near-copies. */
 const MODE_COPY = {
   stop: {
     action: "Stop",
@@ -63,9 +61,10 @@ const MODE_COPY = {
 } as const;
 
 /**
- * There is no master/admin credential — each agent's OWN token is required.
- * Batching here only means "ask for every token up front and fire the requests
- * in one pass"; it does not skip or weaken the per-agent auth check in any way.
+ * Batch stop/resume. Authorization is the signed-in session + org membership
+ * (the api gates every /v1/* route and scopes to the caller's org), so there's
+ * no per-agent token to collect anymore — this is a plain confirm dialog.
+ * Agents that error are reported per-row and stay selected for a retry.
  */
 export function BatchStopDialog({
   agents,
@@ -75,7 +74,6 @@ export function BatchStopDialog({
   onCompleted,
 }: BatchStopDialogProps) {
   const [open, setOpen] = useState(false);
-  const [tokens, setTokens] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [results, setResults] = useState<Record<string, RowResult>>({});
 
@@ -87,10 +85,7 @@ export function BatchStopDialog({
     if (next && disabled) return;
     setOpen(next);
     if (!next) {
-      setTimeout(() => {
-        setTokens({});
-        setResults({});
-      }, 150);
+      setTimeout(() => setResults({}), 150);
     }
   }
 
@@ -102,20 +97,14 @@ export function BatchStopDialog({
 
     for (const agent of agents) {
       if (nextResults[agent.id]?.status === "success") continue;
-
-      const token = (tokens[agent.id] ?? "").trim();
-      if (token === "") {
-        nextResults[agent.id] = { status: "error", message: "No token entered" };
-        continue;
-      }
       try {
         // "Stop" always maps to a soft freeze under the hood — the backend
         // still models soft vs. hard separately, but the UI no longer exposes
         // that choice.
         const result =
           mode === "stop"
-            ? await freezeAgent(agent.id, "soft", token)
-            : await unfreezeAgent(agent.id, token);
+            ? await freezeAgent(agent.id, "soft")
+            : await unfreezeAgent(agent.id);
         if (result.status !== undefined) onStatusChange(agent.id, result.status);
         nextResults[agent.id] = { status: "success" };
       } catch (err) {
@@ -148,40 +137,28 @@ export function BatchStopDialog({
           <DialogTitle>
             {copy.action} {agents.length} agent{agents.length === 1 ? "" : "s"}
           </DialogTitle>
-          <DialogDescription>
-            {copy.description} Each agent&apos;s own token is required — there&apos;s no
-            master key. Paste each one below; agents left blank are skipped and
-            reported, not silently changed.
-          </DialogDescription>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex max-h-72 flex-col gap-3 overflow-y-auto">
+        <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
           {agents.map((agent) => {
             const result = results[agent.id];
-            const succeeded = result?.status === "success";
             return (
-              <div key={agent.id} className="flex flex-col gap-1.5">
-                <Label htmlFor={`batch-${mode}-token-${agent.id}`}>{agent.name}</Label>
-                <Input
-                  id={`batch-${mode}-token-${agent.id}`}
-                  type="password"
-                  autoComplete="off"
-                  value={tokens[agent.id] ?? ""}
-                  onChange={(e) =>
-                    setTokens((prev) => ({ ...prev, [agent.id]: e.target.value }))
-                  }
-                  placeholder="tg_..."
-                  disabled={succeeded}
-                />
-                {succeeded && (
-                  <p className="text-xs" style={{ color: "var(--ok)" }}>
+              <div
+                key={agent.id}
+                className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                style={{ borderColor: "var(--line)" }}
+              >
+                <span className="truncate text-sm">{agent.name}</span>
+                {result?.status === "success" && (
+                  <span className="shrink-0 text-xs" style={{ color: "var(--ok)" }}>
                     {copy.rowSuccess}
-                  </p>
+                  </span>
                 )}
                 {result?.status === "error" && (
-                  <p className="text-xs" style={{ color: "var(--err)" }}>
+                  <span className="shrink-0 text-xs" style={{ color: "var(--err)" }}>
                     {result.message}
-                  </p>
+                  </span>
                 )}
               </div>
             );

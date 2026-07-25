@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { authClient } from "@/lib/auth-client";
 
 /**
- * Top navigation. A client component solely because the active-route underline
- * needs usePathname() — layout.tsx stays a server component and just renders
- * this.
+ * Top navigation. A client component because the active-route underline needs
+ * usePathname() and the right-hand cluster reads the session — layout.tsx stays
+ * a server component and just renders this.
  *
  * Colour is set with utility classes, never an inline `style`: an inline style
  * outranks Tailwind's hover variant and silently kills `hover:text-brand`
@@ -18,8 +19,21 @@ const LINKS = [
   { href: "/status", label: "System status" },
 ] as const;
 
+// The sign-in / sign-up pages render their own centered layout with no nav.
+const AUTH_ROUTES = new Set(["/sign-in", "/sign-up"]);
+
 export function MainNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { data: sessionData } = authClient.useSession();
+
+  if (AUTH_ROUTES.has(pathname)) return null;
+
+  async function handleSignOut() {
+    await authClient.signOut();
+    router.push("/sign-in");
+    router.refresh();
+  }
 
   return (
     <nav
@@ -53,6 +67,24 @@ export function MainNav() {
           </Link>
         );
       })}
+
+      {/* Right cluster: signed-in email + sign out. Colour via classes only, so
+          hover:text-brand isn't clobbered by an inline style (see the note
+          above). Rendered only once the session has resolved. */}
+      {sessionData?.user ? (
+        <div className="ml-auto flex items-center gap-4">
+          <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+            {sessionData.user.email}
+          </span>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="text-muted-foreground transition-colors hover:text-brand"
+          >
+            Sign out
+          </button>
+        </div>
+      ) : null}
     </nav>
   );
 }

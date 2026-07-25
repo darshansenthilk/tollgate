@@ -18,19 +18,177 @@ Current branch is `Eshaan-2` (tracks `origin/Eshaan-2`). Merges into `main` are 
 
 ## Next task
 
-**Auth — but do NOT start, and do NOT plan it yet.**
+**Auth — IMPLEMENTATION COMPLETE; finish browser verification, get an eyeball, then commit.**
+The full email+password / per-account org-isolation auth feature was built and BACKEND-verified on
+2026-07-24 (Better Auth on the Fastify api as the authority). See the **Feature 9 (Auth)** entry in
+`docs/COMPLETION.md` for exactly what shipped — every file, the behavior, and the curl results. The
+detailed original plan is preserved below this block for reference (it was fully implemented).
 
-The user has said the next area of work is **authentication**, and has explicitly asked that
-nothing be designed, planned, or written for it until they give the go-ahead with their own
-requirements. **Do not** research an approach, propose a schema, sketch a plan, or touch code
-for it on your own initiative.
+### RESUME HERE (do this first, in order)
+1. **Restart the dev servers.** The api (:4000) was left running detached with the NEW code; the
+   dashboard (:3000) is still running the OLD pre-`better-auth` code (its restart was interrupted)
+   and MUST be restarted to load `better-auth` + `middleware.ts`. Restart both **detached** per the
+   `running-the-dev-server` memory (kill the :3000 process first; **never `next build` while `next
+   dev` runs**). If :4000 is down, `pnpm --filter @tollgate/api dev` — it re-applies both migration
+   sets idempotently on boot. Confirm ports 3000/4000/8080 are all listening.
+2. **Browser smoke test — the one thing curl couldn't do (cross-origin cookie flow).** Visit
+   http://localhost:3000 -> should redirect to `/sign-in`; sign up a NEW email+password -> should
+   land on the dashboard with the email shown top-right; create an agent; **Sign out** -> back to
+   `/sign-in`; hit `/` again -> redirected. Watch the network: `POST :4000/api/auth/sign-up/email`
+   must set a cookie that then rides on `GET :4000/v1/agents`. If the cookie doesn't stick, check
+   the api CORS (`origin:[DASHBOARD_ORIGIN], credentials:true`), no `Secure` on the http cookie, and
+   `credentials:"include"` on the client (both already set — `lib/auth-client.ts` / `lib/api.ts`).
+3. **Ask the user to eyeball** the sign-in/sign-up pages + the nav email/sign-out — a backgrounded
+   tab can't judge visuals or animations (existing users are `usera@`..`userd@example.com`,
+   password `password12345`, from the backend curl test).
+4. **Commit** once verified. Do NOT push to `main` — the user merges manually.
 
-When the user does open the topic: ask for their requirements first (what's being
-authenticated — dashboard users vs. the existing agent tokens; session model; whether it
-touches `backend/api`, `backend/proxy`, or both), then write a plan into this section before
-implementing, per "How to use this file" below.
+### Already verified 2026-07-24 (do NOT redo)
+- `pnpm -r typecheck` clean across all 4 workspaces; `pnpm -r test` 18/18 (proxy).
+- Backend via curl on the running api: anon `GET /v1/agents` -> 401; sign-up provisions a personal
+  org; a second account sees an empty list (NOT the first's agent); cross-account PATCH/DELETE ->
+  404; freeze with NO token (session+org authz) -> 200. All passed.
 
-Until then: **await instructions.** Do not self-assign from the candidate list below.
+### Notes / small open items
+- **Input validation** was intentionally kept as the existing strict hand-parsers (they own the
+  frontend's error-code contract, e.g. `invalid_body`); Fastify JSON-schema-per-route was NOT added,
+  to avoid regressing those messages. Reasonable future follow-up.
+- Rate limiting can't resolve a client IP locally (Better Auth logs a shared-bucket warning) — set
+  `advanced.ipAddress.*` for prod. Dev is fine.
+- Stale dev agents from before this change still exist (their `org_id` is the retired placeholder) —
+  harmless (invisible to every real org). Wipe for a clean DB if you like (`docker exec` psql was
+  blocked in-session; run it yourself).
+
+---
+
+<sub>Original implementation plan (fully implemented — kept for reference):</sub>
+
+### Scope
+- A **sign-in** and a **sign-up** page (email + password only, **no 2FA**), styled to the existing
+  "industrial glass" convention (Space Grotesk / JetBrains Mono, coral brand chrome, bracketed
+  title, `Card` / `Input` / `Button`).
+- A successful sign-in lands on the **existing dashboard** (`app/page.tsx`); the nav's top-right
+  shows the **signed-in email** + a **Sign out** control.
+- **The backend is the security boundary:** every `backend/api` route requires a valid session
+  (deny by default) and is scoped to the caller's organization — so a direct call to `:4000`
+  without a logged-in session is rejected, and one account can never see or touch another's
+  agents/spend.
+- **Build now:** auth + per-account isolation via a one-org-per-account model + the api hardening
+  below. **Do NOT build now:** the invite flow, role/permission delegation UI, org switching — but
+  lay the data model so they drop in later.
+
+### Architecture (reflects the user's decisions)
+**Better Auth runs on the Fastify api (`backend/api`) as the auth authority** — this reverses last
+turn's dashboard-hosted recommendation, per the user's "API is the authority" choice.
+- **Sessions:** Better Auth issues an httpOnly, Secure (prod), **SameSite=Lax** session cookie.
+  Lax works across `localhost:3000 -> :4000` (same site — cookies aren't port-isolated) and across
+  subdomains in prod (`dash.` / `api.` share a registrable domain). Only a truly cross-site split
+  needs SameSite=None; if that ever comes up, prefer a same-origin reverse proxy over None.
+- **Enforcement:** a Fastify `requireAuth` preHandler resolves the session via
+  `auth.api.getSession({ headers })`, 401s when absent/invalid, and attaches `req.user` + the
+  caller's **active org id**. Applied to every `/v1/agents*` route (deny by default).
+- **Isolation (org-scoped):** adopt **Better Auth's organization plugin** — it provides
+  `organization` / `member` / `invitation` tables + roles + an active-organization on the session,
+  which is exactly the host/invite/delegate shape the user described. Use its data model now, add
+  the UI later. On sign-up, auto-create a personal org, add the user as `owner`, set it active.
+  Stamp every new agent with that org id; filter every read/mutation by it; a cross-org agent id
+  returns **404** (not 403 — don't leak existence). The existing `agents.org_id` / `policies.org_id`
+  columns already exist for this — replace `DEFAULT_ORG_ID` usage with the caller's active org.
+  - *Lighter alternative (fewer moving parts):* hand-roll a minimal `organizations` + `memberships`
+    pair now and adopt the org plugin when invites land — but that's rework the plugin avoids;
+    recommend the plugin.
+- **Persistence:** Better Auth + org-plugin tables live in the same Postgres as the api, managed
+  through the api's existing **drizzle-kit** lineage (generate Better Auth's schema, express it as
+  drizzle tables in `backend/api/src/db/schema.ts`, then `db:generate` + `db:migrate`). One
+  migration system, since auth now lives in the api alongside the existing schema.
+- **Password hashing:** Better Auth default **scrypt** (secure); argon2id optional via
+  `emailAndPassword.password`.
+
+### Concrete tasks — backend (`backend/api`, the security work)
+1. **Deps + env.** Add `better-auth` to `backend/api`. Add `BETTER_AUTH_SECRET` (32+ random bytes),
+   `BETTER_AUTH_URL`, and `DASHBOARD_ORIGIN=http://localhost:3000` to env + `.env.example`.
+   `DATABASE_URL` already exists (`drizzle.config.ts`).
+2. **Better Auth instance** — `backend/api/src/lib/auth.ts`: `betterAuth({ database (drizzle
+   adapter over the existing pool), emailAndPassword: { enabled: true }, plugins: [organization()],
+   trustedOrigins: [DASHBOARD_ORIGIN] })`, plus a sign-up hook creating the personal org + owner
+   membership + active org.
+3. **Mount handler** — register Better Auth's routes on Fastify (its handler under `/api/auth/*`),
+   wired in `index.ts` alongside the agent/stub routes.
+4. **`requireAuth` preHandler** — `backend/api/src/lib/require-auth.ts`: session -> `req.user` +
+   `req.activeOrgId`; 401 otherwise. Attach to every `/v1/agents*` route — the deny-by-default gate.
+5. **Org-scope the agent routes** (`routes/agents.ts`): create stamps `org_id = req.activeOrgId`;
+   list filters by it; get/update/delete/freeze/unfreeze/policy fetch-then-verify
+   `agent.org_id === req.activeOrgId` (else 404). **Name uniqueness becomes per-org:** change the
+   partial unique index from `(name)` to `(org_id, name)` (new drizzle migration) and add `org_id`
+   to the duplicate-name checks. This is a correctness requirement of isolation, not optional.
+6. **Freeze/unfreeze auth change:** those routes currently require the agent's raw Bearer **token**
+   (`routes/agents.ts`; `lib/api.ts` sends it). With session+org authz a dashboard operator
+   shouldn't need the raw token — gate freeze/unfreeze/policy/delete by session+org instead. The
+   agent token stays the auth for the **agent -> proxy** path only. (Flagged: changes the
+   freeze/unfreeze contract and the dashboard calls.)
+7. **Hardening — the "tight backend" list:**
+   - `@fastify/rate-limit` — global + stricter on `/api/auth/*` (brute-force / credential-stuffing).
+   - `@fastify/helmet` — security headers.
+   - **CORS locked** — replace `cors: { origin: true }` (`index.ts:16`) with
+     `origin: [DASHBOARD_ORIGIN], credentials: true` (credentials + wildcard origin is invalid
+     anyway).
+   - **Input validation** — Fastify JSON schemas on every route body/params (today they hand-parse
+     `unknown`); rejects malformed/oversized input at the framework edge.
+   - **CSRF** — Better Auth's origin check (`trustedOrigins`) + SameSite=Lax cover the session;
+     ensure no state-changing GETs.
+   - Same rate-limit/helmet/CORS pass on `backend/proxy` for parity (its routes are already
+     agent-token-authenticated — that boundary is unchanged).
+   - Drizzle parameterizes queries, so SQL injection is low-risk — note, don't chase.
+
+### Concrete tasks — frontend (`frontend/dashboard`)
+8. **Auth client** — `lib/auth-client.ts`: `createAuthClient({ baseURL: API_URL })` (+ the org
+   plugin client) exposing `signIn` / `signUp` / `signOut` / `useSession`.
+9. **Send credentials + handle 401** — `lib/api.ts`: add `credentials: "include"` to every fetch so
+   the session cookie rides along; on 401, redirect to `/sign-in`. Drop the token args from
+   `freezeAgent` / `unfreezeAgent` (now session-authorized).
+10. **Route gating** — `middleware.ts`: optimistic redirect to `/sign-in` when the session cookie is
+    absent (the api is the real gate; this is just UX).
+11. **Pages** — `app/sign-in/page.tsx` + `app/sign-up/page.tsx` (or shared
+    `components/auth-form.tsx`): styled email/password forms, link between them, **generic** error
+    on failure (no enumeration). Signed-out users must not see `MainNav` — return `null` on
+    `/sign-in` / `/sign-up`, or an `(auth)` route group with a minimal layout.
+12. **Nav — email + sign out** — `components/main-nav.tsx`: `ml-auto` right cluster with the
+    signed-in email (muted mono) + Sign out (ghost/outline, `hover:text-brand`) calling
+    `authClient.signOut()` then routing to `/sign-in`. **Colour via classes, never inline `style`**
+    (documented hover-breaking gotcha). Already `"use client"`, so `useSession()` fits.
+
+### Auth / authz + hardening checklist (verify each)
+- Deny-by-default: any `/v1/agents*` route without a session -> 401; agent CRUD unreachable anon.
+- Cross-account isolation: user B cannot list/read/edit/delete/freeze user A's agents (-> 404), and
+  cannot create an agent into A's org.
+- httpOnly + Secure (prod) + SameSite=Lax cookies; strong `BETTER_AUTH_SECRET`, never committed
+  (placeholder only in `.env.example`).
+- Generic sign-in error ("invalid email or password"); auth endpoints rate-limited; CORS locked to
+  the dashboard origin with credentials; helmet headers present; every route input-validated.
+- Session expiry/rotation on defaults; sign-out actually invalidates the session (no stale cache).
+
+### Known gotchas to resolve during implementation
+- **Org-id type match:** Better Auth ids default to text, but `agents.org_id` / `policies.org_id`
+  are `uuid`. Either configure Better Auth to generate uuids (`advanced.database.generateId`) or
+  switch those columns to `text`. Decide before writing the migration.
+- **Backfill:** existing dev-DB agents carry `DEFAULT_ORG_ID` and would belong to no real org after
+  the model lands. Fine to wipe dev data or backfill them onto the first account's org.
+
+### Follow-ups (design for, do NOT build now)
+- Org invites, roles, and permission delegation (host invites members, delegates perms) — the org
+  plugin already carries the tables/roles; this is the UI + enforcement of delegated permissions.
+- Org switching, email verification, password reset, invite-only sign-up, 2FA (`twoFactor` plugin).
+- Whether public sign-up stays open (each new account is isolated, so open sign-up is safe now) or
+  becomes invite-only once the org model is user-facing.
+
+### Verification
+- `pnpm -r typecheck` clean. The api has no test setup today; at minimum exercise **401-when-anon**
+  and **404-cross-org** by curl/hand and record it (add a small api test suite if feasible).
+- Live, **with a visible tab**: sign up account A -> lands on dashboard, email top-right; create an
+  agent; sign out -> `/sign-in`; sign up account B -> sees an empty list (NOT A's agent); direct
+  `curl :4000/v1/agents` with no cookie -> 401; B cannot GET/PATCH/DELETE A's agent id -> 404.
+- Browser caveats unchanged: `:hover` / animations need an eyeball (backgrounded tab); never edit
+  source with `Get-Content | Set-Content`.
 
 ### Setup reminders (don't relearn these)
 - Dev stack may already be up (`docker ps`, ports 3000/4000/8080). If not, start it **detached**

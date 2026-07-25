@@ -11,11 +11,15 @@ import {
 import { sql } from "drizzle-orm";
 
 /**
- * Single-tenant placeholder. This milestone has no auth/org model on the api
- * yet, so every row is stamped with this org id rather than leaving org_id
- * nullable. Replace once multi-tenancy/auth lands.
+ * Organizations are owned by Better Auth (the org plugin's `organization`
+ * table, created by db/auth-migrate.ts — see backend/api/src/lib/auth.ts).
+ * Agents and policies carry the owning org's id as plain `text` — deliberately
+ * NOT a hard FK, so the app/proxy tables stay decoupled from the auth-managed
+ * tables. Isolation is enforced in application code: every management-plane
+ * query is scoped to the caller's active org (see routes/agents.ts +
+ * lib/require-auth.ts). org_id is always stamped from the session, never from
+ * client input.
  */
-export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
 // ---------------------------------------------------------------------------
 // Enums — mirror the string unions in @tollgate/shared exactly.
@@ -60,7 +64,7 @@ export const spendDecisionEnum = pgEnum("spend_decision", [
 
 export const policies = pgTable("policies", {
   id: uuid("id").primaryKey(),
-  orgId: uuid("org_id").notNull().default(DEFAULT_ORG_ID),
+  orgId: text("org_id").notNull(),
   name: text("name").notNull(),
   /** Not collected by POST /v1/agents yet; defaulted to maxBudgetCents at creation. */
   budgetCents: integer("budget_cents").notNull(),
@@ -88,9 +92,9 @@ export const agents = pgTable(
   "agents",
   {
     id: uuid("id").primaryKey(),
-    orgId: uuid("org_id").notNull().default(DEFAULT_ORG_ID),
-    /** Unique among non-archived agents only — see the partial index below.
-     *  DELETE /v1/agents/:id archives rather than hard-deletes, so a
+    orgId: text("org_id").notNull(),
+    /** Unique per org among non-archived agents only — see the partial index
+     *  below. DELETE /v1/agents/:id archives rather than hard-deletes, so a
      *  deleted agent's old name must be free to reuse. */
     name: text("name").notNull(),
     /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
@@ -111,11 +115,11 @@ export const agents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // Partial unique index: only agents that AREN'T archived contend for a
-    // name. Without the "where", an archived (soft-deleted) agent would
-    // permanently squat on its name — exactly the bug this fixes.
-    uniqueIndex("agents_name_unique_when_not_archived")
-      .on(table.name)
+    // Partial unique index: a name is unique PER ORG among agents that AREN'T
+    // archived. Scoped by org so two accounts can each have a "checkout-bot";
+    // scoped to non-archived so a soft-deleted agent's name frees up for reuse.
+    uniqueIndex("agents_org_name_unique_when_not_archived")
+      .on(table.orgId, table.name)
       .where(sql`${table.status} != 'archived'`),
   ],
 );
