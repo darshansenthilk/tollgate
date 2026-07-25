@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
+    "test": "node --import tsx --test src/lib/login-throttle.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/run-migrate.ts",
     "db:auth-migrate": "tsx src/db/run-auth-migrate.ts"

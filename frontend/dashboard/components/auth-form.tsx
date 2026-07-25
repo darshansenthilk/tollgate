@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -38,12 +38,25 @@ const COPY = {
   },
 } as const;
 
+// The signed-out client mirrors the server's lockout purely for UX — the api
+// (backend/api/src/lib/login-throttle.ts) is the real gate. Stashing the unlock
+// time in localStorage keeps the countdown alive across a reload.
+const LOCK_STORAGE_KEY = "tollgate:signin-lock-until";
+
+function formatCountdown(totalSec: number): string {
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 /**
  * Shared sign-in / sign-up form. Email + password only (no 2FA, no name field —
  * the account's display name defaults to its email). Talks to Better Auth on
  * the api via authClient; on success the session cookie is set and we navigate
  * to the dashboard. Errors are kept generic on sign-in to avoid account
- * enumeration.
+ * enumeration, except the throttle's own "N attempts remaining" / lockout
+ * messages, which are safe to surface (the api counts real and fake emails
+ * identically, so nothing leaks).
  */
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
@@ -51,11 +64,44 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [lockRemaining, setLockRemaining] = useState(0);
 
   const copy = COPY[mode];
+  const locked = lockedUntil !== null && lockRemaining > 0;
+
+  // Restore an in-progress lockout after a reload.
+  useEffect(() => {
+    const raw = window.localStorage.getItem(LOCK_STORAGE_KEY);
+    if (!raw) return;
+    const until = Number(raw);
+    if (Number.isFinite(until) && until > Date.now()) setLockedUntil(until);
+    else window.localStorage.removeItem(LOCK_STORAGE_KEY);
+  }, []);
+
+  // Tick the countdown while locked; clear everything once it lapses.
+  useEffect(() => {
+    if (lockedUntil === null) {
+      setLockRemaining(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      setLockRemaining(remaining);
+      if (remaining <= 0) {
+        setLockedUntil(null);
+        setError(null);
+        window.localStorage.removeItem(LOCK_STORAGE_KEY);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [lockedUntil]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (locked) return;
     setPending(true);
     setError(null);
     try {
@@ -65,14 +111,33 @@ export function AuthForm({ mode }: { mode: Mode }) {
           : await authClient.signIn.email({ email, password });
 
       if (result.error) {
-        // Sign-in stays generic (no "which field was wrong" enumeration).
-        // Sign-up surfaces the real message so password-length / duplicate-email
-        // feedback is actionable.
-        setError(
-          mode === "sign-in"
-            ? "Invalid email or password."
-            : result.error.message ?? "Could not create your account.",
-        );
+        const err = result.error as {
+          code?: string;
+          message?: string;
+          retryAfter?: number;
+        };
+
+        if (err.code === "ACCOUNT_LOCKED") {
+          // Throttled by the api. Mirror its cooldown so the form disables and a
+          // countdown ticks locally without further round-trips.
+          const seconds =
+            typeof err.retryAfter === "number" && err.retryAfter > 0 ? err.retryAfter : 300;
+          const until = Date.now() + seconds * 1000;
+          setLockedUntil(until);
+          window.localStorage.setItem(LOCK_STORAGE_KEY, String(until));
+          setError(err.message ?? "Too many failed attempts. Please try again later.");
+        } else if (mode === "sign-in") {
+          // Generic to avoid enumeration — except the throttle's remaining-count
+          // message, which is uniform for real and fake emails.
+          setError(
+            err.code === "LOGIN_ATTEMPTS_REMAINING"
+              ? err.message ?? "Invalid email or password."
+              : "Invalid email or password.",
+          );
+        } else {
+          // Sign-up surfaces the real message (password length / duplicate email).
+          setError(err.message ?? "Could not create your account.");
+        }
         return;
       }
 
@@ -115,6 +180,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   type="email"
                   autoComplete="email"
                   required
+                  disabled={locked}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
@@ -129,6 +195,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
                   required
                   minLength={8}
+                  disabled={locked}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="At least 8 characters"
@@ -141,8 +208,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 </p>
               )}
 
-              <Button type="submit" disabled={pending}>
-                {pending ? copy.pending : copy.submit}
+              <Button type="submit" disabled={pending || locked}>
+                {locked
+                  ? `Locked — retry in ${formatCountdown(lockRemaining)}`
+                  : pending
+                    ? copy.pending
+                    : copy.submit}
               </Button>
             </form>
 
