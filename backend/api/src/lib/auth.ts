@@ -29,6 +29,13 @@ import {
  */
 
 const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN ?? "http://localhost:3000";
+// Only set in production, where the dashboard (Vercel) and api (Railway) live
+// on different subdomains of the same root domain, e.g. "app.tollgate.com"
+// and "api.tollgate.com" — set this to ".tollgate.com" (leading dot) so the
+// session cookie is shared across both. On localhost the dashboard and api
+// are genuinely same-site (different ports of one host), so this stays unset
+// and crossSubDomainCookies stays disabled.
+const AUTH_COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN;
 
 export const auth = betterAuth({
   // A pg.Pool selects Better Auth's built-in Postgres (Kysely) adapter, so its
@@ -41,6 +48,12 @@ export const auth = betterAuth({
   // (index.ts) separately allows this origin with credentials so the session
   // cookie can travel dashboard(:3000) -> api(:4000) (same site).
   trustedOrigins: [DASHBOARD_ORIGIN],
+  advanced: {
+    crossSubDomainCookies: {
+      enabled: AUTH_COOKIE_DOMAIN !== undefined,
+      domain: AUTH_COOKIE_DOMAIN,
+    },
+  },
   emailAndPassword: {
     // Email + password only for this cut. Password hashing is Better Auth's
     // scrypt default. No email verification (no mail infra yet) — a documented
