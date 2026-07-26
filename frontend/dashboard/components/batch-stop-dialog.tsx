@@ -13,13 +13,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ApiError, freezeAgent, unfreezeAgent } from "@/lib/api";
+import { ApiError, type AgentMutationResponse } from "@/lib/api";
 
 type BatchStopMode = "stop" | "resume";
 
 interface BatchStopDialogProps {
   agents: { id: string; name: string }[];
   mode: BatchStopMode;
+  /** Injected so the exact same dialog works against the real api
+   *  (lib/api.ts's freezeAgent/unfreezeAgent) or the marketing page's demo
+   *  simulator. */
+  freezeAgent: (id: string, mode: "soft" | "hard") => Promise<AgentMutationResponse>;
+  unfreezeAgent: (id: string) => Promise<AgentMutationResponse>;
   /** When true the trigger is greyed and unclickable — used when no selected
    *  agent is eligible for this action, so the toolbar keeps a stable shape
    *  instead of the button appearing/disappearing. */
@@ -69,6 +74,8 @@ const MODE_COPY = {
 export function BatchStopDialog({
   agents,
   mode,
+  freezeAgent,
+  unfreezeAgent,
   disabled = false,
   onStatusChange,
   onCompleted,

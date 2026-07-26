@@ -16,8 +16,18 @@ const STATUS_STYLE: Record<AgentStatus, { label: string; color: string }> = {
   archived: { label: "Archived", color: "var(--muted-foreground)" },
 };
 
-export function AgentStatusBadge({ status }: { status: AgentStatus }) {
-  const { label, color } = STATUS_STYLE[status];
+interface AgentStatusBadgeProps {
+  status: AgentStatus;
+  /** True when the agent is over budget and not already stopped/archived —
+   *  overrides the "Active" pill with "Flagged" without touching the
+   *  persisted AgentStatus (flagged is derived, not a backend column; see
+   *  lib/agent-budget.ts's isOverBudget). */
+  flagged?: boolean;
+}
+
+export function AgentStatusBadge({ status, flagged = false }: AgentStatusBadgeProps) {
+  const { label, color } =
+    flagged && status === "active" ? { label: "Flagged", color: "var(--err)" } : STATUS_STYLE[status];
   return (
     <Badge
       variant="outline"

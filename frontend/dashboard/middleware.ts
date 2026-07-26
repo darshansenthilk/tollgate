@@ -10,17 +10,22 @@ import { getSessionCookie } from "better-auth/cookies";
  * even though the api (:4000) set it.
  */
 const AUTH_PAGES = new Set(["/sign-in", "/sign-up"]);
+// The marketing page is the one route a signed-out visitor should actually
+// reach — everything else (the real dashboard at /agents, /status) stays
+// behind the gate.
+const PUBLIC_ROUTES = new Set(["/"]);
 
 export function middleware(request: NextRequest) {
   const sessionCookie = getSessionCookie(request);
   const { pathname } = request.nextUrl;
   const isAuthPage = AUTH_PAGES.has(pathname);
+  const isPublicRoute = PUBLIC_ROUTES.has(pathname);
 
-  if (!sessionCookie && !isAuthPage) {
+  if (!sessionCookie && !isAuthPage && !isPublicRoute) {
     return NextResponse.redirect(new URL("/sign-in", request.url));
   }
   if (sessionCookie && isAuthPage) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/agents", request.url));
   }
   return NextResponse.next();
 }

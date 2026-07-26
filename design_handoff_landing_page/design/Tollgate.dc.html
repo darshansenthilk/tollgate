@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<title>Tollgate — Spend control for AI agents</title>
+<meta name="description" content="Budget guardrails and a kill switch for AI agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Geist:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0}
+  body{color:#ecebe6;font-family:'Geist',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;background-color:#08080a;background-image:radial-gradient(46% 38% at 84% 6%,rgba(255,74,61,.08),transparent 62%),radial-gradient(44% 40% at 10% 96%,rgba(64,110,190,.13),transparent 62%);background-attachment:fixed;background-repeat:no-repeat}
+  *{box-sizing:border-box}
+  a{color:#ff4a3d;text-decoration:none;transition:opacity .22s cubic-bezier(.22,.61,.36,1),color .22s cubic-bezier(.22,.61,.36,1)}
+  a:hover{opacity:.8}
+  button{transition:background-color .22s cubic-bezier(.22,.61,.36,1),border-color .22s cubic-bezier(.22,.61,.36,1),color .22s cubic-bezier(.22,.61,.36,1),box-shadow .22s cubic-bezier(.22,.61,.36,1),transform .22s cubic-bezier(.22,.61,.36,1),opacity .22s cubic-bezier(.22,.61,.36,1)}
+  button:active{transform:translateY(1px)}
+  ::selection{background:rgba(255,74,61,.28)}
+  @keyframes tg-blink{0%,100%{opacity:1}50%{opacity:.3}}
+  [data-reveal]{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.22,.61,.36,1),transform .8s cubic-bezier(.22,.61,.36,1)}
+  [data-reveal].tg-in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){[data-reveal]{opacity:1;transform:none;transition:none}}
+</style>
+</helmet>
+<div data-app style="min-height:100vh;">
+
+  <!-- NAV -->
+  <nav data-reveal style="position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px clamp(16px,4vw,32px);background:rgba(18,18,24,.5);backdrop-filter:blur(22px) saturate(160%);-webkit-backdrop-filter:blur(22px) saturate(160%);border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <svg width="19" height="20" viewBox="152 142 296 316" fill="none" style="flex:none;">
+        <defs><clipPath id="tg-gate-nav"><path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z"></path></clipPath></defs>
+        <g fill="#ff4a3d" clip-path="url(#tg-gate-nav)">
+          <rect x="204" y="145" width="12" height="310"></rect>
+          <rect x="249" y="145" width="12" height="310"></rect>
+          <rect x="294" y="145" width="12" height="310"></rect>
+          <rect x="339" y="145" width="12" height="310"></rect>
+          <rect x="384" y="145" width="12" height="310"></rect>
+        </g>
+        <path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z" fill="none" stroke="#ff4a3d" stroke-width="18" stroke-linejoin="round"></path>
+      </svg>
+      <span style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.02em;">TOLLGATE</span>
+    </div>
+    <a href="#access" style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#ecebe6;border:1px solid rgba(255,255,255,.22);padding:9px 16px;border-radius:12px;background:rgba(255,255,255,.06);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);white-space:nowrap;transition:background-color .22s cubic-bezier(.22,.61,.36,1),border-color .22s cubic-bezier(.22,.61,.36,1),color .22s cubic-bezier(.22,.61,.36,1),box-shadow .22s cubic-bezier(.22,.61,.36,1),transform .22s cubic-bezier(.22,.61,.36,1),opacity .22s cubic-bezier(.22,.61,.36,1);" style-hover="background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.38);opacity:1;">Request access</a>
+  </nav>
+
+  <!-- HERO -->
+  <header data-reveal style="position:relative;border-bottom:1px solid rgba(255,255,255,.07);overflow:hidden;background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.045) 1px, transparent 0);background-size:26px 26px;">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(56px,14vw,88px) clamp(20px,5vw,32px) clamp(40px,8vw,64px);display:flex;flex-wrap:wrap;gap:40px;align-items:center;">
+      <div style="flex:1 1 460px;min-width:280px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:28px;">[ AGENT SPEND CONTROL ]</div>
+        <h1 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(42px,6.4vw,86px);line-height:0.98;letter-spacing:-0.03em;font-weight:600;margin:0 0 26px;">Budget guardrails and a kill switch for AI agents.</h1>
+        <p style="font-size:clamp(16px,1.9vw,20px);line-height:1.55;color:#9c9c95;max-width:52ch;margin:0 0 36px;">AI agents are being handed real spending power — their own API access to OpenAI and Anthropic, acting autonomously, unattended. Nobody's watching the meter.</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+          <a href="#demo" style="font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.1em;text-transform:uppercase;background:#ff4a3d;color:#0b0b0d;border-radius:12px;font-weight:500;padding:14px 22px;transition:background-color .22s cubic-bezier(.22,.61,.36,1),border-color .22s cubic-bezier(.22,.61,.36,1),color .22s cubic-bezier(.22,.61,.36,1),box-shadow .22s cubic-bezier(.22,.61,.36,1),transform .22s cubic-bezier(.22,.61,.36,1),opacity .22s cubic-bezier(.22,.61,.36,1);" style-hover="background:#ff5f53;box-shadow:0 8px 26px rgba(255,74,61,.175);opacity:1;">See it live ↓</a>
+          <a href="#access" style="font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.1em;text-transform:uppercase;color:#ecebe6;border:1px solid rgba(255,255,255,.22);padding:14px 22px;border-radius:12px;background:rgba(255,255,255,.06);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);transition:background-color .22s cubic-bezier(.22,.61,.36,1),border-color .22s cubic-bezier(.22,.61,.36,1),color .22s cubic-bezier(.22,.61,.36,1),box-shadow .22s cubic-bezier(.22,.61,.36,1),transform .22s cubic-bezier(.22,.61,.36,1),opacity .22s cubic-bezier(.22,.61,.36,1);" style-hover="background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.38);opacity:1;">Request access</a>
+        </div>
+      </div>
+
+      <!-- TELEMETRY READOUT -->
+      <div style="position:relative;padding:22px;flex:1 1 340px;min-width:260px;max-width:420px;">
+        <div style="position:absolute;top:0;left:0;width:20px;height:20px;border-top:2px solid #ff4a3d;border-left:2px solid #ff4a3d;"></div>
+        <div style="position:absolute;top:0;right:0;width:20px;height:20px;border-top:2px solid #ff4a3d;border-right:2px solid #ff4a3d;"></div>
+        <div style="position:absolute;bottom:0;left:0;width:20px;height:20px;border-bottom:2px solid #ff4a3d;border-left:2px solid #ff4a3d;"></div>
+        <div style="position:absolute;bottom:0;right:0;width:20px;height:20px;border-bottom:2px solid #ff4a3d;border-right:2px solid #ff4a3d;"></div>
+        <div style="border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:18px;font-family:'JetBrains Mono',monospace;">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;letter-spacing:0.14em;color:#ff4a3d;margin-bottom:16px;">[ REQUEST · INSPECTED ]<span style="display:inline-flex;align-items:center;gap:6px;color:#9c9c95;"><span style="width:6px;height:6px;border-radius:50%;background:#46c47f;animation:tg-blink 1.6s infinite;"></span>LIVE</span></div>
+          <div style="font-size:12.5px;color:#cfcfc9;background:#0b0b0d;border:1px solid rgba(255,255,255,.11);padding:9px 11px;margin-bottom:16px;">POST /openai/v1/chat/completions</div>
+          <div style="display:flex;flex-direction:column;gap:11px;font-size:12px;color:#9c9c95;">
+            <div style="display:flex;justify-content:space-between;"><span>token</span><span style="color:#cfcfc9;">tok_checkout····</span></div>
+            <div style="display:flex;justify-content:space-between;"><span>model</span><span style="color:#cfcfc9;">gpt-4o</span></div>
+            <div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>budget</span><span style="color:#cfcfc9;">$0.18 / $0.30</span></div>
+              <div style="height:4px;background:#0b0b0d;border:1px solid rgba(255,255,255,.11);"><div style="height:100%;width:60%;background:#46c47f;"></div></div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #26262a;margin-top:16px;padding-top:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:#46c47f;letter-spacing:0.02em;">FORWARD</span>
+            <span style="font-size:11px;color:#5a5a56;">checked before forward · 3ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="max-width:1200px;margin:0 auto;padding:0 clamp(20px,5vw,32px) 30px;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.16em;color:#5a5a56;">[ FOR OPENAI &amp; ANTHROPIC API TRAFFIC ]</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.16em;color:#5a5a56;">SCROLL ↓</span>
+    </div>
+  </header>
+
+  <!-- PROBLEM -->
+  <section data-reveal style="border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(48px,12vw,80px) clamp(20px,5vw,32px);display:flex;flex-wrap:wrap;gap:40px;align-items:center;">
+      <div style="flex:1 1 420px;min-width:280px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:26px;">[ THE PROBLEM ]</div>
+        <p style="font-size:17px;line-height:1.6;color:#9c9c95;margin:0 0 30px;max-width:54ch;">A bad loop, a prompt injection, or broken retry logic can burn thousands of dollars before a human notices. The only fix today is manually pulling an API key — which usually takes down every agent sharing it, not just the bad one.</p>
+        <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,3.4vw,40px);line-height:1.06;letter-spacing:-0.02em;font-weight:600;margin:0;max-width:16ch;">Spend runs away at machine speed. Fixes run at human speed.</h2>
+      </div>
+      <div style="flex:1 1 380px;min-width:280px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);overflow:hidden;font-family:'JetBrains Mono',monospace;font-size:12.5px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #26262a;">
+          <span style="width:9px;height:9px;border-radius:50%;background:#ff4a3d;"></span>
+          <span style="color:#9c9c95;font-size:11.5px;">agent-scraper · shared key sk-…4f2</span>
+        </div>
+        <div style="padding:16px;line-height:1.95;color:#8f8f88;">
+          <div><span style="color:#5a5a56;">→</span> POST /v1/chat/completions <span style="color:#46c47f;">200</span> <span style="color:#5a5a56;">1,024 tok</span></div>
+          <div><span style="color:#5a5a56;">→</span> POST /v1/chat/completions <span style="color:#46c47f;">200</span> <span style="color:#5a5a56;">1,024 tok</span></div>
+          <div><span style="color:#5a5a56;">→</span> POST /v1/chat/completions <span style="color:#46c47f;">200</span> <span style="color:#5a5a56;">1,024 tok</span></div>
+          <div style="color:#5a5a56;">&nbsp;&nbsp;&nbsp;… retry loop ×3,000</div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #26262a;color:#cfcfc9;">spent&nbsp;&nbsp;<span style="color:#ff4a3d;font-weight:500;">$3,912</span></div>
+          <div style="color:#cfcfc9;">budget&nbsp;<span style="color:#5a5a56;">none</span></div>
+          <div style="color:#cfcfc9;">alert&nbsp;&nbsp;<span style="color:#5a5a56;">none</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MECHANISM (numbered) — the main product, sized to lead -->
+  <section data-reveal id="how" style="border-bottom:1px solid rgba(255,255,255,.07);background-image:radial-gradient(60% 50% at 50% 0%,rgba(255,74,61,.035),transparent 65%);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(64px,16vw,132px) clamp(20px,5vw,32px) clamp(56px,14vw,128px);">
+      <div style="display:inline-flex;align-items:center;gap:9px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.22em;color:#ff4a3d;margin-bottom:28px;border:1px solid rgba(255,74,61,.35);background:rgba(255,74,61,.1);border-radius:100px;padding:7px 16px;white-space:nowrap;">[ THE MECHANISM ]</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(38px,5.6vw,68px);line-height:1;letter-spacing:-0.025em;font-weight:600;margin:0 0 20px;max-width:18ch;">One proxy. The whole spend kill chain.</h2>
+      <p style="font-size:19px;line-height:1.6;color:#9c9c95;margin:0 0 64px;max-width:62ch;">Agents call Tollgate instead of the LLM providers directly. Every request runs the same pipeline before a dollar leaves for OpenAI or Anthropic.</p>
+      <div style="border:1px solid rgba(255,74,61,.25);background:rgba(255,255,255,.045);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:22px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 20px 60px rgba(0,0,0,.45);padding:6px clamp(18px,4vw,36px);">
+        <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+          <div style="display:flex;flex-wrap:wrap;gap:8px 32px;align-items:baseline;padding:32px 0;border-bottom:1px solid rgba(255,255,255,.09);">
+            <div style="flex:0 0 auto;font-family:'JetBrains Mono',monospace;font-size:17px;color:#ff4a3d;font-weight:500;">{{ s.num }}</div>
+            <h3 style="flex:1 1 220px;font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,4vw,28px);font-weight:600;letter-spacing:-0.015em;margin:0;line-height:1.15;">{{ s.title }}</h3>
+            <p style="flex:2 1 260px;font-size:16px;line-height:1.65;color:#b7b7ae;margin:0;">{{ s.body }}</p>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+
+  <!-- CAPABILITY -->
+  <section data-reveal style="border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(48px,12vw,80px) clamp(20px,5vw,32px);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:22px;">[ CAPABILITY ]</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,3.4vw,40px);line-height:1.05;letter-spacing:-0.02em;font-weight:600;margin:0 0 48px;max-width:22ch;">Built around the failures a pulled API key can't fix.</h2>
+
+      <!-- ENFORCEMENT -->
+      <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:center;padding-bottom:48px;margin-bottom:48px;border-bottom:1px solid #26262a;">
+        <div style="flex:1 1 380px;min-width:280px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.16em;color:#5a5a56;margin-bottom:12px;">[ TOLLGATE · ENFORCEMENT ]</div>
+          <h3 style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0 0 22px;">Checked before forward.</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Per-agent token, never a shared key</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Hard monthly budget per agent</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Budget checked before the request forwards</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Assistant gate — a ChatGPT token can't call Claude</div>
+          </div>
+        </div>
+        <!-- diagram -->
+        <div style="flex:2 1 420px;min-width:280px;display:flex;align-items:stretch;gap:12px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:150px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:16px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.12em;color:#5a5a56;margin-bottom:12px;">AGENTS</div>
+            <div style="display:flex;flex-direction:column;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#9c9c95;">
+              <div style="border:1px solid rgba(255,255,255,.11);padding:6px 9px;">tok_checkout</div>
+              <div style="border:1px solid rgba(255,255,255,.11);padding:6px 9px;">tok_research</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;color:#5a5a56;font-family:'JetBrains Mono',monospace;">→</div>
+          <div style="flex:1.2;min-width:170px;border:1px solid #ff4a3d;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:16px;">
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;"><div style="width:9px;height:9px;background:#ff4a3d;"></div><div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;">Tollgate</div></div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#cfcfc9;border:1px solid rgba(255,255,255,.11);padding:7px 9px;margin-bottom:10px;">check budget → decide</div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10.5px;">
+              <div style="color:#46c47f;">● within → 200 forward</div>
+              <div style="color:#ff4a3d;">● over → 403 blocked</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;color:#5a5a56;font-family:'JetBrains Mono',monospace;">→</div>
+          <div style="flex:1;min-width:150px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:16px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.12em;color:#5a5a56;margin-bottom:12px;">PROVIDERS</div>
+            <div style="display:flex;flex-direction:column;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#9c9c95;">
+              <div style="border:1px solid rgba(255,255,255,.11);padding:6px 9px;">api.openai.com</div>
+              <div style="border:1px solid rgba(255,255,255,.11);padding:6px 9px;">api.anthropic.com</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONTROL -->
+      <div style="display:flex;flex-wrap:wrap-reverse;gap:40px;align-items:center;">
+        <!-- freeze visual -->
+        <div style="flex:1 1 320px;min-width:260px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:18px;font-family:'JetBrains Mono',monospace;font-size:12.5px;">
+          <div style="font-size:11px;letter-spacing:0.14em;color:#5a5a56;margin-bottom:14px;">[ FREEZE EVENT ]</div>
+          <div style="line-height:2;color:#8f8f88;">
+            <div><span style="color:#5a5a56;">→</span> operator: freeze agent-scraper</div>
+            <div><span style="color:#5a5a56;">→</span> redis flag set <span style="color:#46c47f;">ok</span> <span style="color:#5a5a56;">· 0ms</span></div>
+            <div><span style="color:#5a5a56;">→</span> next request <span style="color:#ff4a3d;">403 agent_frozen</span></div>
+            <div style="color:#5a5a56;">&nbsp;&nbsp;&nbsp;no restart · no propagation delay</div>
+          </div>
+        </div>
+        <div style="flex:1 1 380px;min-width:280px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.16em;color:#5a5a56;margin-bottom:12px;">[ TOLLGATE · CONTROL ]</div>
+          <h3 style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0 0 22px;">Freeze at the speed of a bad loop.</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Freeze one agent, not the whole fleet</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Redis fast-path — the next request sees it</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>No restart, no key rotation, no downtime</div>
+            <div style="display:flex;gap:10px;font-size:15px;color:#cfcfc9;"><span style="color:#ff4a3d;font-family:'JetBrains Mono',monospace;">+</span>Every request logged for audit</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TECHNICAL READOUT -->
+  <section data-reveal style="border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(48px,12vw,80px) clamp(20px,5vw,32px);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:22px;">[ TECHNICAL READOUT ]</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,3.4vw,40px);line-height:1.05;letter-spacing:-0.02em;font-weight:600;margin:0 0 44px;max-width:20ch;">Enforced at the request boundary. Not after the bill.</h2>
+      <div style="border-top:1px solid #26262a;border-left:1px solid #26262a;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+        <sc-for list="{{ specs }}" as="sp" hint-placeholder-count="6">
+          <div style="border-right:1px solid #26262a;border-bottom:1px solid #26262a;padding:26px 22px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5a56;margin-bottom:14px;">{{ sp.label }}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,2.4vw,30px);font-weight:600;letter-spacing:-0.01em;color:#ecebe6;">{{ sp.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIVE DEMO — exact recreation of frontend/dashboard/app/page.tsx -->
+  <section data-reveal id="demo" style="border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(48px,12vw,80px) clamp(20px,5vw,32px);">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;">[ LIVE ]</div>
+        <span style="display:inline-flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;color:#8f8f88;border:1px solid rgba(255,255,255,.11);padding:5px 11px;"><span style="width:6px;height:6px;border-radius:50%;background:#ff4a3d;"></span>ACTUAL DASHBOARD UI</span>
+      </div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3.8vw,46px);line-height:1.02;letter-spacing:-0.02em;font-weight:600;margin:0 0 8px;max-width:20ch;">This is the real dashboard.</h2>
+      <p style="font-size:16px;line-height:1.6;color:#9c9c95;margin:0 0 26px;max-width:62ch;">Not a mockup — the actual Agent Dashboard component, wired to a simulated data feed so you can drive it yourself.</p>
+
+      <!-- demo feed controls (not part of the app UI) -->
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px dashed rgba(255,255,255,.16);border-radius:14px;padding:12px 14px;margin-bottom:22px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:#5a5a56;">[ demo feed ]</span>
+        <select value="{{ trafficValue }}" onChange="{{ onTraffic }}" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.22);height:32px;padding:0 10px;border-radius:9px;color:#ecebe6;font-size:12.5px;font-family:'JetBrains Mono',monospace;outline:none;min-width:170px;">
+          <sc-for list="{{ trafficOptions }}" as="o" hint-placeholder-count="3">
+            <option value="{{ o.value }}">{{ o.label }}</option>
+          </sc-for>
+        </select>
+        <button onClick="{{ toggleTraffic }}" style="font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:0.06em;text-transform:uppercase;background:{{ trafficBtnBg }};color:{{ trafficBtnColor }};border:1px solid {{ trafficBtnBorder }};height:32px;padding:0 15px;font-weight:500;cursor:pointer;border-radius:9px;" style-hover="background:{{ trafficBtnHoverBg }};border-color:{{ trafficBtnHoverBorder }};box-shadow:0 6px 18px rgba(0,0,0,.35);">{{ trafficBtnLabel }}</button>
+        <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#8f8f88;">{{ runningLabel }}</span>
+      </div>
+
+      <!-- ============ app replica ============ -->
+      <div style="max-width:920px;margin:0 auto;position:relative;">
+        <header style="margin-bottom:24px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div>
+            <div style="display:flex;align-items:baseline;gap:2px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:30px;color:#ff4a3d;">[</span>
+              <h3 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,3vw,34px);font-weight:600;letter-spacing:-0.02em;margin:0;background:linear-gradient(90deg,#fff,#ff4a3d);-webkit-background-clip:text;background-clip:text;color:transparent;">Agent Dashboard</h3>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:30px;color:#ff4a3d;">]</span>
+            </div>
+            <p style="font-size:14px;color:#a8a69c;margin:4px 0 0;">Your group of agents, all managed in one place.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button onClick="{{ toggleCreate }}" style="display:inline-flex;align-items:center;gap:6px;font-family:'Geist',sans-serif;font-size:13px;font-weight:500;height:32px;padding:0 13px;border-radius:9px;cursor:pointer;border:1px solid rgba(255,74,61,.45);background:rgba(255,74,61,.12);color:#ff4a3d;" style-hover="background:rgba(255,74,61,.22);border-color:rgba(255,74,61,.7);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 5v14M5 12h14"></path></svg>Create agent</button>
+            <button onClick="{{ toggleSelectionMode }}" style="display:inline-flex;align-items:center;gap:6px;font-family:'Geist',sans-serif;font-size:13px;font-weight:500;height:32px;padding:0 13px;border-radius:9px;cursor:pointer;border:1px solid {{ selectBtnBorder }};background:{{ selectBtnBg }};color:{{ selectBtnColor }};" style-hover="background:{{ selectBtnHoverBg }};border-color:{{ selectBtnHoverBorder }};"><sc-if value="{{ notSelectionMode }}" hint-placeholder-val="{{ true }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></sc-if>{{ selectBtnLabel }}</button>
+          </div>
+        </header>
+
+        <!-- create agent panel -->
+        <sc-if value="{{ showCreate }}" hint-placeholder-val="{{ false }}">
+          <div style="border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 16px 40px rgba(0,0,0,.4);padding:20px;margin-bottom:18px;">
+            <sc-if value="{{ hasNewToken }}" hint-placeholder-val="{{ false }}">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:500;margin-bottom:4px;">Agent created</div>
+              <div style="font-size:13px;color:#a8a69c;margin-bottom:14px;">Copy this token now — the API never returns it again.</div>
+              <div style="border:1px solid #ff5c5c;background:rgba(255,92,92,.1);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+                <div style="font-size:13px;font-weight:500;color:#ff5c5c;">You won't see this token again. Store it now.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <code style="flex:1;overflow-x:auto;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);border-radius:9px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#cfcfc9;">{{ newToken }}</code>
+                <button onClick="{{ copyToken }}" style="font-family:'Geist',sans-serif;font-size:12.5px;height:30px;padding:0 12px;border-radius:8px;border:1px solid rgba(255,255,255,.22);background:transparent;color:#ecebe6;cursor:pointer;" style-hover="background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.4);">{{ copyLabel }}</button>
+              </div>
+              <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+                <button onClick="{{ toggleCreate }}" style="font-family:'Geist',sans-serif;font-size:13px;font-weight:500;height:32px;padding:0 16px;border-radius:9px;border:none;background:#ecebe6;color:#0b0b0d;cursor:pointer;" style-hover="background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.35);">Done</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{ notHasNewToken }}" hint-placeholder-val="{{ true }}">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:500;margin-bottom:4px;">Create agent</div>
+              <div style="font-size:13px;color:#a8a69c;margin-bottom:16px;">Issues a new Tollgate token scoped to this agent.</div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+                <label style="font-size:12px;color:#a8a69c;">Name</label>
+                <input value="{{ form.name }}" onChange="{{ onFormName }}" placeholder="checkout-bot" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 10px;color:#ecebe6;font-size:13px;font-family:'Geist',sans-serif;outline:none;" />
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+                <div style="flex:1 1 140px;display:flex;flex-direction:column;gap:6px;">
+                  <label style="font-size:12px;color:#a8a69c;">Assistant</label>
+                  <select value="{{ form.provider }}" onChange="{{ onFormProvider }}" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 8px;color:#ecebe6;font-size:13px;font-family:'Geist',sans-serif;outline:none;">
+                    <option value="">Select an assistant</option>
+                    <option value="chatgpt">ChatGPT</option>
+                    <option value="claude">Claude</option>
+                  </select>
+                </div>
+                <div style="flex:1 1 140px;display:flex;flex-direction:column;gap:6px;">
+                  <label style="font-size:12px;color:#a8a69c;">Model</label>
+                  <select value="{{ form.model }}" onChange="{{ onFormModel }}" disabled="{{ form.modelDisabled }}" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 8px;color:#ecebe6;font-size:13px;font-family:'Geist',sans-serif;outline:none;opacity:{{ form.modelOpacity }};">
+                    <option value="">{{ form.modelPlaceholder }}</option>
+                    <sc-for list="{{ form.modelOptions }}" as="m" hint-placeholder-count="2">
+                      <option value="{{ m.value }}">{{ m.label }}</option>
+                    </sc-for>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+                <label style="font-size:12px;color:#a8a69c;">Max budget (cents)</label>
+                <input value="{{ form.budget }}" onChange="{{ onFormBudget }}" type="number" min="0" step="1" placeholder="500 (= $5.00) — leave blank for unlimited" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 10px;color:#ecebe6;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;" />
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px;">
+                <button onClick="{{ toggleCreate }}" style="font-family:'Geist',sans-serif;font-size:13px;height:32px;padding:0 14px;border-radius:9px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ecebe6;cursor:pointer;" style-hover="background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.38);">Cancel</button>
+                <button onClick="{{ submitCreate }}" style="font-family:'Geist',sans-serif;font-size:13px;font-weight:500;height:32px;padding:0 16px;border-radius:9px;border:none;background:#ecebe6;color:#0b0b0d;cursor:pointer;" style-hover="background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.35);">Create agent</button>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <!-- All agents card -->
+        <div style="position:relative;border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.055);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);border-radius:20px;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 20px 50px rgba(0,0,0,.45);overflow:hidden;">
+          <div style="position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,transparent,#ff4a3d,transparent);"></div>
+          <div style="padding:20px 20px 0;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="display:flex;width:36px;height:36px;flex:none;align-items:center;justify-content:center;border-radius:10px;border:1px solid rgba(255,74,61,.35);background:rgba(255,74,61,.12);color:#ff4a3d;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span>
+              <div>
+                <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:500;margin-bottom:4px;">All agents</div>
+                <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#a8a69c;">Polling every 3s<span style="width:6px;height:6px;border-radius:50%;background:#46c47f;animation:tg-blink 1.8s infinite;"></span></div>
+              </div>
+            </div>
+          </div>
+          <div style="padding:18px 20px 20px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+              <label style="font-size:12px;color:#a8a69c;">Sort by</label>
+              <select value="{{ sortKey }}" onChange="{{ onSort }}" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:30px;padding:0 8px;color:#ecebe6;font-size:12.5px;font-family:'Geist',sans-serif;outline:none;min-width:180px;">
+                <option value="name-asc">Name (A–Z)</option>
+                <option value="spend-desc">Usage (high to low)</option>
+                <option value="model-asc">Model (A–Z)</option>
+                <option value="model-desc">Model (Z–A)</option>
+              </select>
+            </div>
+
+            <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(255,255,255,.09);border-radius:9px;background:rgba(255,255,255,.045);padding:10px 16px;margin-bottom:14px;font-size:13px;">
+                <span>{{ selectedLabel }}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button onClick="{{ stopSelected }}" disabled="{{ noneStoppable }}" style="font-family:'Geist',sans-serif;font-size:12px;font-weight:500;height:28px;padding:0 12px;border-radius:7px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ecebe6;cursor:pointer;opacity:{{ stopBtnOpacity }};" style-hover="background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.38);">Stop</button>
+                  <button onClick="{{ resumeSelected }}" disabled="{{ noneResumable }}" style="font-family:'Geist',sans-serif;font-size:12px;font-weight:500;height:28px;padding:0 12px;border-radius:7px;border:1px solid rgba(70,196,127,.45);background:rgba(70,196,127,.12);color:#46c47f;cursor:pointer;opacity:{{ resumeBtnOpacity }};" style-hover="background:rgba(70,196,127,.22);border-color:rgba(70,196,127,.75);">Resume</button>
+                  <button onClick="{{ deleteSelected }}" disabled="{{ noneSelected }}" style="font-family:'Geist',sans-serif;font-size:12px;font-weight:500;height:28px;padding:0 12px;border-radius:7px;border:none;background:#f4645f;color:#1a0d0d;cursor:pointer;opacity:{{ deleteBtnOpacity }};" style-hover="background:#ff7a75;box-shadow:0 6px 18px rgba(244,100,95,.15);">Delete</button>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ noAgents }}" hint-placeholder-val="{{ false }}">
+              <p style="font-size:13px;color:#a8a69c;margin:0;">No agents yet — create one to get started.</p>
+            </sc-if>
+            <sc-if value="{{ hasAgents }}" hint-placeholder-val="{{ true }}">
+            <div style="border:1px solid rgba(255,255,255,.09);border-radius:11px;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+              <table style="width:100%;min-width:640px;border-collapse:collapse;font-size:13px;">
+                <thead>
+                  <tr style="border-bottom:1px solid rgba(255,255,255,.09);">
+                    <th style="width:{{ checkColWidth }};padding:9px 0;overflow:hidden;transition:width .25s;text-align:center;">
+                      <sc-if value="{{ selectionMode }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ toggleSelectAll }}" aria-label="Select all agents" style="width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid {{ selectAllBorder }};background:{{ selectAllBg }};color:#1a0d0d;font-size:11px;line-height:1;cursor:pointer;padding:0;" style-hover="border-color:#ff4a3d;box-shadow:0 0 0 3px rgba(255,74,61,.09);">{{ selectAllGlyph }}</button>
+                      </sc-if>
+                    </th>
+                    <th style="text-align:left;padding:9px 8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#8f8f88;font-weight:500;">Name</th>
+                    <th style="text-align:left;padding:9px 8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#8f8f88;font-weight:500;">Assistant</th>
+                    <th style="text-align:left;padding:9px 8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#8f8f88;font-weight:500;">Status</th>
+                    <th style="text-align:left;padding:9px 8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#8f8f88;font-weight:500;">Spend / budget</th>
+                    <th style="text-align:left;padding:9px 8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#8f8f88;font-weight:500;">Tokens</th>
+                    <th style="width:56px;padding:9px 8px;"><span style="position:absolute;width:1px;height:1px;overflow:hidden;">Edit</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ agents }}" as="a" hint-placeholder-count="4">
+                    <tr style="border-bottom:1px solid rgba(255,255,255,.06);">
+                      <td style="width:{{ checkColWidth }};padding:0;overflow:hidden;transition:width .25s;text-align:center;">
+                        <sc-if value="{{ selectionMode }}" hint-placeholder-val="{{ false }}">
+                          <button onClick="{{ a.toggleSelect }}" aria-label="Select {{ a.name }}" style="width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid {{ a.checkBorder }};background:{{ a.checkBg }};color:#1a0d0d;font-size:11px;line-height:1;cursor:pointer;padding:0;" style-hover="border-color:#ff4a3d;box-shadow:0 0 0 3px rgba(255,74,61,.09);">{{ a.checkGlyph }}</button>
+                        </sc-if>
+                      </td>
+                      <td onClick="{{ a.openSidebar }}" style="padding:10px 8px;cursor:pointer;transition:background-color .22s cubic-bezier(.22,.61,.36,1);" style-hover="background:rgba(255,255,255,.05);">
+                        <span style="display:flex;align-items:center;gap:8px;font-weight:500;">
+                          <span style="display:flex;width:26px;height:26px;flex:none;align-items:center;justify-content:center;border-radius:8px;border:1px solid rgba(255,74,61,.35);background:rgba(255,74,61,.12);color:#ff4a3d;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg></span>
+                          <sc-if value="{{ a.overBudget }}" hint-placeholder-val="{{ false }}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="#ff5c5c" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><path d="M4 22V3"></path></svg>
+                          </sc-if>
+                          {{ a.name }}
+                        </span>
+                      </td>
+                      <td style="padding:10px 8px;"><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#a8a69c;">{{ a.slug }}</span></td>
+                      <td style="padding:10px 8px;">
+                        <span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 9px;border-radius:100px;font-size:11.5px;font-weight:500;color:{{ a.badgeColor }};border:1px solid {{ a.badgeBorder }};background:{{ a.badgeBg }};">
+                          <span style="width:6px;height:6px;border-radius:50%;background:currentColor;"></span>{{ a.statusLabel }}
+                        </span>
+                      </td>
+                      <td style="padding:10px 8px;">
+                        <div style="display:flex;flex-direction:column;gap:5px;min-width:170px;">
+                          <span style="font-size:12.5px;color:#ecebe6;">{{ a.usageLabel }}</span>
+                          <div style="display:flex;align-items:center;gap:8px;">
+                            <div style="flex:1;height:4px;border-radius:100px;background:rgba(255,255,255,.09);overflow:hidden;">
+                              <div style="height:100%;width:{{ a.pctWidth }};background:{{ a.barColor }};transition:width .25s;"></div>
+                            </div>
+                            <span style="flex:none;font-size:11.5px;color:{{ a.pctColor }};">{{ a.pctLabel }}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td style="padding:10px 8px;"><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#a8a69c;">{{ a.tokensLabel }}</span></td>
+                      <td style="padding:10px 8px;text-align:right;white-space:nowrap;">
+                        <button onClick="{{ a.openEdit }}" title="Edit {{ a.name }}" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#cfcfc9;cursor:pointer;" style-hover="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.4);color:#ecebe6;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg></button>
+                      </td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+            </sc-if>
+          </div>
+        </div>
+        <!-- prompt sidebar — matches components/agent-prompt-sidebar.tsx -->
+        <sc-if value="{{ sidebarOpen }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ closeSidebar }}" style="position:absolute;inset:0;z-index:8;background:rgba(0,0,0,.5);border-radius:20px;"></div>
+          <div style="position:absolute;top:0;right:0;bottom:0;z-index:9;width:min(380px,86%);border-radius:0 20px 20px 0;border-left:1px solid rgba(255,255,255,.13);background:rgba(24,22,23,.92);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);padding:20px;overflow-y:auto;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;">
+              <div>
+                <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:500;margin-bottom:4px;">{{ sidebarName }}</div>
+                <div style="font-size:12.5px;color:#a8a69c;line-height:1.5;">Current prompt — transient, kept in Redis for ~2 minutes by the proxy and never written to Postgres.</div>
+              </div>
+              <button onClick="{{ closeSidebar }}" aria-label="Close" style="flex:none;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#8f8f88;cursor:pointer;border-radius:6px;" style-hover="background:rgba(255,255,255,.1);color:#ecebe6;">✕</button>
+            </div>
+            <sc-if value="{{ sidebarHasPrompt }}" hint-placeholder-val="{{ false }}">
+              <pre style="margin:0;overflow-x:auto;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.04);border-radius:9px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;color:#cfcfc9;white-space:pre-wrap;word-break:break-word;">{{ sidebarPrompt }}</pre>
+            </sc-if>
+            <sc-if value="{{ sidebarNoPrompt }}" hint-placeholder-val="{{ true }}">
+              <p style="font-size:13px;color:#a8a69c;margin:0;">No recent activity — nothing in flight for this agent right now.</p>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <!-- edit agent dialog — matches components/edit-agent-dialog.tsx -->
+        <sc-if value="{{ editOpen }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ closeEdit }}" style="position:absolute;inset:0;z-index:10;background:rgba(0,0,0,.55);border-radius:20px;"></div>
+          <div style="position:absolute;z-index:11;top:50%;left:50%;transform:translate(-50%,-50%);width:min(430px,92%);border:1px solid rgba(255,255,255,.13);border-radius:16px;background:rgba(26,24,25,.96);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);box-shadow:0 24px 60px rgba(0,0,0,.55);padding:20px;">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:500;margin-bottom:4px;">Edit agent</div>
+            <div style="font-size:13px;color:#a8a69c;margin-bottom:16px;line-height:1.5;">The agent keeps its token and this month's spend. Its assistant is fixed once created.</div>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+              <label style="font-size:12px;color:#a8a69c;">Name</label>
+              <input value="{{ editForm.name }}" onChange="{{ onEditName }}" placeholder="checkout-bot" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 10px;color:#ecebe6;font-size:13px;font-family:'Geist',sans-serif;outline:none;" />
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+              <div style="flex:1 1 140px;display:flex;flex-direction:column;gap:6px;">
+                <label style="font-size:12px;color:#a8a69c;">Assistant</label>
+                <input value="{{ editForm.providerLabel }}" disabled="{{ true }}" readOnly="{{ true }}" style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.12);border-radius:8px;height:34px;padding:0 10px;color:#8f8f88;font-size:13px;font-family:'Geist',sans-serif;outline:none;" />
+              </div>
+              <div style="flex:1 1 140px;display:flex;flex-direction:column;gap:6px;">
+                <label style="font-size:12px;color:#a8a69c;">Model</label>
+                <select value="{{ editForm.model }}" onChange="{{ onEditModel }}" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 8px;color:#ecebe6;font-size:13px;font-family:'Geist',sans-serif;outline:none;">
+                  <sc-for list="{{ editForm.modelOptions }}" as="m" hint-placeholder-count="2">
+                    <option value="{{ m.value }}">{{ m.label }}</option>
+                  </sc-for>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+              <label style="font-size:12px;color:#a8a69c;">Max budget (cents)</label>
+              <input value="{{ editForm.budget }}" onChange="{{ onEditBudget }}" type="number" min="0" step="1" placeholder="500 (= $5.00) — leave blank for unlimited" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:8px;height:34px;padding:0 10px;color:#ecebe6;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;" />
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;">
+              <button onClick="{{ closeEdit }}" style="font-family:'Geist',sans-serif;font-size:13px;height:32px;padding:0 14px;border-radius:9px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ecebe6;cursor:pointer;" style-hover="background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.38);">Cancel</button>
+              <button onClick="{{ saveEdit }}" disabled="{{ editNotDirty }}" style="font-family:'Geist',sans-serif;font-size:13px;font-weight:500;height:32px;padding:0 16px;border-radius:9px;border:none;background:#ecebe6;color:#0b0b0d;cursor:pointer;opacity:{{ saveBtnOpacity }};" style-hover="background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.35);">Save changes</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- toast viewport — scoped to the dashboard panel, not the page (matches components/ui/toast.tsx: top-right, newest first) -->
+        <div style="position:absolute;top:16px;right:16px;z-index:5;display:flex;flex-direction:column;gap:8px;width:100%;max-width:320px;pointer-events:none;">
+          <sc-for list="{{ toasts }}" as="t" hint-placeholder-count="0">
+            <div style="width:100%;border-radius:12px;background:rgba(30,28,29,.75);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);border:1px solid rgba(255,255,255,.13);box-shadow:0 10px 30px rgba(0,0,0,.45);padding:14px 32px 14px 16px;position:relative;pointer-events:auto;">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:500;color:#ecebe6;">{{ t.title }}</div>
+              <div style="font-size:13px;color:#a8a69c;margin-top:4px;">{{ t.description }}</div>
+              <button onClick="{{ t.dismiss }}" aria-label="Close" style="position:absolute;top:8px;right:8px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#8f8f88;cursor:pointer;border-radius:6px;" style-hover="background:rgba(255,255,255,.1);color:#ecebe6;">✕</button>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- ============ /app replica ============ -->
+
+      <sc-if value="{{ hasAttention }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:920px;margin:16px auto 0;display:flex;align-items:center;gap:9px;border:1px solid rgba(255,92,92,.4);background:rgba(255,92,92,.09);color:#ff5c5c;padding:11px 15px;font-size:13.5px;font-family:'JetBrains Mono',monospace;border-radius:10px;">
+          <span>▲</span><span>{{ attentionText }}</span>
+        </div>
+      </sc-if>
+    </div>
+  </section>
+
+  <!-- WHY NOW -->
+  <section data-reveal style="border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(48px,12vw,80px) clamp(20px,5vw,32px);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:28px;">[ WHY NOW ]</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(30px,4.6vw,58px);line-height:1.03;letter-spacing:-0.025em;font-weight:600;margin:0 0 26px;max-width:24ch;">Agents evolve fast. Spend control has to be faster.</h2>
+      <p style="font-size:clamp(17px,2vw,21px);line-height:1.55;color:#9c9c95;margin:0;max-width:60ch;">As agents get more autonomy and bigger budgets, this gets more expensive to ignore every month. API gateways became the default control layer for infrastructure traffic. Agent spend needs the same layer — <span style="color:#ecebe6;">inevitability, not novelty.</span></p>
+    </div>
+  </section>
+
+  <!-- ACCESS CTA -->
+  <section data-reveal id="access" style="border-bottom:1px solid rgba(255,255,255,.07);background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.045) 1px, transparent 0);background-size:26px 26px;">
+    <div style="max-width:1200px;margin:0 auto;padding:clamp(56px,14vw,88px) clamp(20px,5vw,32px);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:24px;">[ REQUEST ACCESS ]</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3.6vw,44px);line-height:1.04;letter-spacing:-0.02em;font-weight:600;margin:0 0 30px;max-width:20ch;">Put a meter on your agents.</h2>
+      <form onSubmit="{{ onSubmit }}" style="display:flex;gap:10px;flex-wrap:wrap;max-width:480px;">
+        <sc-if value="{{ notSubmitted }}" hint-placeholder-val="{{ true }}">
+          <input value="{{ email }}" onChange="{{ onEmail }}" type="email" placeholder="you@company.com" style="flex:1;min-width:240px;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);border-radius:16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.18);color:#ecebe6;font-size:15px;font-family:'Geist',sans-serif;padding:14px 15px;outline:none;" />
+          <button type="submit" style="font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.1em;text-transform:uppercase;background:#ff4a3d;color:#0b0b0d;border-radius:12px;border:none;font-weight:500;padding:14px 24px;cursor:pointer;white-space:nowrap;" style-hover="background:#ff5f53;box-shadow:0 8px 26px rgba(255,74,61,.175);">Request access</button>
+        </sc-if>
+        <sc-if value="{{ submitted }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:10px;font-size:15px;color:#46c47f;font-family:'JetBrains Mono',monospace;">
+            <span>✓</span> On the list. We'll be in touch.
+          </div>
+        </sc-if>
+      </form>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer data-reveal style="max-width:1200px;margin:0 auto;padding:clamp(36px,9vw,56px) clamp(20px,5vw,32px);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:32px;margin-bottom:44px;">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <svg width="19" height="20" viewBox="152 142 296 316" fill="none" style="flex:none;">
+        <defs><clipPath id="tg-gate-footer"><path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z"></path></clipPath></defs>
+        <g fill="#ff4a3d" clip-path="url(#tg-gate-footer)">
+          <rect x="204" y="145" width="12" height="310"></rect>
+          <rect x="249" y="145" width="12" height="310"></rect>
+          <rect x="294" y="145" width="12" height="310"></rect>
+          <rect x="339" y="145" width="12" height="310"></rect>
+          <rect x="384" y="145" width="12" height="310"></rect>
+        </g>
+        <path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z" fill="none" stroke="#ff4a3d" stroke-width="18" stroke-linejoin="round"></path>
+      </svg>
+          <span style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.02em;">TOLLGATE</span>
+        </div>
+        <p style="font-size:14px;color:#8f8f88;margin:0;max-width:34ch;">Budget guardrails and a kill switch for AI agents.</p>
+      </div>
+      <div style="display:flex;gap:56px;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:11px;">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.14em;color:#5a5a56;">PRODUCT</span>
+          <a href="#how" style="color:#cfcfc9;font-size:14px;">Mechanism</a>
+          <a href="#demo" style="color:#cfcfc9;font-size:14px;">Live demo</a>
+          <a href="#access" style="color:#cfcfc9;font-size:14px;">Request access</a>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:11px;">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.14em;color:#5a5a56;">SUPPORTS</span>
+          <span style="color:#cfcfc9;font-size:14px;">OpenAI</span>
+          <span style="color:#cfcfc9;font-size:14px;">Anthropic</span>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;border-top:1px solid rgba(255,255,255,.07);padding-top:22px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;color:#5a5a56;">CONTROL PLANE FOR AGENT SPEND</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;color:#5a5a56;">© 2026 TOLLGATE</span>
+    </div>
+  </footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+// Cents per 1,000,000 tokens (USD) — mirrors backend/proxy/src/adapters price tables.
+const PRICES = {
+  'gpt-4o':      { in: 250,  out: 1000 },
+  'gpt-4o-mini': { in: 15,   out: 60   },
+  'sonnet':      { in: 300,  out: 1500 },
+  'haiku':       { in: 80,   out: 400  },
+  'opus':        { in: 1500, out: 7500 },
+};
+const ROUTE = { chatgpt: '/openai/v1/chat/completions', claude: '/claude/v1/messages' };
+const GREEN = '#46c47f'; // --ok
+const AMBER = '#f0b03a'; // --amber
+const RED   = '#ff5c5c'; // --err (distinct from --brand, per globals.css)
+const BRAND = '#ff4a3d'; // --brand
+const TICK_MS = 650;
+
+// Matches frontend/dashboard/lib/agent-options.ts exactly (labels, order).
+const PROVIDERS = [{ value: 'chatgpt', label: 'ChatGPT' }, { value: 'claude', label: 'Claude' }];
+const MODELS_BY_PROVIDER = {
+  chatgpt: [{ value: 'gpt-4o', label: 'gpt-4o' }, { value: 'gpt-4o-mini', label: 'gpt-4o-mini' }],
+  claude: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }],
+};
+const MODEL_LABEL = { 'gpt-4o': 'gpt-4o', 'gpt-4o-mini': 'gpt-4o-mini', sonnet: 'Sonnet', haiku: 'Haiku', opus: 'Opus' };
+
+function rand(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
+function rgba(hex, a){ const n = parseInt(hex.slice(1), 16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function fakeToken(){ return 'tg_live_' + Array.from({ length: 24 }, () => '0123456789abcdef'[rand(0, 15)]).join(''); }
+
+function providerLabel(slug){ return (PROVIDERS.find(p => p.value === slug) || {}).label || slug; }
+function modelsForProvider(slug){ return MODELS_BY_PROVIDER[slug] || []; }
+
+/** Mirrors spendFraction in page.tsx: null = unlimited, zero budget = at the ceiling. */
+function spendFraction(spend, max){
+  if (max === null) return null;
+  if (max <= 0) return 1;
+  return spend / max;
+}
+
+/** Mirrors compareBySortKey: sorts on the raw model value, nulls last. */
+function compareBySortKey(a, b, sortKey){
+  switch (sortKey) {
+    case 'spend-desc': return b.spend - a.spend;
+    case 'model-asc':
+    case 'model-desc': {
+      if (a.model === null && b.model === null) return 0;
+      if (a.model === null) return 1;
+      if (b.model === null) return -1;
+      const cmp = a.model.toLowerCase().localeCompare(b.model.toLowerCase());
+      return sortKey === 'model-asc' ? cmp : -cmp;
+    }
+    default: return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  }
+}
+
+/** Flagged (over-budget) agents first — primary key; the chosen sort is secondary. */
+function compareAgents(a, b, sortKey, isOver){
+  const aOver = isOver(a), bOver = isOver(b);
+  if (aOver !== bOver) return aOver ? -1 : 1;
+  return compareBySortKey(a, b, sortKey);
+}
+
+class Component extends DCLogic {
+  state = {
+    submitted: false,
+    email: '',
+    runningId: null,
+    trafficValue: 'checkout',
+    seq: 0,
+    log: [],
+    agents: [
+      { id:'checkout', name:'checkout-bot',    provider:'chatgpt', model:'gpt-4o',      budget:30,  spend:0,  tokens:0,      frozen:false, currentPrompt:null },
+      { id:'research', name:'research-agent',  provider:'claude',  model:'sonnet',      budget:200, spend:41, tokens:126400, frozen:false, currentPrompt:'{\n  "model": "claude-sonnet-4",\n  "messages": [\n    { "role": "user", "content": "Summarise the Q3 vendor contracts" }\n  ]\n}' },
+      { id:'scraper',  name:'data-scraper',    provider:'chatgpt', model:'gpt-4o-mini', budget:50,  spend:46, tokens:812300, frozen:false, currentPrompt:null },
+      { id:'backfill', name:'nightly-backfill',provider:'chatgpt', model:'gpt-4o',      budget:100, spend:62, tokens:301900, frozen:true,  currentPrompt:null },
+    ],
+    sortKey: 'name-asc',
+    selectionMode: false,
+    selectedIds: [],
+    showCreate: false,
+    newToken: null,
+    copied: false,
+    form: { name: '', provider: '', model: '', budget: '' },
+    sidebarAgentId: null,
+    editingAgentId: null,
+    editForm: { name: '', model: '', budget: '' },
+    toasts: [],
+    toastSeq: 0,
+  };
+
+  componentDidMount(){
+    // IntersectionObserver callbacks don't reliably fire in this sandbox, so
+    // visibility is computed manually from bounding rects on scroll/resize —
+    // same reveal rules, just driven by rAF-throttled polling instead of IO.
+    let lastY = window.scrollY;
+    let dir = 'down';
+    let lastRun = 0;
+
+    const check = () => {
+      // Root cause of the skip-over bug: gating reveal on rect.bottom being
+      // still on-screen meant a fast scroll/jump that lands past a section
+      // (top AND bottom both above the fold) never satisfied "intersecting",
+      // so it was never marked revealed. Reveal only needs rect.top to have
+      // reached the fold — independent of where the bottom edge ended up —
+      // so a single big jump reveals everything from the top down to the
+      // new position in one pass.
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      document.querySelectorAll('[data-reveal]').forEach(el => {
+        const r = el.getBoundingClientRect();
+        const reached = r.top < vh * 0.93;
+        if (reached) {
+          if (dir === 'down') el.classList.add('tg-in');
+        } else {
+          // Not yet reached (top still below the fold) → re-arm.
+          el.classList.remove('tg-in');
+        }
+      });
+    };
+
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y !== lastY){ dir = y > lastY ? 'down' : 'up'; lastY = y; }
+      const now = Date.now();
+      if (now - lastRun < 32) return; // plain timestamp throttle, no rAF/IO
+      lastRun = now;
+      check();
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    this._onScroll = onScroll;
+    check(); // reveal whatever's already in view on load
+  }
+
+  componentWillUnmount(){
+    this.stop();
+    if (this._onScroll) {
+      window.removeEventListener('scroll', this._onScroll);
+      window.removeEventListener('resize', this._onScroll);
+    }
+  }
+
+  fmtC(c){ return '$' + (c / 100).toFixed(2); }
+
+  stop(){ if (this._timer){ clearInterval(this._timer); this._timer = null; } }
+
+  startTraffic(){ this.stop(); this._timer = setInterval(() => this.tick(), TICK_MS); }
+
+  toggleTraffic(){
+    if (this.state.runningId){ this.stop(); this.setState({ runningId: null }); return; }
+    const id = this.state.trafficValue;
+    if (!this.state.agents.find(x => x.id === id)) return;
+    this.setState({ runningId: id }, () => this.startTraffic());
+  }
+
+  pushLog(entry, extra){
+    this.setState(s => {
+      const n = s.seq + 1;
+      const log = [{ n: String(n).padStart(3, '0'), ...entry }, ...s.log].slice(0, 9);
+      return { seq: n, log, ...(extra || {}) };
+    });
+  }
+
+  toggleCreate(){
+    this.setState(s => s.showCreate
+      ? { showCreate: false, newToken: null, copied: false, form: { name: '', provider: '', model: '', budget: '' } }
+      : { showCreate: true });
+  }
+
+  submitCreate(){
+    const f = this.state.form;
+    const name = f.name.trim();
+    if (!name || !f.provider || !f.model) return;
+    const budget = f.budget.trim() === '' ? null : Number(f.budget);
+    const id = 'agent-' + Date.now();
+    const token = fakeToken();
+    this.setState(s => ({
+      agents: [{ id, name, provider: f.provider, model: f.model, budget, spend: 0, tokens: 0, frozen: false, currentPrompt: null }, ...s.agents],
+      newToken: token,
+    }));
+  }
+
+  copyToken(){
+    const token = this.state.newToken;
+    if (!token) return;
+    (navigator.clipboard?.writeText(token) ?? Promise.reject()).catch(() => {});
+    this.setState({ copied: true });
+    setTimeout(() => this.setState({ copied: false }), 2000);
+  }
+
+  toggleSelectionMode(){
+    this.setState(s => ({ selectionMode: !s.selectionMode, selectedIds: [] }));
+  }
+
+  toggleSelect(id){
+    this.setState(s => ({
+      selectedIds: s.selectedIds.includes(id) ? s.selectedIds.filter(x => x !== id) : [...s.selectedIds, id],
+    }));
+  }
+
+  // Mirrors SelectionToolbar: separate Stop/Resume actions, each only touching
+  // its own subset of the selection (stoppable vs. resumable).
+  stopSelected(){
+    const ids = new Set(this.state.selectedIds);
+    this.setState(s => ({
+      agents: s.agents.map(a => (ids.has(a.id) && !a.frozen) ? { ...a, frozen: true } : a),
+      selectionMode: false,
+      selectedIds: [],
+    }));
+  }
+
+  resumeSelected(){
+    const ids = new Set(this.state.selectedIds);
+    this.setState(s => ({
+      agents: s.agents.map(a => (ids.has(a.id) && a.frozen) ? { ...a, frozen: false } : a),
+      selectionMode: false,
+      selectedIds: [],
+    }));
+  }
+
+  deleteSelected(){
+    const ids = new Set(this.state.selectedIds);
+    this.setState(s => ({
+      agents: s.agents.filter(a => !ids.has(a.id)),
+      selectionMode: false,
+      selectedIds: [],
+      runningId: ids.has(s.runningId) ? null : s.runningId,
+      sidebarAgentId: ids.has(s.sidebarAgentId) ? null : s.sidebarAgentId,
+      editingAgentId: ids.has(s.editingAgentId) ? null : s.editingAgentId,
+    }), () => { if (this.state.runningId === null) this.stop(); });
+  }
+
+  toggleSelectAll(){
+    this.setState(s => {
+      const allIds = s.agents.map(a => a.id);
+      const allSelected = allIds.length > 0 && allIds.every(id => s.selectedIds.includes(id));
+      return { selectedIds: allSelected ? [] : allIds };
+    });
+  }
+
+  openEdit(id){
+    const a = this.state.agents.find(x => x.id === id);
+    if (!a) return;
+    this.setState({
+      editingAgentId: id,
+      editForm: { name: a.name, model: a.model, budget: a.budget === null ? '' : String(a.budget) },
+    });
+  }
+
+  saveEdit(){
+    const id = this.state.editingAgentId;
+    const f = this.state.editForm;
+    const name = f.name.trim();
+    if (!id || name === '') return;
+    const budget = f.budget.trim() === '' ? null : Number(f.budget);
+    if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return;
+    this.setState(s => ({
+      agents: s.agents.map(x => x.id === id ? { ...x, name, model: f.model, budget } : x),
+      editingAgentId: null,
+    }));
+  }
+
+  // Matches page.tsx's toast copy exactly: fired once per under→over-budget transition.
+  addToast(title, description){
+    const id = this.state.toastSeq + 1;
+    this.setState(s => ({ toastSeq: id, toasts: [{ id, title, description }, ...s.toasts] }));
+    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(t => t.id !== id) })), 4500);
+  }
+
+  dismissToast(id){
+    this.setState(s => ({ toasts: s.toasts.filter(t => t.id !== id) }));
+  }
+
+  editBudget(id){
+    const a = this.state.agents.find(x => x.id === id);
+    if (!a) return;
+    const input = typeof window !== 'undefined' ? window.prompt('Max budget for ' + a.name + ' (blank = unlimited):', a.budget === null ? '' : String(a.budget)) : null;
+    if (input === null) return;
+    const budget = input.trim() === '' ? null : Number(input);
+    if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return;
+    this.setState(s => ({ agents: s.agents.map(x => x.id === id ? { ...x, budget } : x) }));
+  }
+
+  tick(){
+    const id = this.state.runningId;
+    const a = this.state.agents.find(x => x.id === id);
+    if (!a){ this.stop(); this.setState({ runningId: null }); return; }
+    const route = ROUTE[a.provider];
+
+    // Pipeline order mirrors proxy.ts: freeze gate before budget gate.
+    if (a.frozen){
+      this.stop();
+      this.pushLog({ route, code: '403', codeColor: RED, meta: 'agent_frozen — blocked' }, { runningId: null });
+      return;
+    }
+    if (a.budget !== null && a.spend >= a.budget){
+      this.stop();
+      this.pushLog({ route, code: '403', codeColor: RED, meta: 'budget_exceeded — blocked' }, { runningId: null });
+      return;
+    }
+
+    const price = PRICES[a.model] || { in: 0, out: 0 };
+    const p = rand(3000, 5000), c = rand(2000, 3500);
+    const cost = (p * price.in + c * price.out) / 1_000_000;
+    const tok = p + c;
+    const wasOver = a.budget !== null && a.spend >= a.budget;
+    const newSpend = a.spend + cost;
+    const justWentOver = !wasOver && a.budget !== null && newSpend >= a.budget;
+    const promptBody = JSON.stringify({
+      model: a.model,
+      messages: [{ role: 'user', content: 'Process batch item #' + (this.state.seq + 1) }],
+    }, null, 2);
+    this.setState(s => ({
+      agents: s.agents.map(x => x.id === a.id
+        ? { ...x, spend: x.spend + cost, tokens: x.tokens + tok, currentPrompt: promptBody }
+        : x),
+    }));
+    this.pushLog({ route, code: '200', codeColor: GREEN, meta: '+' + this.fmtC(cost) + ' · ' + tok.toLocaleString() + ' tok' });
+    if (justWentOver) this.addToast('Over budget', a.name + ' just went over its budget.');
+  }
+
+  renderVals(){
+    const running = this.state.runningId !== null;
+    const runId = this.state.runningId;
+    const isOver = (a) => (spendFraction(a.spend, a.budget) ?? 0) >= 1;
+    const selectedSet = new Set(this.state.selectedIds);
+
+    const sorted = [...this.state.agents].sort((a, b) => compareAgents(a, b, this.state.sortKey, isOver));
+
+    const agents = sorted.map(a => {
+      const fraction = spendFraction(a.spend, a.budget);
+      const frac = fraction ?? 0;
+      const over = frac >= 1;
+      const warn = fraction !== null && frac >= 0.8 && !over;
+      const barColor = (over || a.frozen) ? RED : warn ? AMBER : GREEN;
+      const badgeColor = a.frozen ? RED : GREEN;
+      return {
+        id: a.id,
+        name: a.name,
+        slug: a.provider,
+        model: a.model,
+        overBudget: over,
+        statusLabel: a.frozen ? 'Stopped' : 'Active',
+        badgeColor,
+        badgeBorder: rgba(badgeColor, .45),
+        badgeBg: rgba(badgeColor, .15),
+        usageLabel: this.fmtC(a.spend) + (a.budget === null ? '' : ' / ' + this.fmtC(a.budget)),
+        pctLabel: a.budget === null ? '∞' : Math.round(Math.min(frac, 1) * 100) + '%' + (warn ? ' ⚠' : ''),
+        pctColor: over ? RED : warn ? AMBER : '#8f8f88',
+        pctWidth: Math.min(frac, 1) * 100 + '%',
+        barColor,
+        tokensLabel: a.tokens.toLocaleString(),
+        checked: selectedSet.has(a.id),
+        checkGlyph: selectedSet.has(a.id) ? '✓' : '',
+        checkBg: selectedSet.has(a.id) ? BRAND : 'transparent',
+        checkBorder: selectedSet.has(a.id) ? BRAND : 'rgba(255,255,255,.3)',
+        toggleSelect: () => this.toggleSelect(a.id),
+        openEdit: () => this.openEdit(a.id),
+        openSidebar: () => this.setState({ sidebarAgentId: a.id }),
+      };
+    });
+
+    const selectedAgents = this.state.agents.filter(a => selectedSet.has(a.id));
+    const noneStoppable = !selectedAgents.some(a => !a.frozen);
+    const noneResumable = !selectedAgents.some(a => a.frozen);
+    const noneSelected = selectedAgents.length === 0;
+
+    const allIds = this.state.agents.map(a => a.id);
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedSet.has(id));
+    const someSelected = allIds.some(id => selectedSet.has(id));
+
+    const sidebarAgent = this.state.agents.find(a => a.id === this.state.sidebarAgentId) || null;
+    const sidebarPrompt = sidebarAgent && sidebarAgent.currentPrompt ? sidebarAgent.currentPrompt : '';
+    const editingAgent = this.state.agents.find(a => a.id === this.state.editingAgentId) || null;
+    const ef = this.state.editForm;
+    const editBudgetValue = ef.budget.trim() === '' ? null : Number(ef.budget);
+    const editDirty = editingAgent !== null && (
+      ef.name.trim() !== editingAgent.name ||
+      ef.model !== editingAgent.model ||
+      editBudgetValue !== editingAgent.budget
+    );
+    // An agent may hold a model that predates the current list — append it so
+    // the select still shows the real value (mirrors edit-agent-dialog.tsx).
+    const editModelOptions = (() => {
+      if (editingAgent === null) return [];
+      const base = modelsForProvider(editingAgent.provider);
+      return base.some(m => m.value === editingAgent.model)
+        ? base
+        : [...base, { value: editingAgent.model, label: editingAgent.model }];
+    })();
+
+    const attention = this.state.agents.filter(a => a.frozen || isOver(a));
+    const trafficOptions = this.state.agents.filter(a => !a.frozen).map(a => ({ value: a.id, label: a.name }));
+    const runningAgent = this.state.agents.find(a => a.id === runId);
+    const modelOptions = modelsForProvider(this.state.form.provider);
+
+    return {
+      email: this.state.email,
+      submitted: this.state.submitted,
+      notSubmitted: !this.state.submitted,
+      onEmail: (e) => this.setState({ email: e.target.value }),
+      onSubmit: (e) => { e.preventDefault(); if (this.state.email.trim()) this.setState({ submitted: true }); },
+
+      steps: [
+        { num: '01', title: 'Per-agent token & budget', body: "Every agent gets its own token and a hard budget. No shared keys — freezing one never takes down the rest." },
+        { num: '02', title: 'Checked before forward', body: "Every request is checked against that budget before it's forwarded. Overspend is prevented, not reported after the fact." },
+        { num: '03', title: 'Instant freeze', body: 'Freeze any agent from a live dashboard via a Redis fast-path flag. No restart, no propagation delay — the next request is denied.' },
+        { num: '04', title: 'Metered & logged', body: 'Real cost is metered from the upstream usage and written to an audit log. Spend is live from Redis, the same counter enforcement reads.' },
+      ],
+      specs: [
+        { label: 'Enforcement point', value: 'Pre-forward' },
+        { label: 'Freeze propagation', value: 'Next request' },
+        { label: 'Overspend bound', value: '≤ 1 call' },
+        { label: 'Budget scope', value: 'Per agent / mo' },
+        { label: 'Providers', value: 'OpenAI · Anthropic' },
+        { label: 'Control plane', value: 'Redis fast-path' },
+      ],
+
+      agents,
+      hasAttention: attention.length > 0,
+      attentionText: attention.length === 0 ? '' :
+        attention.length + ' agent' + (attention.length === 1 ? ' needs' : 's need') + ' attention: ' + attention.map(a => a.name).join(', '),
+      noAgents: this.state.agents.length === 0,
+      hasAgents: this.state.agents.length > 0,
+      trafficOptions,
+      trafficValue: this.state.trafficValue,
+      onTraffic: (e) => this.setState({ trafficValue: e.target.value }),
+      toggleTraffic: () => this.toggleTraffic(),
+      trafficBtnLabel: running ? '■ Stop' : '▶ Start',
+      trafficBtnBg: running ? rgba(RED, .12) : BRAND,
+      trafficBtnColor: running ? RED : '#0b0b0d',
+      trafficBtnBorder: running ? rgba(RED, .5) : BRAND,
+      trafficBtnHoverBg: running ? rgba(RED, .22) : '#ff5f53',
+      trafficBtnHoverBorder: running ? rgba(RED, .75) : '#ff5f53',
+      runningLabel: running && runningAgent ? '1 req / ' + (TICK_MS / 1000) + 's → ' + runningAgent.name : 'idle',
+
+      // dashboard chrome
+      selectionMode: this.state.selectionMode,
+      notSelectionMode: !this.state.selectionMode,
+      toggleSelectionMode: () => this.toggleSelectionMode(),
+      selectBtnLabel: this.state.selectionMode ? 'Done' : 'Select agents',
+      selectBtnBorder: this.state.selectionMode ? 'rgba(255,255,255,.22)' : rgba(AMBER, .45),
+      selectBtnBg: this.state.selectionMode ? 'rgba(255,255,255,.06)' : rgba(AMBER, .12),
+      selectBtnColor: this.state.selectionMode ? '#ecebe6' : AMBER,
+      selectBtnHoverBg: this.state.selectionMode ? 'rgba(255,255,255,.12)' : rgba(AMBER, .22),
+      selectBtnHoverBorder: this.state.selectionMode ? 'rgba(255,255,255,.38)' : rgba(AMBER, .75),
+      checkColWidth: this.state.selectionMode ? '40px' : '0px',
+      hasSelection: this.state.selectionMode && this.state.selectedIds.length > 0,
+      selectedCount: this.state.selectedIds.length,
+      // Matches SelectionToolbar's exact copy: "{n} agent{s} selected".
+      selectedLabel: this.state.selectedIds.length + ' agent' + (this.state.selectedIds.length === 1 ? '' : 's') + ' selected',
+      stopSelected: () => this.stopSelected(),
+      resumeSelected: () => this.resumeSelected(),
+      deleteSelected: () => this.deleteSelected(),
+      noneStoppable,
+      noneResumable,
+      noneSelected,
+      stopBtnOpacity: noneStoppable ? .45 : 1,
+      resumeBtnOpacity: noneResumable ? .45 : 1,
+      deleteBtnOpacity: noneSelected ? .45 : 1,
+
+      toggleSelectAll: () => this.toggleSelectAll(),
+      selectAllGlyph: allSelected ? '✓' : (someSelected ? '–' : ''),
+      selectAllBg: allSelected || someSelected ? BRAND : 'transparent',
+      selectAllBorder: allSelected || someSelected ? BRAND : 'rgba(255,255,255,.3)',
+
+      sidebarOpen: sidebarAgent !== null,
+      sidebarName: sidebarAgent ? sidebarAgent.name : 'Agent',
+      sidebarPrompt,
+      sidebarHasPrompt: sidebarPrompt.trim() !== '',
+      sidebarNoPrompt: sidebarPrompt.trim() === '',
+      closeSidebar: () => this.setState({ sidebarAgentId: null }),
+
+      editOpen: editingAgent !== null,
+      closeEdit: () => this.setState({ editingAgentId: null }),
+      saveEdit: () => this.saveEdit(),
+      editNotDirty: !editDirty,
+      saveBtnOpacity: editDirty ? 1 : .45,
+      editForm: {
+        name: ef.name,
+        model: ef.model,
+        budget: ef.budget,
+        providerLabel: editingAgent ? providerLabel(editingAgent.provider) : '',
+        modelOptions: editModelOptions,
+      },
+      onEditName: (e) => { const v = e.target.value; this.setState(s => ({ editForm: { ...s.editForm, name: v } })); },
+      onEditModel: (e) => { const v = e.target.value; this.setState(s => ({ editForm: { ...s.editForm, model: v } })); },
+      onEditBudget: (e) => { const v = e.target.value; this.setState(s => ({ editForm: { ...s.editForm, budget: v } })); },
+
+      toasts: this.state.toasts.map(t => ({ ...t, dismiss: () => this.dismissToast(t.id) })),
+
+      sortKey: this.state.sortKey,
+      onSort: (e) => this.setState({ sortKey: e.target.value }),
+
+      showCreate: this.state.showCreate,
+      toggleCreate: () => this.toggleCreate(),
+      hasNewToken: this.state.newToken !== null,
+      notHasNewToken: this.state.newToken === null,
+      newToken: this.state.newToken || '',
+      copyToken: () => this.copyToken(),
+      copyLabel: this.state.copied ? 'Copied' : 'Copy',
+      submitCreate: () => this.submitCreate(),
+      form: {
+        name: this.state.form.name,
+        provider: this.state.form.provider,
+        model: this.state.form.model,
+        budget: this.state.form.budget,
+        modelOptions,
+        modelDisabled: this.state.form.provider === '',
+        modelOpacity: this.state.form.provider === '' ? .5 : 1,
+        modelPlaceholder: this.state.form.provider === '' ? 'Provider first' : 'Select model',
+      },
+      onFormName: (e) => this.setState(s => ({ form: { ...s.form, name: e.target.value } })),
+      onFormProvider: (e) => { const v = e.target.value; this.setState(s => ({ form: { ...s.form, provider: v, model: '' } })); },
+      onFormModel: (e) => this.setState(s => ({ form: { ...s.form, model: e.target.value } })),
+      onFormBudget: (e) => this.setState(s => ({ form: { ...s.form, budget: e.target.value } })),
+    };
+  }
+}
+</script>
+</body>
+</html>

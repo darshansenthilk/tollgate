@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Bot, Flag, Pencil, Users } from "lucide-react";
+import { useState, type CSSProperties } from "react";
+import { Bot, Pencil, Users } from "lucide-react";
 import type { AgentStatus } from "@tollgate/shared";
-import { useToastManager } from "@/components/ui/toast";
 import {
   Card,
   CardContent,
@@ -35,17 +34,19 @@ import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { EditAgentDialog } from "@/components/edit-agent-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
+import { AgentAttentionAlerts } from "@/components/agent-attention-alerts";
 import { isStopped } from "@/lib/agent-status";
+import { isOverBudget, spendFraction } from "@/lib/agent-budget";
 import { cn } from "@/lib/utils";
-import {
-  ApiError,
-  listAgents,
-  type AgentListItem,
-  type CreateAgentResponse,
-  type UpdateAgentResponse,
+import type {
+  AgentListItem,
+  AgentMutationResponse,
+  CreateAgentInput,
+  CreateAgentResponse,
+  UpdateAgentInput,
+  UpdateAgentResponse,
 } from "@/lib/api";
 
-const POLL_INTERVAL_MS = 3000;
 const WARNING_THRESHOLD = 0.8;
 
 /** Sort choices for the control above the table. "Usage" sorts by
@@ -62,21 +63,6 @@ type SortKey = (typeof SORT_OPTIONS)[number]["value"];
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-/** Fraction of budget spent. null = unlimited (no bar/percent shown). */
-function spendFraction(spend: number, max: number | null): number | null {
-  if (max === null) return null;
-  if (max <= 0) return 1; // zero budget = permanently at the ceiling
-  return spend / max;
-}
-
-/** Single source of truth for "over budget" — used by sorting, the "needs
- *  attention" banner, the flagged badge, and over-budget transition
- *  detection alike. Also what "flagged" means: derived, not a persisted
- *  status — there's no backend column for it. */
-function isOverBudget(agent: AgentListItem): boolean {
-  return (spendFraction(agent.currentMonthSpendCents, agent.maxBudgetCents) ?? 0) >= 1;
 }
 
 /** The user-selected secondary sort, applied within the flagged/unflagged
@@ -107,140 +93,58 @@ function compareAgents(a: AgentListItem, b: AgentListItem, sortKey: SortKey): nu
   return compareBySortKey(a, b, sortKey);
 }
 
-export default function AgentsPage() {
-  const [agents, setAgents] = useState<AgentListItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * Everything the mutation dialogs need, matching lib/api.ts's real function
+ * signatures exactly. Injected rather than imported so this same component
+ * (and the dialogs it renders) work unmodified against either the real api
+ * or the marketing page's client-side demo simulator.
+ */
+export interface AgentDashboardActions {
+  createAgent: (input: CreateAgentInput) => Promise<CreateAgentResponse>;
+  updateAgent: (id: string, input: UpdateAgentInput) => Promise<UpdateAgentResponse>;
+  freezeAgent: (id: string, mode: "soft" | "hard") => Promise<AgentMutationResponse>;
+  unfreezeAgent: (id: string) => Promise<AgentMutationResponse>;
+  deleteAgent: (id: string) => Promise<AgentMutationResponse>;
+}
+
+interface AgentDashboardProps {
+  agents: AgentListItem[];
+  actions: AgentDashboardActions;
+  /** The parent owns the agents array (real page: polled from the api; demo:
+   *  the simulator's own state) — these patch it via lib/agent-list-updates.ts's
+   *  pure functions on the caller's side. */
+  onCreated: (agent: CreateAgentResponse) => void;
+  onStatusChange: (id: string, status: AgentStatus) => void;
+  onUpdated: (agent: UpdateAgentResponse) => void;
+  onDeleted: (ids: string[]) => void;
+  /** "absolute" for the marketing demo replica (contained within its own
+   *  `position: relative` panel); "fixed" (default) for the real dashboard,
+   *  pinned to the real viewport. See AgentAttentionAlerts's own prop doc. */
+  attentionAlertsPosition?: "fixed" | "absolute";
+}
+
+/**
+ * The dashboard's presentational shell — header, sort control, selection
+ * mode + table, prompt sidebar, attention alerts, create/edit dialogs. Owns
+ * only local UI state (sort, selection, which sidebar/dialog is open); the
+ * agents array itself and every mutation are the parent's responsibility, so
+ * the exact same component renders both the real dashboard (app/agents/page.tsx)
+ * and the marketing page's live demo.
+ */
+export function AgentDashboard({
+  agents,
+  actions,
+  onCreated,
+  onStatusChange,
+  onUpdated,
+  onDeleted,
+  attentionAlertsPosition = "fixed",
+}: AgentDashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [sidebarAgentId, setSidebarAgentId] = useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
-
-  const { add: addToast } = useToastManager();
-  // Read via a ref inside refresh() so refresh's identity (and therefore the
-  // poll interval effect below) doesn't depend on addToast's own identity.
-  const addToastRef = useRef(addToast);
-  addToastRef.current = addToast;
-
-  // Previous poll's over-budget state per agent id. null = no poll has
-  // completed yet, which is what suppresses toasts on the very first load —
-  // there's nothing to diff a transition against until this is populated.
-  const prevOverBudgetRef = useRef<Map<string, boolean> | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const data = await listAgents();
-      // Successive polls are identical most of the time. Swapping in a fresh
-      // array every 3s re-renders the whole table for nothing, and when that
-      // lands mid-animation (opening the sidebar or the create dialog) it
-      // shows up as a frame hitch. Keeping the previous reference when the
-      // payload is unchanged lets React bail out of the render entirely —
-      // same trick the selection pruning below already uses.
-      setAgents((prev) =>
-        prev !== null && JSON.stringify(prev) === JSON.stringify(data) ? prev : data,
-      );
-      setError(null);
-
-      // Drop any selected id that no longer exists (deleted elsewhere) so
-      // the toolbar's count never lags reality.
-      const validIds = new Set(data.map((a) => a.id));
-      setSelectedIds((prev) => {
-        let changed = false;
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (validIds.has(id)) next.add(id);
-          else changed = true;
-        }
-        return changed ? next : prev;
-      });
-
-      const previous = prevOverBudgetRef.current;
-      const next = new Map<string, boolean>();
-      for (const agent of data) {
-        const over = isOverBudget(agent);
-        next.set(agent.id, over);
-        // A real transition: this exact agent was confirmed under/at limit
-        // on the immediately preceding poll, and is over budget now.
-        if (previous !== null && previous.get(agent.id) === false && over) {
-          addToastRef.current({
-            title: "Over budget",
-            description: `${agent.name} just went over its budget.`,
-          });
-        }
-      }
-      prevOverBudgetRef.current = next;
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to reach the api");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const id = setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [refresh]);
-
-  function handleCreated(agent: CreateAgentResponse) {
-    const item: AgentListItem = {
-      id: agent.id,
-      name: agent.name,
-      providerSlug: agent.providerSlug,
-      model: agent.model,
-      status: agent.status,
-      maxBudgetCents: agent.maxBudgetCents,
-      currentMonthSpendCents: 0,
-      currentMonthTokens: 0,
-      currentPrompt: null,
-    };
-    setAgents((prev) => (prev === null ? [item] : [item, ...prev]));
-  }
-
-  function handleStatusChange(id: string, status: AgentStatus) {
-    setAgents((prev) =>
-      prev === null ? prev : prev.map((a) => (a.id === id ? { ...a, status } : a)),
-    );
-  }
-
-  /** PATCH /v1/agents/:id returns the committed row, so swap it straight in
-   *  rather than waiting for the next poll. Mirrors handleStatusChange. */
-  function handleUpdated(updated: UpdateAgentResponse) {
-    setAgents((prev) =>
-      prev === null
-        ? prev
-        : prev.map((a) =>
-            a.id === updated.id
-              ? {
-                  ...a,
-                  name: updated.name,
-                  providerSlug: updated.providerSlug,
-                  model: updated.model,
-                  status: updated.status,
-                  maxBudgetCents: updated.maxBudgetCents,
-                }
-              : a,
-          ),
-    );
-  }
-
-  function handleDeleted(id: string) {
-    setAgents((prev) => (prev === null ? prev : prev.filter((a) => a.id !== id)));
-    setSelectedIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }
-
-  function handleBatchDeleted(ids: string[]) {
-    const idSet = new Set(ids);
-    setAgents((prev) => (prev === null ? prev : prev.filter((a) => !idSet.has(a.id))));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) next.delete(id);
-      return next;
-    });
-  }
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -262,27 +166,38 @@ export default function AgentsPage() {
     setSelectionMode(false);
   }
 
+  /** Patches the parent's agents array via onDeleted, then locally drops the
+   *  now-gone ids from the selection so the toolbar's count stays accurate. */
+  function handleBatchDeleted(ids: string[]) {
+    onDeleted(ids);
+    const idSet = new Set(ids);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of idSet) next.delete(id);
+      return next;
+    });
+  }
+
   // Flagged agents first (primary key), then the chosen sort (secondary,
   // within each group) — see compareAgents.
-  const sortedAgents =
-    agents === null ? null : [...agents].sort((a, b) => compareAgents(a, b, sortKey));
+  const sortedAgents = [...agents].sort((a, b) => compareAgents(a, b, sortKey));
 
-  const allIds = (sortedAgents ?? []).map((a) => a.id);
+  const allIds = sortedAgents.map((a) => a.id);
   const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
   const someSelected = allIds.some((id) => selectedIds.has(id));
-  const selectedAgents = (agents ?? []).filter((a) => selectedIds.has(a.id));
+  const selectedAgents = agents.filter((a) => selectedIds.has(a.id));
 
-  // Re-derived from the live (polled) list every render, not a snapshot from
+  // Re-derived from the live agents list every render, not a snapshot from
   // when the row was clicked — see AgentPromptSidebar's prop doc comment.
-  const sidebarAgent = (agents ?? []).find((a) => a.id === sidebarAgentId) ?? null;
-  const editingAgent = (agents ?? []).find((a) => a.id === editingAgentId) ?? null;
+  const sidebarAgent = agents.find((a) => a.id === sidebarAgentId) ?? null;
+  const editingAgent = agents.find((a) => a.id === editingAgentId) ?? null;
 
   function toggleSelectAll() {
     setSelectedIds(allSelected ? new Set() : new Set(allIds));
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
+    <>
       <header className="mb-6 flex items-center justify-between">
         <div>
           {/* Bracketed title in the template's eyebrow idiom — coral mono
@@ -319,8 +234,9 @@ export default function AgentsPage() {
         </div>
         <div className="flex items-center gap-2">
           <CreateAgentDialog
-            onCreated={handleCreated}
-            existingNames={(agents ?? []).map((a) => a.name)}
+            createAgent={actions.createAgent}
+            onCreated={onCreated}
+            existingNames={agents.map((a) => a.name)}
           />
           <Button
             type="button"
@@ -341,12 +257,6 @@ export default function AgentsPage() {
           </Button>
         </div>
       </header>
-
-      {error !== null && (
-        <p className="mb-4 text-sm" style={{ color: "var(--err)" }}>
-          {error}
-        </p>
-      )}
 
       <Card className="relative">
         {/* Coral hairline along the card's top edge, fading out at both ends.
@@ -408,17 +318,16 @@ export default function AgentsPage() {
           {selectionMode && (
             <SelectionToolbar
               selectedAgents={selectedAgents}
+              freezeAgent={actions.freezeAgent}
+              unfreezeAgent={actions.unfreezeAgent}
+              deleteAgent={actions.deleteAgent}
               onDeleted={handleBatchDeleted}
-              onStatusChange={handleStatusChange}
+              onStatusChange={onStatusChange}
               onCompleted={exitSelectionMode}
             />
           )}
 
-          {sortedAgents === null ? (
-            <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-              Loading…
-            </p>
-          ) : sortedAgents.length === 0 ? (
+          {sortedAgents.length === 0 ? (
             <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
               No agents yet — create one to get started.
             </p>
@@ -519,13 +428,6 @@ export default function AgentsPage() {
                             >
                               <Bot className="size-3.5" strokeWidth={1.75} />
                             </span>
-                            {overBudget && (
-                              <Flag
-                                className="size-3.5 shrink-0"
-                                style={{ color: "var(--err)" }}
-                                aria-label="Flagged: over budget"
-                              />
-                            )}
                             {agent.name}
                           </span>
                         </TableCell>
@@ -533,7 +435,7 @@ export default function AgentsPage() {
                           <span className="font-mono text-xs">{agent.providerSlug}</span>
                         </TableCell>
                         <TableCell>
-                          <AgentStatusBadge status={agent.status} />
+                          <AgentStatusBadge status={agent.status} flagged={overBudget} />
                         </TableCell>
                         <TableCell>
                           {/* Amount on its own line; the bar and the percentage
@@ -610,17 +512,26 @@ export default function AgentsPage() {
         }}
       />
 
+      <AgentAttentionAlerts
+        agents={agents}
+        freezeAgent={actions.freezeAgent}
+        unfreezeAgent={actions.unfreezeAgent}
+        onStatusChange={onStatusChange}
+        variant={attentionAlertsPosition}
+      />
+
       {/* One dialog for the whole table, driven by an id — not one per row.
           Base UI dialog mount costs ~60-110ms, so a per-row instance would
           multiply that across every row. */}
       <EditAgentDialog
         agent={editingAgent}
+        updateAgent={actions.updateAgent}
         onOpenChange={(open) => {
           if (!open) setEditingAgentId(null);
         }}
-        onUpdated={handleUpdated}
-        existingNames={(agents ?? []).map((a) => a.name)}
+        onUpdated={onUpdated}
+        existingNames={agents.map((a) => a.name)}
       />
-    </main>
+    </>
   );
 }

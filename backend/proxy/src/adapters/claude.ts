@@ -1,21 +1,4 @@
-import type { ProviderAdapter, ProviderCost } from "@tollgate/shared";
-
-/**
- * Hardcoded price table, in cents per 1,000,000 tokens (USD).
- * The only place in the codebase that knows Anthropic's economics.
- */
-interface ModelPrice {
-  /** Cents per 1M input tokens. */
-  inputCentsPerMTok: number;
-  /** Cents per 1M output tokens. */
-  outputCentsPerMTok: number;
-}
-
-const PRICES: Record<string, ModelPrice> = {
-  "claude-3-5-sonnet-20241022": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
-  "claude-3-5-haiku-20241022": { inputCentsPerMTok: 80, outputCentsPerMTok: 400 },
-  "claude-3-opus-20240229": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
-};
+import { CLAUDE_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
 
 /** Narrow the unknown Messages API body to the fields we meter. */
 function readUsage(
@@ -67,7 +50,7 @@ export const claudeAdapter: ProviderAdapter = {
 
     // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
     // and is left for reconciliation rather than guessed at.
-    const price = PRICES[usage.model];
+    const price = CLAUDE_PRICES[usage.model];
     if (price === undefined) return { costCents: 0 };
 
     const costCents =

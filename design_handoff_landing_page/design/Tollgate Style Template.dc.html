@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<title>Tollgate — Style template</title>
+<meta name="description" content="Tollgate visual system: tokens, type, glass recipe, and components.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Geist:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0}
+  body{color:#ecebe6;font-family:'Geist',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;background-color:#08080a;background-image:radial-gradient(46% 38% at 84% 6%,rgba(255,74,61,.16),transparent 62%),radial-gradient(44% 40% at 10% 96%,rgba(64,110,190,.13),transparent 62%);background-attachment:fixed;background-repeat:no-repeat}
+  *{box-sizing:border-box}
+  a{color:#ff4a3d;text-decoration:none}
+  a:hover{opacity:.8}
+</style>
+</helmet>
+<div style="max-width:1040px;margin:0 auto;padding:0 32px;">
+
+  <!-- HEADER -->
+  <header style="padding:56px 0 44px;border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
+      <div style="width:14px;height:14px;background:#ff4a3d;"></div>
+      <span style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">TOLLGATE</span>
+    </div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:20px;">[ STYLE TEMPLATE ]</div>
+    <h1 style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,4.4vw,48px);line-height:1.05;letter-spacing:-0.02em;font-weight:600;margin:0 0 12px;">Industrial glass.</h1>
+    <p style="font-size:16px;line-height:1.6;color:#9c9c95;margin:0;max-width:60ch;">Near-black surfaces with a single targeting-red accent, bracketed mono labels, and translucent blurred glass panels over ambient color. Tokens and components below are lifted directly from the live page.</p>
+  </header>
+
+  <!-- COLOR -->
+  <section style="padding:48px 0;border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:20px;">[ 01 · COLOR ]</div>
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;margin:0 0 24px;">Tokens</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;">
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#08080a;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">bg</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#08080a</div></div>
+      </div>
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#ecebe6;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">ink</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#ecebe6</div></div>
+      </div>
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#9c9c95;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">muted</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#9c9c95</div></div>
+      </div>
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#ff4a3d;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">accent</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#ff4a3d</div></div>
+      </div>
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#46c47f;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">ok</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#46c47f</div></div>
+      </div>
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:12px;overflow:hidden;">
+        <div style="height:60px;background:#f0b03a;"></div>
+        <div style="padding:10px 12px;"><div style="font-size:13px;font-weight:500;">warn</div><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#8f8f88;">#f0b03a</div></div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:#8f8f88;margin:18px 0 0;">Accent doubles as brand and "stop" — red is the only warm color besides danger states. Green = allowed/healthy, amber = ≥80% of budget.</p>
+  </section>
+
+  <!-- TYPE -->
+  <section style="padding:48px 0;border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:20px;">[ 02 · TYPE ]</div>
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;margin:0 0 24px;">Three families, fixed roles</h2>
+    <div style="display:flex;flex-direction:column;gap:16px;border:1px solid rgba(255,255,255,.11);border-radius:16px;background:rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);padding:26px;">
+      <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#8f8f88;width:170px;flex:none;">Space Grotesk 600</span><span style="font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:600;letter-spacing:-0.02em;">Display &amp; headings</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.09);padding-top:16px;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#8f8f88;width:170px;flex:none;">Geist 400/500</span><span style="font-size:16px;color:#cfcfc9;">Body copy and UI text — the human-readable layer.</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.09);padding-top:16px;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#8f8f88;width:170px;flex:none;">JetBrains Mono</span><span style="font-family:'JetBrains Mono',monospace;font-size:14px;color:#cfcfc9;">[ EYEBROW LABELS ] · routes · specs · status codes</span></div>
+    </div>
+  </section>
+
+  <!-- GLASS RECIPE -->
+  <section style="padding:48px 0;border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:20px;">[ 03 · GLASS PANEL ]</div>
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;margin:0 0 24px;">The recipe every card uses</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:center;">
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:16px;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 12px 36px rgba(0,0,0,.4);padding:26px;height:150px;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-size:15px;color:#cfcfc9;">Glass card</div>
+      <pre style="margin:0;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.7;color:#9c9c95;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:16px;overflow-x:auto;">background: rgba(255,255,255,.055);
+backdrop-filter: blur(18px) saturate(160%);
+border: 1px solid rgba(255,255,255,.11);
+border-radius: 16px;
+box-shadow: inset 0 1px 0 rgba(255,255,255,.09),
+            0 12px 36px rgba(0,0,0,.4);</pre>
+    </div>
+    <p style="font-size:13px;color:#8f8f88;margin:16px 0 0;">Needs the fixed-position ambient gradients on <code style="font-family:'JetBrains Mono',monospace;">body</code> behind it — blur has nothing to refract over flat black.</p>
+  </section>
+
+  <!-- COMPONENTS -->
+  <section style="padding:48px 0;border-bottom:1px solid rgba(255,255,255,.07);">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:20px;">[ 04 · COMPONENTS ]</div>
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;margin:0 0 24px;">Building blocks</h2>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+
+      <!-- buttons -->
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:16px;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);padding:20px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Buttons</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;background:#ff4a3d;color:#0b0b0d;border:none;border-radius:12px;padding:11px 18px;font-weight:500;cursor:pointer;">Primary</button>
+          <button style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;background:rgba(255,255,255,.06);color:#ecebe6;border:1px solid rgba(255,255,255,.22);border-radius:12px;padding:11px 18px;cursor:pointer;">Outline</button>
+        </div>
+      </div>
+
+      <!-- status -->
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:16px;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);padding:20px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Status</div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-family:'JetBrains Mono',monospace;font-size:12px;">
+          <div style="display:flex;align-items:center;gap:8px;color:#46c47f;"><span style="width:7px;height:7px;background:#46c47f;"></span>Active — within budget</div>
+          <div style="display:flex;align-items:center;gap:8px;color:#f0b03a;"><span style="width:7px;height:7px;background:#f0b03a;"></span>Warning — ≥ 80%</div>
+          <div style="display:flex;align-items:center;gap:8px;color:#ff4a3d;"><span style="width:7px;height:7px;background:#ff4a3d;"></span>Stopped / over budget</div>
+        </div>
+      </div>
+
+      <!-- eyebrow + numbered row -->
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:16px;background:rgba(255,255,255,.055);backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);padding:20px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Eyebrow + numbered row</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.2em;color:#ff4a3d;margin-bottom:12px;">[ SECTION LABEL ]</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:14px;border-top:1px solid rgba(255,255,255,.09);padding-top:12px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff4a3d;">01</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:600;">Step title</div>
+        </div>
+      </div>
+
+      <!-- spec cell -->
+      <div style="border:1px solid rgba(255,255,255,.11);border-radius:16px;padding:20px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Spec cell</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#8f8f88;margin-bottom:10px;">Enforcement point</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;letter-spacing:-0.01em;">Pre-forward</div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer style="padding:36px 0 56px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;color:#5a5a56;">TOLLGATE · STYLE TEMPLATE</footer>
+</div>
+</x-dc>
+</body>
+</html>

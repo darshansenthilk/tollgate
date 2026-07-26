@@ -1,20 +1,4 @@
-import type { ProviderAdapter, ProviderCost } from "@tollgate/shared";
-
-/**
- * Hardcoded price table, in cents per 1,000,000 tokens (USD).
- * The only place in the codebase that knows OpenAI's economics.
- */
-interface ModelPrice {
-  /** Cents per 1M input (prompt) tokens. */
-  inputCentsPerMTok: number;
-  /** Cents per 1M output (completion) tokens. */
-  outputCentsPerMTok: number;
-}
-
-const PRICES: Record<string, ModelPrice> = {
-  "gpt-4o": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
-  "gpt-4o-mini": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
-};
+import { OPENAI_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
 
 /** Narrow the unknown chat-completions body to the fields we meter. */
 function readUsage(
@@ -67,7 +51,7 @@ export const openaiAdapter: ProviderAdapter = {
 
     // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
     // and is left for reconciliation rather than guessed at.
-    const price = PRICES[usage.model];
+    const price = OPENAI_PRICES[usage.model];
     if (price === undefined) return { costCents: 0, ...tokenCounts };
 
     const costCents =

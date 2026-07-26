@@ -12,10 +12,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ApiError, deleteAgent } from "@/lib/api";
+import { ApiError, type AgentMutationResponse } from "@/lib/api";
 
 interface BatchDeleteDialogProps {
   agents: { id: string; name: string }[];
+  /** Injected so the exact same dialog works against the real api
+   *  (lib/api.ts's deleteAgent) or the marketing page's demo simulator. */
+  deleteAgent: (id: string) => Promise<AgentMutationResponse>;
   /** When true the trigger is greyed and unclickable — used when nothing is
    *  selected, so the toolbar keeps a stable shape instead of the button
    *  appearing/disappearing. */
@@ -34,6 +37,7 @@ interface BatchDeleteDialogProps {
  */
 export function BatchDeleteDialog({
   agents,
+  deleteAgent,
   disabled = false,
   onDeleted,
   onCompleted,

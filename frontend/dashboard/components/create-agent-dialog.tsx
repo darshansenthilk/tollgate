@@ -21,7 +21,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ApiError, createAgent, type CreateAgentResponse } from "@/lib/api";
+import {
+  ApiError,
+  type CreateAgentInput,
+  type CreateAgentResponse,
+} from "@/lib/api";
 import {
   MODELS_BY_PROVIDER,
   PROVIDERS,
@@ -29,6 +33,10 @@ import {
 } from "@/lib/agent-options";
 
 interface CreateAgentDialogProps {
+  /** Injected so the exact same dialog works against the real api
+   *  (lib/api.ts's createAgent) or the marketing page's demo simulator —
+   *  neither is imported directly here. */
+  createAgent: (input: CreateAgentInput) => Promise<CreateAgentResponse>;
   onCreated: (agent: CreateAgentResponse) => void;
   /**
    * Names of agents already fetched via GET /v1/agents. The backend also
@@ -39,7 +47,11 @@ interface CreateAgentDialogProps {
   existingNames: string[];
 }
 
-export function CreateAgentDialog({ onCreated, existingNames }: CreateAgentDialogProps) {
+export function CreateAgentDialog({
+  createAgent,
+  onCreated,
+  existingNames,
+}: CreateAgentDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [providerSlug, setProviderSlug] = useState<ProviderSlug | null>(null);

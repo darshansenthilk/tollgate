@@ -76,6 +76,36 @@ export interface ProviderAdapter {
 }
 
 // ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
+
+export interface ModelPrice {
+  /** Cents per 1M input (prompt) tokens. */
+  inputCentsPerMTok: number;
+  /** Cents per 1M output (completion) tokens. */
+  outputCentsPerMTok: number;
+}
+
+/**
+ * OpenAI's real chat-completions pricing — the single source of truth,
+ * imported by proxy/src/adapters/openai.ts (which meters real traffic) and
+ * the dashboard's marketing-page demo simulator (which never calls OpenAI,
+ * but stays correct if these numbers change instead of drifting from a
+ * hardcoded copy).
+ */
+export const OPENAI_PRICES: Record<string, ModelPrice> = {
+  "gpt-4o": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
+  "gpt-4o-mini": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
+};
+
+/** Anthropic's real Messages API pricing — same reuse as OPENAI_PRICES. */
+export const CLAUDE_PRICES: Record<string, ModelPrice> = {
+  "claude-3-5-sonnet-20241022": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
+  "claude-3-5-haiku-20241022": { inputCentsPerMTok: 80, outputCentsPerMTok: 400 },
+  "claude-3-opus-20240229": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
+};
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 

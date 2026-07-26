@@ -20,6 +20,12 @@
      stays green/amber/red on --ok/--amber/--err. Close in hue to --err by
      design; the two never share a component context. */
   --brand: #ff4a3d;
+  /* Marketing-page-only text tones (dashboard uses --muted-foreground for
+     this role). Added for the landing page's type hierarchy: body copy,
+     labels, and eyebrow meta each need a distinct step down from --ink. */
+  --muted-ink: #9c9c95;
+  --dim: #8f8f88;
+  --faint: #5a5a56;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -131,6 +137,52 @@ body {
     75% {
       transform: translateX(1px) rotate(4deg);
     }
+  }
+}
+
+/* Marketing landing page's glass-panel recipe — plain class (not a Tailwind
+   @utility) so it composes freely with utility classes in the same
+   className, same as .dark below. Variants (the Mechanism and dashboard-
+   replica cards) override radius/border/shadow/blur via inline style rather
+   than fighting utility-order precedence for shorthand properties. */
+.glass {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 12px 36px rgba(0, 0, 0, 0.4);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass {
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+  }
+}
+
+/* Marketing page only: the same warm glow the dashboard's `body` background
+   uses, plus a second cool-blue blob the dashboard doesn't have — this is
+   what gives the glass panels two hues to refract, per the design spec.
+   Scoped to a class (not `body`) so the dashboard keeps its single warm
+   glow. */
+.marketing-ambient-bg {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(46% 38% at 84% 6%, rgba(255, 74, 61, 0.16), transparent 62%),
+    radial-gradient(44% 40% at 10% 96%, rgba(64, 110, 190, 0.13), transparent 62%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* The hero telemetry card's pulsing LIVE dot. */
+@keyframes tg-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }
 

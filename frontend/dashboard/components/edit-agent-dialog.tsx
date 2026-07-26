@@ -22,7 +22,6 @@ import {
 import { modelsForProvider, providerLabel } from "@/lib/agent-options";
 import {
   ApiError,
-  updateAgent,
   type AgentListItem,
   type UpdateAgentInput,
   type UpdateAgentResponse,
@@ -33,6 +32,9 @@ interface EditAgentDialogProps {
    *  live (polled) agents list each render — see the seeding note below for
    *  why that does NOT clobber in-progress edits. */
   agent: AgentListItem | null;
+  /** Injected so the exact same dialog works against the real api
+   *  (lib/api.ts's updateAgent) or the marketing page's demo simulator. */
+  updateAgent: (id: string, input: UpdateAgentInput) => Promise<UpdateAgentResponse>;
   onOpenChange: (open: boolean) => void;
   onUpdated: (agent: UpdateAgentResponse) => void;
   /** Names of every agent currently listed, including this one's. */
@@ -41,6 +43,7 @@ interface EditAgentDialogProps {
 
 export function EditAgentDialog({
   agent,
+  updateAgent,
   onOpenChange,
   onUpdated,
   existingNames,
