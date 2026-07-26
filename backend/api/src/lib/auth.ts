@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { organization } from "better-auth/plugins";
+import { createAuthMiddleware, APIError } from "better-auth/api";
 import { pool } from "./db.js";
+import {
+  checkSignInLock,
+  recordSignInFailure,
+  recordSignInSuccess,
+  humanizeDuration,
+  SHOW_REMAINING_AT,
+} from "./login-throttle.js";
 
 /**
  * Better Auth instance — the api is the authentication authority for the whole
@@ -52,6 +60,79 @@ export const auth = betterAuth({
       "/sign-in/email": { window: 60, max: 10 },
       "/sign-up/email": { window: 60, max: 5 },
     },
+  },
+  hooks: {
+    // Progressive per-account sign-in lockout (see login-throttle.ts + PLAN.md).
+    // Both hooks run for EVERY auth endpoint, so each guards on the sign-in path.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-in/email") return;
+      const email = (ctx.body as { email?: string } | undefined)?.email;
+      if (!email) return;
+      const lock = await checkSignInLock(email);
+      if (lock.locked) {
+        // Reject before the password is checked: a locked identifier is refused
+        // even with correct credentials, and this attempt is NOT counted as a
+        // failure (the endpoint never runs, so the after-hook doesn't fire).
+        throw new APIError(
+          "TOO_MANY_REQUESTS",
+          {
+            message: `Too many failed attempts. Try again in ${humanizeDuration(lock.retryAfterSec)}.`,
+            code: "ACCOUNT_LOCKED",
+            retryAfter: lock.retryAfterSec,
+          },
+          { "Retry-After": String(lock.retryAfterSec) },
+        );
+      }
+    }),
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-in/email") return;
+      const email = (ctx.body as { email?: string } | undefined)?.email;
+      if (!email) return;
+
+      // `returned` is the endpoint's result: an APIError on a failed sign-in
+      // (401 for bad credentials), or the session payload on success. See the
+      // Better Auth dispatch pipeline (better-auth/dist/api/dispatch.mjs).
+      const returned = (ctx.context as { returned?: unknown }).returned;
+      const credentialFailure =
+        returned instanceof APIError && returned.statusCode === 401;
+
+      if (!credentialFailure) {
+        // Clear the record only on a genuine success — not on a validation/500
+        // error, which shouldn't count for or against the user.
+        if (!(returned instanceof APIError)) await recordSignInSuccess(email);
+        return;
+      }
+
+      const result = await recordSignInFailure(email);
+      if (result.locked) {
+        // This failed credential attempt is what tripped the lockout. The
+        // sign-in endpoint already resolved as 401, and Better Auth's dispatch
+        // pins the HTTP status to that original result even when an after-hook
+        // overrides the body (dist/api/dispatch.mjs sets result.response but not
+        // result.status). So this response is an honest 401 ("your login
+        // failed") that ALSO carries the lockout details. The 429 "we didn't
+        // even check" response is the before-hook's, on the next attempt. The
+        // client keys on `code`/`retryAfter` in the body, which are identical
+        // in both, so the countdown renders either way.
+        throw new APIError("UNAUTHORIZED", {
+          message: `Too many failed attempts. Try again in ${humanizeDuration(result.retryAfterSec)}.`,
+          code: "ACCOUNT_LOCKED",
+          retryAfter: result.retryAfterSec,
+        });
+      }
+      if (result.remaining <= SHOW_REMAINING_AT) {
+        // Surface the count only once they're down to their last 3 attempts;
+        // stay generic before that (no "attempts remaining" leak early on).
+        throw new APIError("UNAUTHORIZED", {
+          message: `Invalid email or password. ${result.remaining} attempt${
+            result.remaining === 1 ? "" : "s"
+          } remaining before a temporary lockout.`,
+          code: "LOGIN_ATTEMPTS_REMAINING",
+          remaining: result.remaining,
+        });
+      }
+      // Otherwise leave Better Auth's original generic 401 in place.
+    }),
   },
   databaseHooks: {
     session: {
