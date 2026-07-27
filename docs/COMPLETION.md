@@ -6,6 +6,194 @@
 
 ---
 
+## Session summary — 2026-07-26
+
+### TOTP two-factor authentication — mandatory → opt-in
+
+**Problem:** Layer 2 (TOTP, see the entry below) shipped 2026-07-25 as mandatory for every account,
+with no opt-out. The product owner decided that was the wrong default: reversed to opt-in, encouraged
+at sign-up, toggleable anytime from Settings.
+
+**What changed:**
+- `backend/api/src/lib/require-auth.ts` — removed the `403 two_factor_required` check entirely. The
+  gate no longer looks at `user.twoFactorEnabled` at all; only the session/active-org checks remain.
+  An account that never enrolled (or later disables it) authenticates on password alone.
+- `backend/api/src/lib/auth.ts` — updated the `plugins` comment to drop the "mandatory" framing (no
+  functional change; the plugin itself was always opt-in per account, only the custom gate enforced
+  otherwise).
+- `frontend/dashboard/lib/api.ts` — removed the `403 two_factor_required` → `/enroll-2fa` redirect
+  rule, since the backend never returns that code anymore.
+- `frontend/dashboard/components/auth-form.tsx` — a successful sign-up now routes to `/enroll-2fa`
+  (the new opt-in prompt, below) instead of straight to `/`. Sign-in is unaffected either way.
+- `frontend/dashboard/app/enroll-2fa/page.tsx` — rewritten from a forced enrollment gate into a
+  two-step opt-in prompt: an initial "Secure your account?" screen with **"Enable two-factor
+  authentication"** and **"Skip for now"** buttons (skip goes straight to `/`, no gate on the other
+  side), and the existing `TwoFactorEnroll` flow if they opt in.
+- `frontend/dashboard/app/settings/page.tsx` — copy changed from "Required for every Tollgate
+  account" to "Optional, but recommended…"; the existing `TwoFactorEnroll`/`TwoFactorManage` swap
+  logic (based on live `twoFactorEnabled`) needed no functional change — it already worked as a toggle.
+- `frontend/dashboard/components/two-factor-manage.tsx` — the "Disable 2FA" dialog copy changed from
+  "you'll be forced to re-enroll" to "you can turn it back on anytime," since disabling is now a real
+  opt-out rather than "start over."
+- `frontend/dashboard/components/two-factor-enroll.tsx`, `main-nav.tsx` — comments updated to describe
+  the opt-in prompt instead of a forced gate; no functional change.
+- `PLAN.md` §6, `docs/AUTH-IMPLEMENTATION.md` (Layer 2 entry) — updated to record this as the current
+  policy, preserving the original 2026-07-25 mandatory decision for the historical record.
+
+**Verified (2026-07-26):** `pnpm -r typecheck` clean across all workspaces. API-level smoke test against
+the running dev server: signed up a fresh account via `curl`, confirmed `twoFactorEnabled: false` in
+the response, then confirmed `GET /v1/agents` immediately returns `200 []` — not `403
+two_factor_required` — proving the account has full dashboard access without ever enrolling. **Not
+verified this session:** the opt-in prompt screen, the Settings copy, and the disable-dialog copy have
+only been checked by reading the code, not by clicking through them in a browser (no browser automation
+was installed/used this session).
+
+---
+
+## Session summary — 2026-07-25
+
+### Progressive sign-in lockout
+
+**Problem:** Better Auth's built-in per-IP rate limiter (10/min on `/sign-in/email`) blunts
+high-volume automated attacks but does nothing to slow a targeted, patient attacker working one
+account at a time — password guessing or credential-stuffing against a single known email could
+proceed indefinitely as long as it stayed under the IP-based ceiling.
+
+**What changed:** Added a progressive, self-resetting lockout keyed by normalized email, layered on
+top of (not replacing) the existing IP limiter.
+
+- `backend/api/src/lib/login-throttle.ts` (new) — Redis-backed lockout: 5 consecutive failures
+  triggers a cooldown starting at 5 minutes and doubling each escalation (5→10→20→…) capped at 24h;
+  hitting the cap resets escalation to 0; a success clears the record entirely; records auto-expire
+  after 24h of inactivity. The failure-transition is a single Lua script (`redis.eval`) so concurrent
+  requests can't race past the threshold. Keys are `HMAC-SHA256(normalized_email, BETTER_AUTH_SECRET)`
+  so raw emails never sit in Redis, and counting is uniform for real and non-existent emails (no
+  enumeration signal). Fails open (allows sign-in) if Redis is unreachable — the IP limiter remains as
+  backstop during an outage.
+- `backend/api/src/lib/auth.ts` — wired via Better Auth's `hooks.before`/`hooks.after`
+  (`createAuthMiddleware`), guarded on `ctx.path === "/sign-in/email"`. The before-hook rejects a
+  locked identifier before the password is even checked (a correct password doesn't bypass a lock).
+  The after-hook reads `ctx.context.returned` to detect a genuine credential failure (401) vs. success,
+  and throws a rewritten `APIError` carrying `code: "ACCOUNT_LOCKED"` / `LOGIN_ATTEMPTS_REMAINING` plus
+  `retryAfter` once remaining attempts drop to 3 or fewer (stays generic before that, to avoid leaking
+  attempt counts early).
+- `backend/api/src/lib/login-throttle.test.ts` (new) — unit tests for the pure ladder function,
+  escalation reset at the cap, and remaining-attempts math (3/3 passing via
+  `node --import tsx --test`).
+- `frontend/dashboard/components/auth-form.tsx` — on a 429/`ACCOUNT_LOCKED` response, stores
+  `lockedUntil` in localStorage, disables the form, and renders a live countdown that persists across
+  reload; on `LOGIN_ATTEMPTS_REMAINING` shows the server's exact remaining-attempts message.
+
+**Verified (2026-07-25):** Manual API + browser pass — attempts 1→5 gave generic → "3/2/1 remaining"
+→ locked (`retryAfter` 300s); a correct password submitted while locked was still rejected (before-hook
+fires ahead of the credential check); a success cleared the record so the next failure started fresh;
+the browser countdown rendered, disabled the form, and survived a reload.
+
+---
+
+### TOTP two-factor authentication (Layer 2)
+
+**Problem:** Layer 1 (email + password) has one hard failure mode — a phished, reused, or breached
+password is simply *correct*, and a correct password was game over: full access to mint spendable
+agent tokens, move budget caps, and undo emergency freezes. See `docs/AUTH-PLAN.md` for the full
+phased rollout this closes Phase 2 of, and `PLAN.md` for the resolved, file-by-file implementation
+plan this session executed top to bottom.
+
+**What changed:** Added Better Auth's `twoFactor` plugin (authenticator-app TOTP, not email-delivered
+codes — see `PLAN.md` §0 for why) and made enrollment **mandatory for every account from day one**,
+enforced with a small custom gate rather than a plugin option.
+
+- `backend/api/src/lib/auth.ts` — added `twoFactor({ issuer: "Tollgate" })` to the `plugins` array,
+  a peer of `organization()`. All other config (backup code count/format, trust-device duration,
+  account-lockout thresholds) left at the library defaults — see `PLAN.md` §9's decision log.
+- Schema — no hand-written migration; `pnpm --filter @tollgate/api db:auth-migrate` (Better Auth's
+  own `getMigrations`) added `user.twoFactorEnabled boolean` and a `twoFactor` table (`secret`,
+  `backupCodes`, `verified`, `failedVerificationCount`, `lockedUntil`).
+- `backend/api/src/lib/require-auth.ts` — **the mandatory-enforcement gate.** After the existing
+  session/`activeOrgId` checks, refuses any session where `user.twoFactorEnabled` is `false` with
+  `403 { error: "two_factor_required" }`, before stamping `req.authUser`/`req.activeOrgId`. This runs
+  on every `/v1/*` call, so it also retroactively gates any pre-existing account — intended, not a bug
+  (there were zero pre-existing accounts in this environment when it shipped).
+- `frontend/dashboard/lib/auth-client.ts` — added `twoFactorClient()`, deliberately without
+  `onTwoFactorRedirect`/`twoFactorPage` (the sign-in form handles the `twoFactorRedirect` response
+  inline instead, no full-page reload).
+- `frontend/dashboard/components/two-factor-enroll.tsx` (new) — the enrollment flow shared by both
+  surfaces below: password re-entry → `enable()` returns a `totpURI` + 10 backup codes → QR
+  (`qrcode.react`, new dependency) + manual-entry secret (parsed straight out of the `otpauth://` URI's
+  `secret` query param) + a live-code confirmation via `verifyTotp()`.
+- `frontend/dashboard/components/backup-codes-modal.tsx` (new) — the backup-codes acknowledgment
+  modal, shared by first enrollment and by regenerating codes later. No close button, and
+  `onOpenChange` never flips `open` off on its own, so Escape/outside-click can't dismiss it — only
+  checking the acknowledgment box and clicking Continue can.
+- `frontend/dashboard/components/two-factor-challenge.tsx` (new) — the sign-in code-entry screen:
+  toggles between a TOTP code (`verifyTotp`) and a one-time backup code (`verifyBackupCode`), a "trust
+  this device" checkbox, and specific handling for the two ways a challenge can die from underneath the
+  user (`INVALID_TWO_FACTOR_COOKIE` / `TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE`) by bouncing back to
+  credentials rather than showing a dead-end error.
+- `frontend/dashboard/components/auth-form.tsx` — sign-in now checks the sign-in response for
+  `{ twoFactorRedirect: true }` and swaps the card over to `TwoFactorChallenge` instead of navigating
+  (there's no session yet to navigate with — Better Auth deletes the one it just issued and withholds
+  the cookie). Sign-up is unaffected: a brand-new account's `twoFactorEnabled` defaults `false`, so the
+  hook never fires for it — it lands on `/` and immediately hits the `two_factor_required` gate below.
+- `frontend/dashboard/lib/api.ts` — `request()` now bounces a `403 two_factor_required` to
+  `/enroll-2fa`, mirroring the existing `401` → `/sign-in` rule.
+- `frontend/dashboard/app/enroll-2fa/page.tsx` (new) — the forced-enrollment landing page reached via
+  the rule above; renders `TwoFactorEnroll` full-page with no dashboard nav (added to `main-nav.tsx`'s
+  no-nav route set) and a "Sign out" escape hatch for the wrong-account case.
+- `frontend/dashboard/app/settings/page.tsx` + `components/two-factor-manage.tsx` (new) — the
+  Settings/Security surface: swaps between `TwoFactorEnroll` and `TwoFactorManage` based on the live
+  session's `twoFactorEnabled` (reactive — the plugin's client-side atom listener refreshes the session
+  after every `/two-factor/*` call, no manual refresh needed). `TwoFactorManage` offers "Regenerate
+  backup codes" and "Disable 2FA," both gated by password re-entry. There is no "view existing backup
+  codes" — Better Auth only exposes regenerate (which invalidates the old set); the UI reflects that
+  limit rather than working around it. Disabling doesn't carve out an exception to "mandatory": the
+  very next `/v1/*` call re-gates the same account immediately, which is intended ("start over," not
+  "opt out" — see `PLAN.md` §6).
+- `backend/api/package.json` — added `zod` as a direct dependency (matching `better-auth`'s own
+  `^4.3.6` range). Without it, `tsc` failed on the exported `auth` const with TS2742 ("inferred type...
+  cannot be named without a reference to zod/v4/core") — a pnpm node_modules isolation issue where a
+  transitive dependency's type isn't nameable from a package that doesn't declare it directly.
+
+**Verified (2026-07-25):** No existing test harness for auth flows to extend (per `PLAN.md` §10), so
+this was an API-level pass driving the api directly (own from-scratch RFC 6238 TOTP implementation
+standing in for an authenticator app, since no browser automation was used this session) plus a full
+manual code re-read of every new frontend file:
+- Sign-up → mandatory gate (`403 two_factor_required` on `/v1/agents`) → `enable()` issues a
+  `totpURI`/10 backup codes → `verifyTotp()` completes enrollment → gate clears (`200`).
+- Sign-out/sign-in on an enrolled account → `twoFactorRedirect: true`, no session issued (`401` on
+  `/v1/agents` until the challenge completes) → a fresh TOTP code completes it → dashboard usable.
+- A backup code works exactly once; reusing it fails `401 INVALID_BACKUP_CODE`.
+- "Trust this device" (`trustDevice: true`) suppresses the challenge entirely on the next sign-in from
+  the same client.
+- The plugin's own account-level lockout (10 cumulative failed verifications, independent of
+  `login-throttle.ts`'s password lockout) does trip `429 ACCOUNT_TEMPORARILY_LOCKED` — confirmed on the
+  request *after* the 10th failure (the 10th failing request itself still returns a normal
+  `INVALID_CODE`, since the lock is asserted at the start of the next request, not retroactively); a
+  subsequently-correct code is still rejected while locked. The plugin's separate endpoint-level rate
+  limit (3 requests/10s on `/two-factor/*`) was also observed independently and required pacing the
+  test script around it.
+- Disabling 2FA immediately re-trips the mandatory gate on the very next `/v1/*` call; re-enabling
+  issues a demonstrably different secret and backup codes than the original enrollment.
+- Regression: the pre-existing password lockout (`login-throttle.ts`) still trips `ACCOUNT_LOCKED`
+  after 5 consecutive wrong passwords, confirmed in isolation (an earlier combined test run had shown a
+  false failure here from exhausting a shared IP-keyed rate-limit bucket across many prior test steps —
+  not a real regression).
+- `pnpm -r typecheck` clean across all five workspaces.
+- **Not verified this session:** live browser interaction (QR rendering, the enrollment/challenge
+  screens, the backup-codes modal's dismiss-blocking, the Settings page) — browser automation was
+  intentionally not used this session (see below). The dev servers were left running
+  (api `:4000`, dashboard `:3000`) for a manual click-through.
+
+**Environment note:** this session ran from a WSL2 shell with no Node install of its own; all
+`pnpm`/`node` invocations went through `powershell.exe` against the Windows-side Node, and
+`172.22.0.1` (the WSL default gateway) rather than `localhost` was needed to reach the Windows-hosted
+dev servers from WSL-side `curl`. Docker Desktop's engine also had to be started before
+`docker-compose up -d` would work. A Chromium download (via Playwright) was started to drive a real
+browser for this verification pass but was stopped and removed at the user's request partway through;
+API-level verification (above) was used instead.
+
+---
+
 ## Session summary — 2026-07-15
 
 ### Feature 1: "Assistant" category (renamed from "Provider")

@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { TwoFactorChallenge } from "@/components/two-factor-challenge";
 import { authClient } from "@/lib/auth-client";
 
 type Mode = "sign-in" | "sign-up";
@@ -50,13 +51,15 @@ function formatCountdown(totalSec: number): string {
 }
 
 /**
- * Shared sign-in / sign-up form. Email + password only (no 2FA, no name field —
- * the account's display name defaults to its email). Talks to Better Auth on
- * the api via authClient; on success the session cookie is set and we navigate
- * to the dashboard. Errors are kept generic on sign-in to avoid account
- * enumeration, except the throttle's own "N attempts remaining" / lockout
- * messages, which are safe to surface (the api counts real and fake emails
- * identically, so nothing leaks).
+ * Shared sign-in / sign-up form. Email + password, no name field (the
+ * account's display name defaults to its email). Talks to Better Auth on the
+ * api via authClient; on success the session cookie is set and we navigate to
+ * the dashboard — UNLESS the account has TOTP enabled (PLAN.md, Layer 2), in
+ * which case sign-in withholds the session entirely and this instead renders
+ * the 2FA challenge screen (see twoFactorPending below). Errors are kept
+ * generic on sign-in to avoid account enumeration, except the throttle's own
+ * "N attempts remaining" / lockout messages, which are safe to surface (the
+ * api counts real and fake emails identically, so nothing leaks).
  */
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
@@ -66,6 +69,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [error, setError] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [lockRemaining, setLockRemaining] = useState(0);
+  // Set once a sign-in's password step succeeds but the account still needs a
+  // TOTP/backup code (Better Auth's twoFactorRedirect response) — swaps the
+  // card over to TwoFactorChallenge instead of navigating to the dashboard.
+  // Sign-up never sets this: a brand-new account's twoFactorEnabled defaults
+  // false, so the plugin's sign-in hook never fires for it.
+  const [twoFactorPending, setTwoFactorPending] = useState(false);
 
   const copy = COPY[mode];
   const locked = lockedUntil !== null && lockRemaining > 0;
@@ -141,9 +150,22 @@ export function AuthForm({ mode }: { mode: Mode }) {
         return;
       }
 
-      // Session cookie is set — head to the dashboard. refresh() re-runs the
-      // middleware so the now-authenticated state is picked up.
-      router.push("/");
+      // A 2FA-enabled account: Better Auth deleted the session it just
+      // issued and withheld the cookie, returning this shape instead (see
+      // auth.ts's plugin comment). Swap to the challenge screen rather than
+      // navigating — there's no session yet to navigate with.
+      const data = result.data as { twoFactorRedirect?: boolean } | null;
+      if (data?.twoFactorRedirect) {
+        setTwoFactorPending(true);
+        return;
+      }
+
+      // Session cookie is set. A fresh sign-up goes through the 2FA opt-in
+      // prompt first (encourages, doesn't force, enabling TOTP — PLAN.md §6);
+      // an existing account signing in without 2FA goes straight to the
+      // dashboard. refresh() re-runs the middleware so the now-authenticated
+      // state is picked up either way.
+      router.push(mode === "sign-up" ? "/enroll-2fa" : "/");
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");
@@ -168,61 +190,86 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
         <Card>
           <CardHeader>
-            <CardTitle>{copy.title}</CardTitle>
-            <CardDescription>{copy.description}</CardDescription>
+            <CardTitle>{twoFactorPending ? "Two-factor authentication" : copy.title}</CardTitle>
+            <CardDescription>
+              {twoFactorPending
+                ? "Confirm it's you to finish signing in."
+                : copy.description}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  disabled={locked}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                />
-              </div>
+            {twoFactorPending ? (
+              <TwoFactorChallenge
+                onVerified={() => {
+                  // Session cookie is now set (see verify-two-factor.ts) —
+                  // head to the dashboard same as a non-2FA sign-in.
+                  router.push("/");
+                  router.refresh();
+                }}
+                onExpired={(message) => {
+                  // The pending 2FA cookie died (window lapsed, or 5 wrong
+                  // attempts) — there's no session to challenge anymore, so
+                  // drop back to credentials and make them sign in again.
+                  setTwoFactorPending(false);
+                  setPassword("");
+                  setError(message);
+                }}
+              />
+            ) : (
+              <>
+                <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      disabled={locked}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                    />
+                  </div>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                  minLength={8}
-                  disabled={locked}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 8 characters"
-                />
-              </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+                      required
+                      minLength={8}
+                      disabled={locked}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                    />
+                  </div>
 
-              {error !== null && (
-                <p className="text-sm" style={{ color: "var(--err)" }}>
-                  {error}
+                  {error !== null && (
+                    <p className="text-sm" style={{ color: "var(--err)" }}>
+                      {error}
+                    </p>
+                  )}
+
+                  <Button type="submit" disabled={pending || locked}>
+                    {locked
+                      ? `Locked — retry in ${formatCountdown(lockRemaining)}`
+                      : pending
+                        ? copy.pending
+                        : copy.submit}
+                  </Button>
+                </form>
+
+                <p className="mt-4 text-center text-sm text-muted-foreground">
+                  {copy.altText}{" "}
+                  <Link href={copy.altHref} className="text-brand hover:underline">
+                    {copy.altLabel}
+                  </Link>
                 </p>
-              )}
-
-              <Button type="submit" disabled={pending || locked}>
-                {locked
-                  ? `Locked — retry in ${formatCountdown(lockRemaining)}`
-                  : pending
-                    ? copy.pending
-                    : copy.submit}
-              </Button>
-            </form>
-
-            <p className="mt-4 text-center text-sm text-muted-foreground">
-              {copy.altText}{" "}
-              <Link href={copy.altHref} className="text-brand hover:underline">
-                {copy.altLabel}
-              </Link>
-            </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

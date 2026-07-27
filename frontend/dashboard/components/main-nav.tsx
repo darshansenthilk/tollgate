@@ -17,17 +17,21 @@ import { authClient } from "@/lib/auth-client";
 const LINKS = [
   { href: "/", label: "Agent Dashboard" },
   { href: "/status", label: "System status" },
+  { href: "/settings", label: "Settings" },
 ] as const;
 
-// The sign-in / sign-up pages render their own centered layout with no nav.
-const AUTH_ROUTES = new Set(["/sign-in", "/sign-up"]);
+// Routes that render their own centered layout with no nav: sign-in/sign-up
+// (unauthenticated), and the post-sign-up 2FA opt-in prompt (PLAN.md §5) —
+// it's a one-time onboarding step, not a dashboard page, so the nav links
+// have no business appearing there.
+const NO_NAV_ROUTES = new Set(["/sign-in", "/sign-up", "/enroll-2fa"]);
 
 export function MainNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { data: sessionData } = authClient.useSession();
 
-  if (AUTH_ROUTES.has(pathname)) return null;
+  if (NO_NAV_ROUTES.has(pathname)) return null;
 
   async function handleSignOut() {
     await authClient.signOut();
