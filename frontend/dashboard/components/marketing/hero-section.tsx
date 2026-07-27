@@ -31,16 +31,16 @@ export function HeroSection() {
             </p>
             <div className="flex flex-wrap gap-3">
               <a
-                href="#demo"
+                href="/sign-up"
                 className="rounded-xl bg-brand px-[22px] py-3.5 font-mono text-[13px] font-medium tracking-[0.1em] text-[#0b0b0d] uppercase transition-[background-color,box-shadow] hover:bg-[#ff5f53] hover:shadow-[0_8px_26px_rgba(255,74,61,0.175)]"
               >
-                See it live ↓
+                Get started
               </a>
               <a
-                href="#access"
+                href="#demo"
                 className="glass rounded-xl px-[22px] py-3.5 font-mono text-[13px] font-medium tracking-[0.1em] uppercase transition-colors hover:bg-white/10"
               >
-                Request access
+                See it live ↓
               </a>
             </div>
           </div>
