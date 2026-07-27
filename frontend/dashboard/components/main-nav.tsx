@@ -79,7 +79,7 @@ export function MainNav() {
           above). Rendered only once the session has resolved. */}
       {sessionData?.user ? (
         <div className="ml-auto flex items-center gap-4">
-          <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
             {sessionData.user.email}
           </span>
           <button
