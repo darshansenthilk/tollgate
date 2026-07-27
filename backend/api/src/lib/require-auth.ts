@@ -44,6 +44,12 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
     return;
   }
 
+  // TOTP (Layer 2) is opt-in (PLAN.md §6, revised 2026-07-26): unlike the
+  // session/org checks above, twoFactorEnabled is not gated here. An account
+  // that never enrolled (or disabled it later) authenticates on password
+  // alone — Better Auth's own sign-in hook is what enforces the second factor
+  // for accounts that *do* have it enabled (a correct password alone won't
+  // resolve a session for them; see the twoFactor plugin).
   req.authUser = { id: result.user.id, email: result.user.email };
   req.activeOrgId = activeOrgId;
 }

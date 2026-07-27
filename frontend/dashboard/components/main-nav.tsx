@@ -17,19 +17,21 @@ import { authClient } from "@/lib/auth-client";
 const LINKS = [
   { href: "/agents", label: "Agent Dashboard" },
   { href: "/status", label: "System status" },
+  { href: "/settings", label: "Settings" },
 ] as const;
 
-// The sign-in / sign-up pages render their own centered layout with no nav;
-// the marketing page ("/") has its own bespoke sticky nav (see
-// components/marketing/sticky-nav.tsx) rather than this dashboard-aware one.
-const ROUTES_WITHOUT_NAV = new Set(["/", "/sign-in", "/sign-up"]);
+// Routes that render their own centered layout with no nav: sign-in/sign-up
+// (unauthenticated), and the post-sign-up 2FA opt-in prompt (PLAN.md §5) —
+// it's a one-time onboarding step, not a dashboard page, so the nav links
+// have no business appearing there.
+const NO_NAV_ROUTES = new Set(["/sign-in", "/sign-up", "/enroll-2fa"]);
 
 export function MainNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { data: sessionData } = authClient.useSession();
 
-  if (ROUTES_WITHOUT_NAV.has(pathname)) return null;
+  if (NO_NAV_ROUTES.has(pathname)) return null;
 
   async function handleSignOut() {
     await authClient.signOut();
@@ -45,7 +47,12 @@ export function MainNav() {
       <span className="flex items-center gap-2">
         {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
             decorative mark; next/image's overhead isn't worth it here. */}
-        <img src="/logo.svg" alt="" aria-hidden className="size-5 shrink-0 rounded-sm" />
+        <img
+          src="/logo.svg"
+          alt=""
+          aria-hidden
+          className="size-5 shrink-0 rounded-sm"
+        />
         <span className="font-mono text-xs uppercase tracking-[0.25em] text-foreground/90">
           Tollgate
         </span>

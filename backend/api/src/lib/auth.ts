@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
-import { organization } from "better-auth/plugins";
+import { organization, twoFactor } from "better-auth/plugins";
 import { createAuthMiddleware, APIError } from "better-auth/api";
 import { pool } from "./db.js";
 import {
@@ -61,7 +61,13 @@ export const auth = betterAuth({
     // sign-up so the user lands straight on the dashboard.
     enabled: true,
   },
-  plugins: [organization()],
+  // twoFactor (Layer 2, PLAN.md) — opt-in TOTP second factor (revised
+  // 2026-07-26: was mandatory-for-everyone at launch, see PLAN.md §6). Adds
+  // user.twoFactorEnabled + a twoFactor table (auto-migrated, see
+  // db/auth-migrate.ts) and a sign-in hook that withholds the session cookie
+  // until a code is verified, for whichever accounts have chosen to enable
+  // it. require-auth.ts does not gate on this flag at all anymore.
+  plugins: [organization(), twoFactor({ issuer: "Tollgate" })],
   rateLimit: {
     // Belt to the api's global @fastify/rate-limit braces: Better Auth adds its
     // own limiter on the auth surface, with stricter caps on the credential

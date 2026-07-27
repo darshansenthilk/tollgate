@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { TwoFactorChallenge } from "@/components/two-factor-challenge";
 import { authClient } from "@/lib/auth-client";
 
 type Mode = "sign-in" | "sign-up";
@@ -20,7 +21,8 @@ type Mode = "sign-in" | "sign-up";
 const COPY = {
   "sign-in": {
     title: "Sign in",
-    description: "Welcome back. Enter your credentials to reach your dashboard.",
+    description:
+      "Welcome back. Enter your credentials to reach your dashboard.",
     submit: "Sign in",
     pending: "Signing in…",
     altText: "New to Tollgate?",
@@ -29,7 +31,8 @@ const COPY = {
   },
   "sign-up": {
     title: "Create account",
-    description: "Sign up with an email and password to get your own dashboard.",
+    description:
+      "Sign up with an email and password to get your own dashboard.",
     submit: "Create account",
     pending: "Creating…",
     altText: "Already have an account?",
@@ -50,13 +53,15 @@ function formatCountdown(totalSec: number): string {
 }
 
 /**
- * Shared sign-in / sign-up form. Email + password only (no 2FA, no name field —
- * the account's display name defaults to its email). Talks to Better Auth on
- * the api via authClient; on success the session cookie is set and we navigate
- * to the dashboard. Errors are kept generic on sign-in to avoid account
- * enumeration, except the throttle's own "N attempts remaining" / lockout
- * messages, which are safe to surface (the api counts real and fake emails
- * identically, so nothing leaks).
+ * Shared sign-in / sign-up form. Email + password, no name field (the
+ * account's display name defaults to its email). Talks to Better Auth on the
+ * api via authClient; on success the session cookie is set and we navigate to
+ * the dashboard — UNLESS the account has TOTP enabled (PLAN.md, Layer 2), in
+ * which case sign-in withholds the session entirely and this instead renders
+ * the 2FA challenge screen (see twoFactorPending below). Errors are kept
+ * generic on sign-in to avoid account enumeration, except the throttle's own
+ * "N attempts remaining" / lockout messages, which are safe to surface (the
+ * api counts real and fake emails identically, so nothing leaks).
  */
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
@@ -66,6 +71,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [error, setError] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [lockRemaining, setLockRemaining] = useState(0);
+  // Set once a sign-in's password step succeeds but the account still needs a
+  // TOTP/backup code (Better Auth's twoFactorRedirect response) — swaps the
+  // card over to TwoFactorChallenge instead of navigating to the dashboard.
+  // Sign-up never sets this: a brand-new account's twoFactorEnabled defaults
+  // false, so the plugin's sign-in hook never fires for it.
+  const [twoFactorPending, setTwoFactorPending] = useState(false);
 
   const copy = COPY[mode];
   const locked = lockedUntil !== null && lockRemaining > 0;
@@ -86,7 +97,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
       return;
     }
     const tick = () => {
-      const remaining = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      const remaining = Math.max(
+        0,
+        Math.ceil((lockedUntil - Date.now()) / 1000),
+      );
       setLockRemaining(remaining);
       if (remaining <= 0) {
         setLockedUntil(null);
@@ -121,17 +135,21 @@ export function AuthForm({ mode }: { mode: Mode }) {
           // Throttled by the api. Mirror its cooldown so the form disables and a
           // countdown ticks locally without further round-trips.
           const seconds =
-            typeof err.retryAfter === "number" && err.retryAfter > 0 ? err.retryAfter : 300;
+            typeof err.retryAfter === "number" && err.retryAfter > 0
+              ? err.retryAfter
+              : 300;
           const until = Date.now() + seconds * 1000;
           setLockedUntil(until);
           window.localStorage.setItem(LOCK_STORAGE_KEY, String(until));
-          setError(err.message ?? "Too many failed attempts. Please try again later.");
+          setError(
+            err.message ?? "Too many failed attempts. Please try again later.",
+          );
         } else if (mode === "sign-in") {
           // Generic to avoid enumeration — except the throttle's remaining-count
           // message, which is uniform for real and fake emails.
           setError(
             err.code === "LOGIN_ATTEMPTS_REMAINING"
-              ? err.message ?? "Invalid email or password."
+              ? (err.message ?? "Invalid email or password.")
               : "Invalid email or password.",
           );
         } else {
@@ -141,9 +159,22 @@ export function AuthForm({ mode }: { mode: Mode }) {
         return;
       }
 
-      // Session cookie is set — head to the dashboard. refresh() re-runs the
-      // middleware so the now-authenticated state is picked up.
-      router.push("/agents");
+      // A 2FA-enabled account: Better Auth deleted the session it just
+      // issued and withheld the cookie, returning this shape instead (see
+      // auth.ts's plugin comment). Swap to the challenge screen rather than
+      // navigating — there's no session yet to navigate with.
+      const data = result.data as { twoFactorRedirect?: boolean } | null;
+      if (data?.twoFactorRedirect) {
+        setTwoFactorPending(true);
+        return;
+      }
+
+      // Session cookie is set. A fresh sign-up goes through the 2FA opt-in
+      // prompt first (encourages, doesn't force, enabling TOTP — PLAN.md §6);
+      // an existing account signing in without 2FA goes straight to the
+      // dashboard. refresh() re-runs the middleware so the now-authenticated
+      // state is picked up either way.
+      router.push(mode === "sign-up" ? "/enroll-2fa" : "/");
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");
@@ -162,7 +193,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
         <div className="mb-6 flex items-center justify-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
               decorative mark; next/image's overhead isn't worth it here. */}
-          <img src="/logo.svg" alt="" aria-hidden className="size-9 shrink-0 rounded-md" />
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden
+            className="size-9 shrink-0 rounded-md"
+          />
           <span className="font-mono text-5xl uppercase tracking-[0.25em] text-foreground/90">
             Tollgate
           </span>
@@ -170,61 +206,93 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
         <Card>
           <CardHeader>
-            <CardTitle>{copy.title}</CardTitle>
-            <CardDescription>{copy.description}</CardDescription>
+            <CardTitle>
+              {twoFactorPending ? "Two-factor authentication" : copy.title}
+            </CardTitle>
+            <CardDescription>
+              {twoFactorPending
+                ? "Confirm it's you to finish signing in."
+                : copy.description}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  disabled={locked}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                />
-              </div>
+            {twoFactorPending ? (
+              <TwoFactorChallenge
+                onVerified={() => {
+                  // Session cookie is now set (see verify-two-factor.ts) —
+                  // head to the dashboard same as a non-2FA sign-in.
+                  router.push("/");
+                  router.refresh();
+                }}
+                onExpired={(message) => {
+                  // The pending 2FA cookie died (window lapsed, or 5 wrong
+                  // attempts) — there's no session to challenge anymore, so
+                  // drop back to credentials and make them sign in again.
+                  setTwoFactorPending(false);
+                  setPassword("");
+                  setError(message);
+                }}
+              />
+            ) : (
+              <>
+                <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      disabled={locked}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                    />
+                  </div>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                  minLength={8}
-                  disabled={locked}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 8 characters"
-                />
-              </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete={
+                        mode === "sign-up" ? "new-password" : "current-password"
+                      }
+                      required
+                      minLength={8}
+                      disabled={locked}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                    />
+                  </div>
 
-              {error !== null && (
-                <p className="text-sm" style={{ color: "var(--err)" }}>
-                  {error}
+                  {error !== null && (
+                    <p className="text-sm" style={{ color: "var(--err)" }}>
+                      {error}
+                    </p>
+                  )}
+
+                  <Button type="submit" disabled={pending || locked}>
+                    {locked
+                      ? `Locked — retry in ${formatCountdown(lockRemaining)}`
+                      : pending
+                        ? copy.pending
+                        : copy.submit}
+                  </Button>
+                </form>
+
+                <p className="mt-4 text-center text-sm text-muted-foreground">
+                  {copy.altText}{" "}
+                  <Link
+                    href={copy.altHref}
+                    className="text-brand hover:underline"
+                  >
+                    {copy.altLabel}
+                  </Link>
                 </p>
-              )}
-
-              <Button type="submit" disabled={pending || locked}>
-                {locked
-                  ? `Locked — retry in ${formatCountdown(lockRemaining)}`
-                  : pending
-                    ? copy.pending
-                    : copy.submit}
-              </Button>
-            </form>
-
-            <p className="mt-4 text-center text-sm text-muted-foreground">
-              {copy.altText}{" "}
-              <Link href={copy.altHref} className="text-brand hover:underline">
-                {copy.altLabel}
-              </Link>
-            </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
