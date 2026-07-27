@@ -31,12 +31,12 @@ export default function Enroll2FAPage() {
 
   useEffect(() => {
     if (!isPending && sessionData?.user?.twoFactorEnabled === true) {
-      router.replace("/");
+      router.replace("/agents");
     }
   }, [isPending, sessionData, router]);
 
   function skip() {
-    router.push("/");
+    router.push("/agents");
     router.refresh();
   }
 
@@ -84,7 +84,7 @@ export default function Enroll2FAPage() {
               <CardContent>
                 <TwoFactorEnroll
                   onEnrolled={() => {
-                    router.push("/");
+                    router.push("/agents");
                     router.refresh();
                   }}
                 />

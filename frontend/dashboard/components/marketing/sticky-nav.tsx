@@ -1,14 +1,23 @@
 "use client";
 
-import { TollgateLogo } from "@/components/marketing/tollgate-logo";
 import { authClient } from "@/lib/auth-client";
 
 /**
- * The marketing page's own bespoke nav — separate from components/main-nav.tsx,
- * which hides itself here (see ROUTES_WITHOUT_NAV). Existing users still need a
- * way back into the product: signed out shows Sign in + Request access;
- * signed in swaps both for a straight link to the real dashboard.
+ * The landing page's one navbar — components/main-nav.tsx hides itself on "/"
+ * (see its NO_NAV_ROUTES) so this is the only nav rendered here. Signed out:
+ * "Sign in". Signed in: a single "Dashboard Panel" link into the real
+ * dashboard — deliberately not the dashboard nav's own links/labels
+ * (Agent Dashboard / System status / Settings / Sign out from main-nav.tsx),
+ * which stay specific to the authenticated app shell.
+ *
+ * Both buttons share one solid-fill treatment: bg-brand + near-black text is
+ * the same primary-CTA recipe as the hero/waitlist buttons (see
+ * hero-section.tsx), just with a permanent (not hover-only) shadow and a
+ * sentence-case bold sans instead of those buttons' mono/uppercase style.
  */
+const NAV_BUTTON_CLASSES =
+  "rounded-xl bg-brand px-4 py-2.5 font-sans text-xs font-bold whitespace-nowrap text-[#0b0b0d] shadow-[0_10px_30px_rgba(0,0,0,0.35),0_6px_16px_rgba(255,74,61,0.3)] transition-[background-color,box-shadow] hover:bg-[#ff5f53] hover:shadow-[0_12px_34px_rgba(0,0,0,0.4),0_8px_20px_rgba(255,74,61,0.4)]";
+
 export function StickyNav() {
   const { data: sessionData } = authClient.useSession();
   const signedIn = sessionData?.user != null;
@@ -18,35 +27,29 @@ export function StickyNav() {
       className="sticky top-0 z-20 border-b backdrop-blur-[22px] backdrop-saturate-150"
       style={{ borderColor: "rgba(255,255,255,.07)", background: "rgba(18,18,24,.5)" }}
     >
-      <div className="mx-auto flex max-w-[1200px] items-center justify-between px-5 py-4 sm:px-8">
-        <div className="flex items-center gap-2.5">
-          <TollgateLogo className="size-5" />
-          <span className="font-heading text-base font-semibold tracking-[0.02em]">TOLLGATE</span>
-        </div>
+      <div className="flex items-center justify-between px-5 py-4 sm:px-8">
+        <a href="/" className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
+              decorative mark; next/image's overhead isn't worth it here. */}
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden
+            className="size-5 shrink-0 rounded-sm"
+          />
+          <span className="font-mono text-xs uppercase tracking-[0.25em] text-foreground/90">
+            Tollgate
+          </span>
+        </a>
         <div className="flex items-center gap-4">
           {signedIn ? (
-            <a
-              href="/agents"
-              className="glass rounded-xl px-4 py-2.5 font-mono text-xs tracking-[0.12em] whitespace-nowrap uppercase transition-colors hover:bg-white/10"
-            >
-              Agent Dashboard
+            <a href="/agents" className={NAV_BUTTON_CLASSES}>
+              Dashboard Panel
             </a>
           ) : (
-            <>
-              <a
-                href="/sign-in"
-                className="font-mono text-xs tracking-[0.12em] whitespace-nowrap uppercase transition-colors hover:text-brand"
-                style={{ color: "var(--muted-ink)" }}
-              >
-                Sign in
-              </a>
-              <a
-                href="#access"
-                className="glass rounded-xl px-4 py-2.5 font-mono text-xs tracking-[0.12em] whitespace-nowrap uppercase transition-colors hover:bg-white/10"
-              >
-                Request access
-              </a>
-            </>
+            <a href="/sign-in" className={NAV_BUTTON_CLASSES}>
+              Sign in
+            </a>
           )}
         </div>
       </div>

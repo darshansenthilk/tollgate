@@ -174,7 +174,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
       // an existing account signing in without 2FA goes straight to the
       // dashboard. refresh() re-runs the middleware so the now-authenticated
       // state is picked up either way.
-      router.push(mode === "sign-up" ? "/enroll-2fa" : "/");
+      router.push(mode === "sign-up" ? "/enroll-2fa" : "/agents");
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");
@@ -221,7 +221,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 onVerified={() => {
                   // Session cookie is now set (see verify-two-factor.ts) —
                   // head to the dashboard same as a non-2FA sign-in.
-                  router.push("/");
+                  router.push("/agents");
                   router.refresh();
                 }}
                 onExpired={(message) => {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { authClient } from "@/lib/auth-client";
+import { LINKS } from "@/components/nav-links";
 
 /**
  * Top navigation. A client component because the active-route underline needs
@@ -14,17 +15,12 @@ import { authClient } from "@/lib/auth-client";
  * outranks Tailwind's hover variant and silently kills `hover:text-brand`
  * (the bug fixed on 2026-07-24 — see docs/COMPLETION.md).
  */
-const LINKS = [
-  { href: "/agents", label: "Agent Dashboard" },
-  { href: "/status", label: "System status" },
-  { href: "/settings", label: "Settings" },
-] as const;
 
-// Routes that render their own centered layout with no nav: sign-in/sign-up
-// (unauthenticated), and the post-sign-up 2FA opt-in prompt (PLAN.md §5) —
-// it's a one-time onboarding step, not a dashboard page, so the nav links
-// have no business appearing there.
-const NO_NAV_ROUTES = new Set(["/sign-in", "/sign-up", "/enroll-2fa"]);
+// Routes that render their own nav (or none at all): sign-in/sign-up
+// (unauthenticated), the post-sign-up 2FA opt-in prompt (PLAN.md §5, one-time
+// onboarding, not a dashboard page), and the marketing landing page, which has
+// its own merged nav (components/marketing/sticky-nav.tsx) instead of this one.
+const NO_NAV_ROUTES = new Set(["/sign-in", "/sign-up", "/enroll-2fa", "/"]);
 
 export function MainNav() {
   const pathname = usePathname();
@@ -44,7 +40,7 @@ export function MainNav() {
       className="flex items-center gap-5 border-b px-6 py-3 text-sm"
       style={{ borderColor: "var(--line)" }}
     >
-      <span className="flex items-center gap-2">
+      <Link href="/" className="flex items-center gap-2">
         {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
             decorative mark; next/image's overhead isn't worth it here. */}
         <img
@@ -56,7 +52,7 @@ export function MainNav() {
         <span className="font-mono text-xs uppercase tracking-[0.25em] text-foreground/90">
           Tollgate
         </span>
-      </span>
+      </Link>
       {LINKS.map((link) => {
         const active = pathname === link.href;
         return (

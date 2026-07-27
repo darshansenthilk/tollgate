@@ -48,6 +48,52 @@ verified this session:** the opt-in prompt screen, the Settings copy, and the di
 only been checked by reading the code, not by clicking through them in a browser (no browser automation
 was installed/used this session).
 
+### Merged into `main` — fixed a post-merge redirect bug, verified new + existing accounts
+
+**Problem:** The user merged `Eshaan-2` (the branch carrying both Layer 1 and the Layer 2 work above)
+into `main` themselves, resolving conflicts against `origin/main`'s independent landing-page/dashboard
+restructure (root `/` became the public marketing page; the real dashboard moved to `/agents`), then
+pushed it and cut a fresh local branch, `Eshaan-test-main`, off the result. Asked to confirm the merge
+was clean and Auth still works for both new and pre-existing accounts.
+
+**Branch state confirmed:** `Eshaan-test-main` is byte-for-byte identical to `origin/main` — both at
+commit `f64ca94` ("Merge branch 'Eshaan-2'"), confirmed via a real fetch (WSL-side `git fetch` fails
+with no credentials in this environment; had to fetch via `powershell.exe` against Windows-side git,
+which has GitHub credentials configured — see the dev-environment note). The working tree's ~148
+"modified" files were the same CRLF/LF line-ending noise seen earlier in this branch's history, zero
+real content drift once whitespace is ignored.
+
+**Bug found and fixed:** `origin/main`'s dashboard split moved the authenticated app from `/` to
+`/agents` and `middleware.ts` was updated for it correctly, but 5 client-side post-auth navigations in
+the Layer 2 code were never updated and still targeted bare `/` (now the unauthenticated marketing
+page) — silently landing a freshly authenticated user on the landing page instead of the dashboard:
+- `frontend/dashboard/components/auth-form.tsx` — the non-2FA sign-in success redirect, and the
+  `TwoFactorChallenge` `onVerified` callback.
+- `frontend/dashboard/app/enroll-2fa/page.tsx` — the "Skip for now" handler, the `TwoFactorEnroll`
+  `onEnrolled` callback, and the already-enrolled-bookmark `useEffect` redirect.
+
+All 5 now target `/agents`. Also cleared a stale `.next/types` cache (referencing the now-deleted
+`app/page.tsx`) that was failing `tsc --noEmit` for an unrelated reason.
+
+**Verified (2026-07-26), on the merged `Eshaan-test-main` branch:** `pnpm -r typecheck` clean across
+all workspaces after the fix. Full API-level pass with a fresh synthetic account: sign-up → immediate
+`200` on `/v1/agents` (Layer 1 alone suffices) → enable 2FA → verify → `twoFactorEnabled: true` → sign
+out → sign in → `twoFactorRedirect: true` (password alone no longer resolves a session) → verify →
+dashboard access restored → disable → access retained (real opt-out). Layer 1 regression: 5 wrong
+passwords on a second throwaway account correctly triggered `ACCOUNT_LOCKED` (5 min), with the
+"N attempts remaining" messages appearing at the documented threshold. Route-gating regression:
+unauthenticated `GET /` returns `200` (public marketing page), unauthenticated `GET /agents` returns
+`307` (redirects to sign-in) — confirms the split is enforced correctly post-merge.
+
+For the pre-existing real account (`eshaan.joshi07@gmail.com`, which the user had already enrolled in
+2FA themselves via the browser earlier in this session): confirmed via a read-only Postgres query that
+its `user` row, `twoFactor` row (secret + 10 backup codes present), `member`/org-ownership row, and
+active session all survived the merge intact, and confirmed via Redis that it isn't sitting in a stale
+login-throttle lockout. **Not verified:** an actual sign-in as this account — that needs the user's
+real password and a live code from their authenticator app, neither of which this session had or
+should ask for; left for the user to click through themselves now that the `/agents` redirect fix is
+in.
+
 ---
 
 ## Session summary — 2026-07-25

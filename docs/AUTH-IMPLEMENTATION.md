@@ -83,10 +83,16 @@ above was checked at the API level — sign-up (confirming a fresh, un-enrolled 
 with `200`, not `403`), enrollment, the sign-in challenge, backup codes, trust-device, disable/re-enable,
 and both lockout systems all pass driving the api directly (a from-scratch RFC 6238 TOTP implementation
 stood in for an authenticator app on 2026-07-25; the 2026-07-26 opt-in revision was re-checked the same
-way, via `curl`). `pnpm -r typecheck` is clean. **What has genuinely NOT been confirmed is any of this
-rendering or working in an actual browser** — the opt-in prompt, QR code, enrollment/challenge screens,
-the backup-codes modal's dismiss-blocking, and the Settings page have only been checked by reading the
-code, not by seeing them run. This still needs a manual pass:
+way, via `curl`). `pnpm -r typecheck` is clean. This was also re-verified the same way after Layer 1 +
+Layer 2 were merged into `main` (2026-07-26, see `docs/COMPLETION.md`) — the merge itself surfaced and
+fixed a real bug (post-auth redirects still targeting `/`, which `origin/main`'s dashboard split had
+moved to `/agents`), and a read-only DB check confirmed the pre-existing real account
+(`eshaan.joshi07@gmail.com`, already 2FA-enrolled) survived the merge with its data intact. **What has
+genuinely NOT been confirmed is any of this rendering or working in an actual browser** — the opt-in
+prompt, QR code, enrollment/challenge screens, the backup-codes modal's dismiss-blocking, and the
+Settings page have only been checked by reading the code, not by seeing them run, and no one has yet
+signed in as the real pre-existing account post-merge (needs its actual password + a live authenticator
+code, which this session neither had nor should ask for). This still needs a manual pass:
 
 1. Sign up at `/sign-up` with a fresh email + password.
 2. Confirm you land on `/enroll-2fa`'s **opt-in prompt** (not the dashboard, and not a QR code yet).
