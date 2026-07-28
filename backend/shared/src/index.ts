@@ -106,6 +106,72 @@ export const CLAUDE_PRICES: Record<string, ModelPrice> = {
 };
 
 // ---------------------------------------------------------------------------
+// Upstream provider keys (BYOK)
+//
+// An org can supply its OWN OpenAI/Anthropic key so upstream usage bills to
+// their provider account instead of Tollgate's. Everything here is pure format
+// and naming convention — the actual AES-256-GCM encrypt/decrypt lives in the
+// backends (this file is bundled into the browser dashboard, so no node:crypto).
+// ---------------------------------------------------------------------------
+
+/**
+ * Providers an org can bring their own key for, keyed by ADAPTER slug — the
+ * same vocabulary backend/proxy/src/adapters/registry.ts routes on and that
+ * the *_UPSTREAM_KEY env vars use, NOT the "chatgpt"/"claude" assistant labels
+ * agents are created with (see registry.ts's assistantAdapterSlugs for why the
+ * two differ). The label here is the user-facing name for the dashboard.
+ */
+export const UPSTREAM_PROVIDERS = [
+  { slug: "openai", label: "OpenAI (ChatGPT)" },
+  { slug: "claude", label: "Anthropic (Claude)" },
+] as const;
+
+export type UpstreamProviderSlug = (typeof UPSTREAM_PROVIDERS)[number]["slug"];
+
+export function isUpstreamProviderSlug(value: string): value is UpstreamProviderSlug {
+  return UPSTREAM_PROVIDERS.some((p) => p.slug === value);
+}
+
+/**
+ * Env var holding Tollgate's own shared key for a provider, e.g.
+ * "openai" -> OPENAI_UPSTREAM_KEY. This is the deployment-wide fallback used
+ * for orgs that haven't configured BYOK; see backend/proxy/src/lib/vault.ts.
+ */
+export function upstreamKeyEnvVar(slug: string): string {
+  return `${slug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_UPSTREAM_KEY`;
+}
+
+/**
+ * At-rest storage format for a BYOK key. Deliberately NOT the one-way SHA-256
+ * treatment agent tokens get (backend/api/src/lib/tokens.ts): the proxy must
+ * hand the real plaintext key to OpenAI/Anthropic on every forwarded request,
+ * so this has to be reversible. AES-256-GCM (an AEAD) — hence an iv and an
+ * auth tag alongside the ciphertext, all base64. The encryption key itself
+ * lives in VAULT_ENCRYPTION_KEY on the server, never in the database.
+ */
+export interface UpstreamKeyCiphertext {
+  ciphertext: string;
+  iv: string;
+  authTag: string;
+}
+
+/**
+ * Non-secret display hint stored alongside the ciphertext ("sk-…7mQ4"), so the
+ * dashboard can show *which* key is set without the plaintext ever being
+ * readable again. Never enough to reconstruct the key.
+ */
+export function maskUpstreamKey(key: string): string {
+  const trimmed = key.trim();
+  const tail = trimmed.slice(-4);
+  const prefix = trimmed.startsWith("sk-ant-")
+    ? "sk-ant-"
+    : trimmed.startsWith("sk-")
+      ? "sk-"
+      : "";
+  return `${prefix}…${tail}`;
+}
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 

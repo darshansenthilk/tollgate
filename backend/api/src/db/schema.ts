@@ -125,6 +125,54 @@ export const agents = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Org upstream keys (BYOK)
+//
+// An org's own OpenAI/Anthropic key, so their agents' upstream usage bills to
+// their provider account rather than Tollgate's shared deployment key.
+//
+// SECURITY NOTE — this is deliberately NOT the treatment agents.token_hash
+// gets. A token hash is one-way (SHA-256) because auth only ever needs an
+// equality check. An upstream key must be replayed verbatim to OpenAI/Anthropic
+// on every proxied request, so it's encrypted (reversible, AES-256-GCM) rather
+// than hashed. The encryption key lives in VAULT_ENCRYPTION_KEY on the server;
+// a database dump alone therefore doesn't yield usable provider keys.
+// ---------------------------------------------------------------------------
+
+export const orgUpstreamKeys = pgTable(
+  "org_upstream_keys",
+  {
+    id: uuid("id").primaryKey(),
+    /** Same plain-text, non-FK org reference the other tables use — see the
+     *  module doc comment. Always stamped from the session, never client input. */
+    orgId: text("org_id").notNull(),
+    /** ADAPTER slug ("openai" / "claude"), matching what the proxy routes on
+     *  and what *_UPSTREAM_KEY env vars are named for — NOT the "chatgpt"
+     *  assistant label agents carry. See @tollgate/shared UPSTREAM_PROVIDERS. */
+    providerSlug: text("provider_slug").notNull(),
+    /** AES-256-GCM ciphertext + its iv and auth tag, all base64. Split into
+     *  columns rather than one packed string so the AEAD parts stay legible
+     *  (and a missing tag is a schema error, not a parse error at decrypt). */
+    encryptedKey: text("encrypted_key").notNull(),
+    iv: text("iv").notNull(),
+    authTag: text("auth_tag").notNull(),
+    /** Non-secret display hint ("sk-…7mQ4") so the dashboard can show which key
+     *  is configured without the plaintext ever being recoverable. */
+    keyHint: text("key_hint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // One key per (org, provider): saving again replaces the existing row, so
+    // an org can rotate a key without accumulating stale rows the proxy might
+    // pick between non-deterministically.
+    uniqueIndex("org_upstream_keys_org_provider_unique").on(
+      table.orgId,
+      table.providerSlug,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Spend events
 //
 // Column set and order match backend/proxy/src/lib/spend-log.ts's INSERT exactly.

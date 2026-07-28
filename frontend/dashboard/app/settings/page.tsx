@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/card";
 import { TwoFactorEnroll } from "@/components/two-factor-enroll";
 import { TwoFactorManage } from "@/components/two-factor-manage";
+import { UpstreamKeysSettings } from "@/components/upstream-keys-settings";
 import { authClient } from "@/lib/auth-client";
 
 /**
@@ -48,6 +49,21 @@ export default function SettingsPage() {
             // swaps this card over to TwoFactorManage once enrolled.
             <TwoFactorEnroll onEnrolled={() => {}} />
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Provider keys</CardTitle>
+          <CardDescription>
+            Bring your own OpenAI and Anthropic keys so your agents&apos; usage
+            bills to your provider account instead of Tollgate&apos;s. Keys are
+            verified with the provider before they&apos;re saved, encrypted at
+            rest, and never shown again afterwards.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <UpstreamKeysSettings />
         </CardContent>
       </Card>
     </main>

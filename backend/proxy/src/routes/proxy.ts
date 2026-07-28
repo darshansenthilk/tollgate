@@ -132,8 +132,11 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       }
 
       // 6. Forward upstream with the vaulted key. The incoming Tollgate token is
-      //    dropped; the adapter supplies the real upstream auth.
-      const upstreamKey = deps.vault.getUpstreamKey(adapter.slug);
+      //    dropped; the adapter supplies the real upstream auth. Scoped to the
+      //    agent's org so a BYOK org forwards with THEIR provider key (and is
+      //    billed for it) — see lib/vault.ts for the full resolution order,
+      //    including why an undecryptable org key denies rather than falls back.
+      const upstreamKey = await deps.vault.getUpstreamKey(agent.orgId, adapter.slug);
       if (upstreamKey === null) {
         reply.code(502);
         return { error: "upstream_key_unavailable" };

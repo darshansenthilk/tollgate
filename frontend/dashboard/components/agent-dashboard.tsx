@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { Bot, Pencil, Users } from "lucide-react";
+import { Bot, Pencil, Plug, Users } from "lucide-react";
 import type { AgentStatus } from "@tollgate/shared";
 import {
   Card,
@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { EditAgentDialog } from "@/components/edit-agent-dialog";
+import { AgentIntegrationDialog } from "@/components/agent-integration-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import { AgentAttentionAlerts } from "@/components/agent-attention-alerts";
@@ -145,6 +146,7 @@ export function AgentDashboard({
   const [selectionMode, setSelectionMode] = useState(false);
   const [sidebarAgentId, setSidebarAgentId] = useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [integrationAgentId, setIntegrationAgentId] = useState<string | null>(null);
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -191,6 +193,7 @@ export function AgentDashboard({
   // when the row was clicked — see AgentPromptSidebar's prop doc comment.
   const sidebarAgent = agents.find((a) => a.id === sidebarAgentId) ?? null;
   const editingAgent = agents.find((a) => a.id === editingAgentId) ?? null;
+  const integrationAgent = agents.find((a) => a.id === integrationAgentId) ?? null;
 
   function toggleSelectAll() {
     setSelectedIds(allSelected ? new Set() : new Set(allIds));
@@ -482,18 +485,29 @@ export function AgentDashboard({
                         {/* No stopPropagation needed: only the Name cell above
                             carries an onClick, so this can't open the sidebar. */}
                         <TableCell className="w-0 text-right">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label={`Edit ${agent.name}`}
-                            onClick={() => setEditingAgentId(agent.id)}
-                          >
-                            <Pencil
-                              className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
-                              strokeWidth={1.75}
-                            />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label={`Connect ${agent.name}`}
+                              onClick={() => setIntegrationAgentId(agent.id)}
+                            >
+                              <Plug className="size-3.5" strokeWidth={1.75} />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label={`Edit ${agent.name}`}
+                              onClick={() => setEditingAgentId(agent.id)}
+                            >
+                              <Pencil
+                                className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
+                                strokeWidth={1.75}
+                              />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -531,6 +545,13 @@ export function AgentDashboard({
         }}
         onUpdated={onUpdated}
         existingNames={agents.map((a) => a.name)}
+      />
+
+      <AgentIntegrationDialog
+        agent={integrationAgent}
+        onOpenChange={(open) => {
+          if (!open) setIntegrationAgentId(null);
+        }}
       />
     </>
   );

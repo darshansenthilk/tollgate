@@ -31,6 +31,7 @@ import {
   PROVIDERS,
   type ProviderSlug,
 } from "@/lib/agent-options";
+import { ConnectAgentSnippet } from "@/components/connect-agent-snippet";
 
 interface CreateAgentDialogProps {
   /** Injected so the exact same dialog works against the real api
@@ -148,7 +149,7 @@ export function CreateAgentDialog({
         <Plus />
         Create agent
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className={created !== null ? "sm:max-w-lg" : undefined}>
         {created === null ? (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <DialogHeader>
@@ -274,6 +275,13 @@ export function CreateAgentDialog({
                 {error}
               </p>
             )}
+
+            <ConnectAgentSnippet
+              providerSlug={created.providerSlug}
+              model={created.model}
+              token={created.token}
+              allowTest
+            />
 
             <DialogFooter>
               <Button type="button" onClick={resetAndClose}>

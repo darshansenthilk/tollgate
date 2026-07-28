@@ -9,7 +9,7 @@ import { providers, assistantAdapterSlugs } from "./adapters/registry.js";
 import { pgAgentStore } from "./lib/agents.js";
 import { redisBudgetStore } from "./lib/budget.js";
 import { pgSpendLog } from "./lib/spend-log.js";
-import { envVault } from "./lib/vault.js";
+import { pgVault } from "./lib/vault.js";
 import { redisFreezeStore } from "./lib/freeze.js";
 import { redisTokenUsageStore } from "./lib/token-usage.js";
 import { redisCurrentPromptStore } from "./lib/current-prompt.js";
@@ -64,7 +64,17 @@ registerProxyRoute(app, {
   agents: pgAgentStore(pool),
   budget: redisBudgetStore(redis),
   spendLog: pgSpendLog(pool),
-  vault: envVault(),
+  // Org-scoped: a BYOK org's own provider key, else Tollgate's env key.
+  // A stored-but-undecryptable key denies the request (see lib/vault.ts) —
+  // loud, because it silently breaks every request for that org.
+  vault: pgVault(pool, {
+    onDecryptFailure: (orgId, slug) => {
+      app.log.error(
+        { orgId, slug },
+        "stored upstream key could not be decrypted — check VAULT_ENCRYPTION_KEY matches the api service; requests for this org/provider are being denied",
+      );
+    },
+  }),
   freeze: redisFreezeStore(redis),
   tokenUsage: redisTokenUsageStore(redis),
   currentPrompt: redisCurrentPromptStore(redis),

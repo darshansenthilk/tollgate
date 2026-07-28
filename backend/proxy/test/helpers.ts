@@ -18,12 +18,21 @@ import type { TokenUsageStore } from "../src/lib/token-usage.js";
 import type { CurrentPromptStore } from "../src/lib/current-prompt.js";
 import { registerProxyRoute, type ProxyDeps } from "../src/routes/proxy.js";
 
+/** Org used for agents added without an explicit one. */
+export const DEFAULT_TEST_ORG_ID = "org-test";
+
 /** In-memory AgentStore keyed by raw token (hashed on insert, like production). */
 export class FakeAgentStore implements AgentStore {
   private readonly byHash = new Map<string, AuthedAgent>();
 
-  add(token: string, agent: AuthedAgent): void {
-    this.byHash.set(hashToken(token), agent);
+  /** orgId is optional and defaults to DEFAULT_TEST_ORG_ID: it only matters for
+   *  vault (BYOK) scoping, so the many tests that predate it stay unchanged
+   *  while a BYOK test can still pin a specific org. */
+  add(token: string, agent: Omit<AuthedAgent, "orgId"> & { orgId?: string }): void {
+    this.byHash.set(hashToken(token), {
+      ...agent,
+      orgId: agent.orgId ?? DEFAULT_TEST_ORG_ID,
+    });
   }
 
   async findByTokenHash(tokenHash: string): Promise<AuthedAgent | null> {
@@ -59,11 +68,32 @@ export class FakeSpendLog implements SpendLog {
   }
 }
 
-/** Vault that hands out a fixed key for any slug. */
+/** Vault that hands out a fixed key for any (org, slug), recording every lookup
+ *  so a test can assert the hot path scoped by the right org. */
 export class FakeVault implements Vault {
+  readonly lookups: { orgId: string; slug: string }[] = [];
+
   constructor(private readonly key: string | null) {}
-  getUpstreamKey(): string | null {
+
+  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
+    this.lookups.push({ orgId, slug });
     return this.key;
+  }
+}
+
+/** Vault with per-org keys, for exercising BYOK resolution end to end. */
+export class FakeOrgVault implements Vault {
+  /** Keyed "orgId:slug". */
+  private readonly keys = new Map<string, string>();
+
+  constructor(private readonly fallback: string | null = null) {}
+
+  set(orgId: string, slug: string, key: string): void {
+    this.keys.set(`${orgId}:${slug}`, key);
+  }
+
+  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
+    return this.keys.get(`${orgId}:${slug}`) ?? this.fallback;
   }
 }
 

@@ -9,6 +9,14 @@ import type { AgentStatus } from "@tollgate/shared";
  */
 export interface AuthedAgent {
   id: string;
+  /**
+   * Owning organization. Carried on the hot path because the vault is
+   * org-scoped: which upstream key a request forwards with (the org's own BYOK
+   * key, or Tollgate's shared fallback) is decided from this — see lib/vault.ts.
+   * The agent's token is the ONLY thing that establishes it; it's read from the
+   * agents row, never from anything the caller sends.
+   */
+  orgId: string;
   status: AgentStatus;
   maxBudgetCents: number | null;
   /** Descriptive assistant label the agent was created with (e.g. "chatgpt"). */
@@ -30,6 +38,7 @@ export interface AgentStore {
 
 interface AgentRow {
   id: string;
+  org_id: string;
   status: AgentStatus;
   max_budget_cents: number | null;
   provider_slug: string;
@@ -40,7 +49,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
   return {
     async findByTokenHash(tokenHash) {
       const result = await pool.query<AgentRow>(
-        `SELECT a.id, a.status, a.provider_slug, p.max_budget_cents
+        `SELECT a.id, a.org_id, a.status, a.provider_slug, p.max_budget_cents
            FROM agents a
            LEFT JOIN policies p ON p.id = a.policy_id
           WHERE a.token_hash = $1`,
@@ -53,6 +62,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
 
       return {
         id: row.id,
+        orgId: row.org_id,
         status: row.status,
         maxBudgetCents: row.max_budget_cents,
         providerSlug: row.provider_slug,

@@ -1,6 +1,7 @@
 import type { AgentStatus } from "@tollgate/shared";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL ?? "http://localhost:8080";
 
 /** Exact shape returned by GET /v1/agents (backend/api/src/routes/agents.ts). */
 export interface AgentListItem {
@@ -94,6 +95,7 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_body: "That request wasn't valid — check the fields and try again.",
   missing_token: "Paste the agent's token to continue.",
   invalid_token: "That token doesn't match this agent.",
+  upstream_key_not_found: "No key is saved for that provider.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -130,6 +132,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return res.json() as Promise<T>;
+}
+
+/**
+ * One provider's BYOK status. Deliberately has no field for the key itself —
+ * the api never returns a stored key (write-once-reveal-never, same as agent
+ * tokens); `keyHint` is a non-secret display fragment like "sk-…7mQ4".
+ */
+export interface UpstreamKeyStatus {
+  slug: string;
+  label: string;
+  isSet: boolean;
+  keyHint: string | null;
+  updatedAt: string | null;
+  /** Whether Tollgate's own shared key covers this provider when the org
+   *  hasn't set one — i.e. whether "Not set" still works or is actually broken. */
+  fallbackAvailable: boolean;
+}
+
+export interface UpstreamKeysResponse {
+  /** False when the deployment can't store keys at all (no VAULT_ENCRYPTION_KEY
+   *  on the api), so the UI can explain a save failure that isn't the user's. */
+  vaultConfigured: boolean;
+  providers: UpstreamKeyStatus[];
+}
+
+export function listUpstreamKeys(): Promise<UpstreamKeysResponse> {
+  return request<UpstreamKeysResponse>("/v1/upstream-keys");
+}
+
+/**
+ * Saves (or rotates) this org's own provider key. The api verifies it against
+ * the real provider BEFORE storing, so a rejected key throws an ApiError whose
+ * message is the provider's own reason — surface it verbatim.
+ */
+export function saveUpstreamKey(
+  providerSlug: string,
+  key: string,
+): Promise<{ slug: string; isSet: boolean; keyHint: string; updatedAt: string }> {
+  return request("/v1/upstream-keys", {
+    method: "PUT",
+    body: JSON.stringify({ providerSlug, key }),
+  });
+}
+
+/** Removes this org's key, reverting to whatever the deployment fallback is. */
+export function deleteUpstreamKey(providerSlug: string): Promise<{ slug: string; isSet: boolean }> {
+  return request(`/v1/upstream-keys/${providerSlug}`, { method: "DELETE" });
 }
 
 export function listAgents(): Promise<AgentListItem[]> {
