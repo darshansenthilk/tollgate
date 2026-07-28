@@ -9,6 +9,7 @@ import { checkPostgres, pool } from "./lib/db.js";
 import { registerStubRoutes } from "./routes/stubs.js";
 import { registerAgentRoutes } from "./routes/agents.js";
 import { registerUpstreamKeyRoutes } from "./routes/upstream-keys.js";
+import { registerActivityRoutes } from "./routes/activity.js";
 import { registerAuthRoutes } from "./lib/auth-mount.js";
 import { requireAuth } from "./lib/require-auth.js";
 import { runMigrations } from "./db/migrate.js";
@@ -68,6 +69,7 @@ await app.register(async (scope) => {
   registerStubRoutes(scope);
   registerAgentRoutes(scope, redis);
   registerUpstreamKeyRoutes(scope);
+  registerActivityRoutes(scope);
 });
 
 async function main() {

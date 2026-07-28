@@ -5,7 +5,6 @@ import {
   UPSTREAM_PROVIDERS,
   isUpstreamProviderSlug,
   maskUpstreamKey,
-  upstreamKeyEnvVar,
   type UpstreamProviderSlug,
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
@@ -65,10 +64,14 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
    * provider (not just the configured ones) so the dashboard can render the
    * full "Set / Not set" matrix from a single call.
    *
-   * `fallbackAvailable` tells the user what actually happens today for a
-   * provider they haven't configured: true means Tollgate's shared key covers
-   * them, false means their agents for that provider can't reach upstream at
-   * all until they add one.
+   * Deliberately says NOTHING about whether Tollgate's own shared fallback key
+   * exists for a provider. That key (<SLUG>_UPSTREAM_KEY) is only ever read by
+   * the PROXY service, which forwards upstream — this api service never sees
+   * it. In a split deployment (api and proxy as separate Railway services with
+   * separate env) any answer here would be a guess about another service's
+   * configuration, and a confidently wrong one. Whether a provider actually
+   * works without BYOK is proven by the dashboard's "Test connection" button,
+   * which makes a real request through the proxy.
    */
   app.get("/v1/upstream-keys", async (req) => {
     const orgId = req.activeOrgId!;
@@ -97,7 +100,6 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
           // Never the key itself — see the module doc comment.
           keyHint: row?.keyHint ?? null,
           updatedAt: row?.updatedAt?.toISOString() ?? null,
-          fallbackAvailable: process.env[upstreamKeyEnvVar(provider.slug)] !== undefined,
         };
       }),
     };

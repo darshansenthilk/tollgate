@@ -198,6 +198,16 @@ export const spendEvents = pgTable("spend_events", {
   actualCostCents: numeric("actual_cost_cents", { precision: 14, scale: 6 }),
   decision: spendDecisionEnum("decision").notNull(),
   /**
+   * What the provider reported actually serving, and the token split. Distinct
+   * from agents.model, which is only the descriptive label an agent was created
+   * with and is never enforced — this is ground truth from the response. Null
+   * on denied requests (nothing ran) and when a response carried no parseable
+   * usage. Read by the dashboard's activity log.
+   */
+  model: text("model"),
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  /**
    * Always server-generated randomly today (proxy never accepts/forwards a
    * client-supplied idempotency key) — unique so at least accidental
    * duplicate inserts of the same event would fail loud, though retries

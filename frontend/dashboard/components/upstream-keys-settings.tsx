@@ -37,11 +37,11 @@ function statusLabel(provider: UpstreamKeyStatus): {
   if (provider.isSet) {
     return { text: `Set · ${provider.keyHint ?? ""}`, color: "var(--ok)" };
   }
-  // "Not set" means very different things depending on whether Tollgate's own
-  // key covers this provider — say which, rather than leaving it ambiguous.
-  return provider.fallbackAvailable
-    ? { text: "Not set · using Tollgate's shared key", color: "var(--muted-foreground)" }
-    : { text: "Not set · agents for this provider can't run", color: "var(--amber)" };
+  // Deliberately doesn't claim whether Tollgate's shared fallback key covers
+  // this provider: only the proxy service holds those keys, so the api can't
+  // know (see the GET route's doc comment). Better to say what IS true than to
+  // assert a guess about another service's config.
+  return { text: "Not set", color: "var(--muted-foreground)" };
 }
 
 function ProviderRow({

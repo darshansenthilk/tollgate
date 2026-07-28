@@ -62,12 +62,42 @@ function extractBearer(header: string | undefined): string | null {
   return token === undefined ? null : token.trim() || null;
 }
 
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
+/**
+ * Records a request the gates refused. Denials used to return early without
+ * writing anything, so the audit log only ever contained allowed traffic — the
+ * dashboard's activity panel would show nothing at exactly the moments an
+ * operator most wants a record (an agent hammering a frozen token, or grinding
+ * against an exhausted budget). Fire-and-forget, like the allowed-path write.
+ */
+function recordDenial(
+  deps: ProxyDeps,
+  log: FastifyRequest["log"],
+  args: {
+    agentId: string;
+    providerId: string;
+    endpoint: string;
+    decision: "denied_frozen" | "denied_budget";
+  },
+): void {
+  void deps.spendLog
+    .record({
+      agentId: args.agentId,
+      providerId: args.providerId,
+      endpoint: args.endpoint,
+      method: "POST",
+      estimatedCostCents: null,
+      // Nothing was forwarded, so nothing was spent — that's the point.
+      actualCostCents: 0,
+      decision: args.decision,
+      model: null,
+      promptTokens: null,
+      completionTokens: null,
+      latencyMs: null,
+      upstreamStatus: null,
+    })
+    .catch((err: unknown) => {
+      log.error({ err }, "spend_events denial write failed");
+    });
 }
 
 export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void {
@@ -114,6 +144,12 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       //    fast-path flag the api's freeze/unfreeze endpoints set in lockstep.
       const frozenInRedis = await deps.freeze.isFrozen(agent.id);
       if (FROZEN_STATUSES.has(agent.status) || frozenInRedis) {
+        recordDenial(deps, req.log, {
+          agentId: agent.id,
+          providerId: adapter.slug,
+          endpoint: `/${path}`,
+          decision: "denied_frozen",
+        });
         reply.code(403);
         return { error: "agent_frozen" };
       }
@@ -126,6 +162,12 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         const spentMicroCents = await deps.budget.getSpendMicroCents(key);
         const budgetMicroCents = agent.maxBudgetCents * MICROCENTS_PER_CENT;
         if (spentMicroCents >= budgetMicroCents) {
+          recordDenial(deps, req.log, {
+            agentId: agent.id,
+            providerId: adapter.slug,
+            endpoint: `/${path}`,
+            decision: "denied_budget",
+          });
           reply.code(403);
           return { error: "budget_exceeded" };
         }
@@ -147,7 +189,14 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         "content-type": "application/json",
         ...adapter.buildAuthHeaders(upstreamKey),
       };
-      const body = req.body === undefined ? undefined : JSON.stringify(req.body);
+      // Let the adapter opt the request into usage reporting before it goes
+      // out (OpenAI streams omit usage unless asked) — without this, a streamed
+      // request returns nothing meterable and would spend against no budget.
+      const outgoingBody =
+        req.body === undefined
+          ? undefined
+          : (adapter.prepareRequestBody?.(req.body) ?? req.body);
+      const body = outgoingBody === undefined ? undefined : JSON.stringify(outgoingBody);
 
       // Transient "what's happening now" state for the dashboard sidebar —
       // short TTL, Redis-only, never a Postgres row (see current-prompt.ts).
@@ -167,8 +216,10 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       const upstreamText = await upstream.text();
 
       // 7. Meter: parse cost via the adapter, then atomically bump the counter.
-      const { costCents, estimatedCostCents, promptTokens, completionTokens } =
-        adapter.parseCost(parseJson(upstreamText));
+      //    The adapter gets the raw text (not parsed JSON) so it can read a
+      //    streamed SSE transcript as well as a JSON body.
+      const { costCents, estimatedCostCents, promptTokens, completionTokens, model } =
+        adapter.parseCost(upstreamText);
       await deps.budget.addSpendMicroCents(key, centsToMicroCents(costCents));
 
       // Token counter is independent of cost — only bumped when the adapter
@@ -190,6 +241,11 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
           estimatedCostCents: estimatedCostCents ?? null,
           actualCostCents: costCents,
           decision: "allowed",
+          // What the provider reports it actually served, plus the token split
+          // — both surfaced in the dashboard's activity log.
+          model: model ?? null,
+          promptTokens: promptTokens ?? null,
+          completionTokens: completionTokens ?? null,
           latencyMs,
           upstreamStatus: upstream.status,
         })

@@ -53,6 +53,13 @@ export interface ProviderCost {
    */
   promptTokens?: number;
   completionTokens?: number;
+  /**
+   * The model the provider actually reports having served, as opposed to the
+   * descriptive `model` label an agent was created with (which the proxy never
+   * enforces). Recorded on the spend_events audit row so the activity log shows
+   * what really ran.
+   */
+  model?: string;
 }
 
 /**
@@ -71,8 +78,23 @@ export interface ProviderAdapter {
   buildAuthHeaders: (upstreamKey: string) => Record<string, string>;
   /** Turn the proxied sub-path (the "*" segment) into a full upstream URL. */
   buildUpstreamUrl: (path: string) => string;
-  /** Meter an upstream response body into a settled cost. */
-  parseCost: (responseBody: unknown) => ProviderCost;
+  /**
+   * Meter an upstream response into a settled cost.
+   *
+   * Takes the RAW body text, not pre-parsed JSON, because a streamed response
+   * ("stream": true) is an SSE transcript rather than a JSON document — the
+   * adapter has to decide how to read it. Handing adapters parsed JSON is what
+   * previously made every streamed request meter as $0.
+   */
+  parseCost: (rawBody: string) => ProviderCost;
+  /**
+   * Optionally rewrite the client's request body before it's forwarded, so the
+   * provider actually reports the usage this proxy needs to meter. OpenAI needs
+   * an explicit opt-in for usage on streamed responses; Anthropic always
+   * reports it, so its adapter omits this. Return the body unchanged when
+   * nothing is needed.
+   */
+  prepareRequestBody?: (requestBody: unknown) => unknown;
 }
 
 // ---------------------------------------------------------------------------

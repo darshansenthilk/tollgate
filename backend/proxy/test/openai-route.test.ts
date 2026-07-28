@@ -125,7 +125,17 @@ describe("POST /openai/* hot path", () => {
     // Enforcement happens before any upstream call or metering.
     expect(h.upstream.calls).toHaveLength(0);
     expect(h.budget.counters.get(KEY)).toBe(50 * MICROCENTS_PER_CENT);
-    expect(h.spendLog.events).toHaveLength(0);
+    // The denial IS audited (it's what the dashboard's activity log surfaces),
+    // but at zero cost — nothing was forwarded, so nothing was spent.
+    expect(h.spendLog.events).toHaveLength(1);
+    expect(h.spendLog.events[0]).toMatchObject({
+      agentId: AGENT_ID,
+      decision: "denied_budget",
+      actualCostCents: 0,
+      model: null,
+      promptTokens: null,
+      completionTokens: null,
+    });
   });
 
   it("denies frozen agents with agent_frozen and never forwards", async () => {

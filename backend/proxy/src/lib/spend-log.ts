@@ -15,6 +15,11 @@ export interface SpendRecord {
   estimatedCostCents: number | null;
   actualCostCents: number | null;
   decision: SpendDecision;
+  /** Model the provider reported serving — null for denials (nothing ran) and
+   *  for responses whose usage couldn't be parsed. */
+  model: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
   latencyMs: number | null;
   upstreamStatus: number | null;
 }
@@ -34,8 +39,9 @@ export function pgSpendLog(pool: Pool): SpendLog {
         `INSERT INTO spend_events
            (id, agent_id, provider_id, endpoint, method,
             estimated_cost_cents, actual_cost_cents, decision,
-            idempotency_key, latency_ms, upstream_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            idempotency_key, latency_ms, upstream_status,
+            model, prompt_tokens, completion_tokens)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           randomUUID(),
           event.agentId,
@@ -48,6 +54,9 @@ export function pgSpendLog(pool: Pool): SpendLog {
           randomUUID(),
           event.latencyMs,
           event.upstreamStatus,
+          event.model,
+          event.promptTokens,
+          event.completionTokens,
         ],
       );
     },

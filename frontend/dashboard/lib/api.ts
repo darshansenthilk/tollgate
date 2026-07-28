@@ -145,9 +145,6 @@ export interface UpstreamKeyStatus {
   isSet: boolean;
   keyHint: string | null;
   updatedAt: string | null;
-  /** Whether Tollgate's own shared key covers this provider when the org
-   *  hasn't set one — i.e. whether "Not set" still works or is actually broken. */
-  fallbackAvailable: boolean;
 }
 
 export interface UpstreamKeysResponse {
@@ -179,6 +176,34 @@ export function saveUpstreamKey(
 /** Removes this org's key, reverting to whatever the deployment fallback is. */
 export function deleteUpstreamKey(providerSlug: string): Promise<{ slug: string; isSet: boolean }> {
   return request(`/v1/upstream-keys/${providerSlug}`, { method: "DELETE" });
+}
+
+/**
+ * One row of the activity log: a single request an agent made, allowed or
+ * denied. `model` is what the provider reported actually serving, which can
+ * differ from the agent's descriptive model label (the proxy doesn't enforce
+ * that label). Null for denials, since nothing ran.
+ */
+export interface ActivityEvent {
+  id: string;
+  agentId: string;
+  agentName: string;
+  /** Assistant label the agent was created with ("chatgpt" / "claude"). */
+  assistant: string;
+  model: string | null;
+  endpoint: string;
+  decision: "allowed" | "denied_budget" | "denied_rate" | "denied_endpoint" | "denied_frozen";
+  costCents: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  upstreamStatus: number | null;
+  latencyMs: number | null;
+  createdAt: string;
+}
+
+export function listActivity(limit = 100): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>(`/v1/activity?limit=${limit}`);
 }
 
 export function listAgents(): Promise<AgentListItem[]> {
