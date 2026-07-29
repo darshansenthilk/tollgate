@@ -11,7 +11,13 @@ import { useState, type FormEvent } from "react";
  */
 const FORM_ENDPOINT = "https://formsubmit.co/ajax/darshan.senthilk@gmail.com";
 
-export function WaitlistForm() {
+/**
+ * The sales/enquiry path, deliberately NOT the signup path — self-serve
+ * signup is the hero's "Get started" → /sign-up. Keeping the two on
+ * distinct labels ("Get started" vs "Talk to us") is what stops the page
+ * reading as two competing versions of the same action.
+ */
+export function ContactForm() {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [pending, setPending] = useState(false);
@@ -27,7 +33,7 @@ export function WaitlistForm() {
       const res = await fetch(FORM_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ email: trimmed, _subject: "Tollgate waitlist signup" }),
+        body: JSON.stringify({ email: trimmed, _subject: "Tollgate — contact request" }),
       });
       if (!res.ok) throw new Error("Request failed");
       setSubmitted(true);
@@ -41,34 +47,44 @@ export function WaitlistForm() {
   if (submitted) {
     return (
       <div
+        role="status"
         className="flex items-center gap-2.5 font-mono text-[15px]"
         style={{ color: "var(--ok)" }}
       >
-        <span>✓</span> On the list. We&apos;ll be in touch.
+        <span aria-hidden>✓</span> Got it. We&apos;ll be in touch.
       </div>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex max-w-[480px] flex-wrap gap-2.5">
+    <form onSubmit={handleSubmit} className="flex max-w-[480px] flex-wrap justify-center gap-2.5">
+      {/* Visible-to-screen-readers label: the placeholder alone is not a label
+          — it disappears on first keystroke, leaving the field unnamed. */}
+      <label htmlFor="contact-email" className="sr-only">
+        Work email
+      </label>
       <input
+        id="contact-email"
         type="email"
         required
+        autoComplete="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@company.com"
-        className="glass min-w-[240px] flex-1 px-[15px] py-3.5 text-[15px] outline-none"
-        style={{ borderColor: "rgba(255,255,255,.18)", color: "var(--ink)" }}
+        aria-describedby={error !== null ? "contact-error" : undefined}
+        aria-invalid={error !== null || undefined}
+        className="glass h-10 min-w-[240px] flex-1 px-[15px] text-[15px]"
+        style={{ color: "var(--mk-ink)" }}
       />
       <button
         type="submit"
         disabled={pending}
-        className="rounded-xl bg-brand px-6 py-3.5 font-mono text-[13px] font-medium tracking-[0.1em] whitespace-nowrap text-[#0b0b0d] uppercase transition-[background-color,box-shadow] hover:bg-[#ff5f53] hover:shadow-[0_8px_26px_rgba(255,74,61,0.175)] disabled:opacity-50"
+        className="mk-btn mk-btn-primary disabled:opacity-50"
       >
-        {pending ? "Sending…" : "Request access"}
+        {pending ? "Sending…" : "Talk to us"}
       </button>
       {error !== null && (
-        <p className="w-full text-sm" style={{ color: "var(--err)" }}>
+        <p id="contact-error" role="alert" className="w-full text-sm" style={{ color: "var(--err)" }}>
           {error}
         </p>
       )}

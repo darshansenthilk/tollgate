@@ -11,12 +11,11 @@ import { authClient } from "@/lib/auth-client";
  * which stay specific to the authenticated app shell.
  *
  * Both buttons share one solid-fill treatment: bg-brand + near-black text is
- * the same primary-CTA recipe as the hero/waitlist buttons (see
+ * the same primary-CTA recipe as the hero/contact buttons (see
  * hero-section.tsx), just with a permanent (not hover-only) shadow and a
  * sentence-case bold sans instead of those buttons' mono/uppercase style.
  */
-const NAV_BUTTON_CLASSES =
-  "rounded-xl bg-brand px-4 py-2.5 font-sans text-xs font-bold whitespace-nowrap text-[#0b0b0d] shadow-[0_10px_30px_rgba(0,0,0,0.35),0_6px_16px_rgba(255,74,61,0.3)] transition-[background-color,box-shadow] hover:bg-[#ff5f53] hover:shadow-[0_12px_34px_rgba(0,0,0,0.4),0_8px_20px_rgba(255,74,61,0.4)]";
+const NAV_BUTTON_CLASSES = "mk-btn mk-btn-primary !h-8 !px-4 !text-[13px]";
 
 export function StickyNav() {
   const { data: sessionData } = authClient.useSession();
@@ -25,9 +24,9 @@ export function StickyNav() {
   return (
     <nav
       className="sticky top-0 z-20 border-b backdrop-blur-[22px] backdrop-saturate-150"
-      style={{ borderColor: "rgba(255,255,255,.07)", background: "rgba(18,18,24,.5)" }}
+      style={{ borderColor: "var(--mk-line)", background: "rgba(0,0,0,.6)" }}
     >
-      <div className="flex items-center justify-between px-5 py-4 sm:px-8">
+      <div className="flex items-center justify-between px-5 py-4 sm:px-8 lg:px-12">
         <a href="/" className="flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
               decorative mark; next/image's overhead isn't worth it here. */}
@@ -37,7 +36,7 @@ export function StickyNav() {
             aria-hidden
             className="size-5 shrink-0 rounded-sm"
           />
-          <span className="font-mono text-xs uppercase tracking-[0.25em] text-foreground/90">
+          <span className="text-[15px] font-medium" style={{ color: "var(--mk-ink)" }}>
             Tollgate
           </span>
         </a>

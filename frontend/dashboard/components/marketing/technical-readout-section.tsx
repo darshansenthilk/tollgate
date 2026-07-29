@@ -7,6 +7,8 @@ const SPECS = [
   { label: "Freeze propagation", value: "Next request" },
   { label: "Overspend bound", value: "≤ 1 call" },
   { label: "Budget scope", value: "Per agent / mo" },
+  { label: "Warning / cutoff", value: "80% / 100%" },
+  { label: "Dashboard refresh", value: "Every 3s" },
   { label: "Providers", value: "OpenAI · Anthropic" },
   { label: "Control plane", value: "Redis fast-path" },
 ] as const;
@@ -14,31 +16,25 @@ const SPECS = [
 export function TechnicalReadoutSection() {
   return (
     <ScrollReveal>
-      <section className="border-b" style={{ borderColor: "rgba(255,255,255,.07)" }}>
-        <div className="mx-auto max-w-[1200px] px-5 py-[clamp(48px,12vw,80px)] sm:px-8">
-          <div className="mb-5 font-mono text-xs tracking-[0.2em] text-brand">
-            [ TECHNICAL READOUT ]
-          </div>
-          <h2 className="mb-11 max-w-[20ch] font-heading text-[clamp(26px,3.4vw,40px)] leading-[1.05] font-semibold tracking-[-0.02em]">
-            Enforced at the request boundary. Not after the bill.
+      <section className="border-b" style={{ borderColor: "var(--mk-line)" }}>
+        <div className="mk-centered mx-auto max-w-[1400px] px-6 mk-section sm:px-8 lg:px-12">
+          <h2 className="mk-display-sm mb-11">
+            Enforced at the request boundary, not after the bill.
           </h2>
           <div
-            className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] border-t border-l"
-            style={{ borderColor: "#26262a" }}
+            className="mx-auto grid max-w-[1080px] grid-cols-2 border-t border-l md:grid-cols-4"
+            style={{ borderColor: "var(--mk-line)" }}
           >
             {SPECS.map((spec) => (
               <div
                 key={spec.label}
                 className="border-r border-b px-5 py-6"
-                style={{ borderColor: "#26262a" }}
+                style={{ borderColor: "var(--mk-line)" }}
               >
-                <div
-                  className="mb-3.5 font-mono text-[11px] tracking-[0.12em] uppercase"
-                  style={{ color: "var(--faint)" }}
-                >
+                <div className="mk-label mb-3.5 text-[13px]" style={{ color: "var(--faint)" }}>
                   {spec.label}
                 </div>
-                <div className="font-heading text-[clamp(22px,2.4vw,30px)] font-semibold tracking-[-0.01em]">
+                <div className="mk-display-sm text-[clamp(22px,2.4vw,30px)]">
                   {spec.value}
                 </div>
               </div>

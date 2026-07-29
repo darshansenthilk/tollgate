@@ -20,12 +20,21 @@
      stays green/amber/red on --ok/--amber/--err. Close in hue to --err by
      design; the two never share a component context. */
   --brand: #ff4a3d;
-  /* Marketing-page-only text tones (dashboard uses --muted-foreground for
-     this role). Added for the landing page's type hierarchy: body copy,
-     labels, and eyebrow meta each need a distinct step down from --ink. */
-  --muted-ink: #9c9c95;
-  --dim: #8f8f88;
-  --faint: #5a5a56;
+  /* Marketing-page-only tones. Retuned to the reference landing page's
+     neutral ramp (pure-black ground, #ededed ink, #a1a1a1 body) — the old
+     values were warm-greys (#9c9c95/#8f8f88) carried over from the original
+     handoff. Neutral, not warm, is what makes the reference read crisp
+     rather than cosy; the warmth on this page now comes only from coral. */
+  --muted-ink: #a1a1a1;
+  --dim: #8b8b8b;
+  --faint: #6b6b6b;
+  /* Marketing surface stack: near-black panels on a pure-black ground, with
+     one hairline value used for every rule, divider, and panel edge. */
+  --mk-ground: #000000;
+  --mk-surface: #0a0a0a;
+  --mk-surface-2: #141414;
+  --mk-line: rgba(255, 255, 255, 0.14);
+  --mk-ink: #ededed;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -146,19 +155,56 @@ body {
    replica cards) override radius/border/shadow/blur via inline style rather
    than fighting utility-order precedence for shorthand properties. */
 .glass {
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 16px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 12px 36px rgba(0, 0, 0, 0.4);
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-line);
+  border-radius: 8px;
 }
 
-@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .glass {
-    backdrop-filter: blur(18px) saturate(160%);
-    -webkit-backdrop-filter: blur(18px) saturate(160%);
-  }
+/* Nested panel — one step lighter, for a surface sitting on .glass. */
+.mk-inset {
+  background: var(--mk-surface-2);
+  border: 1px solid var(--mk-line);
+  border-radius: 6px;
+}
+
+/* Pill CTAs. Geometry (40px tall, fully rounded, 16px/500) is the
+   reference's; the fills are Tollgate's own — coral primary matches the
+   dashboard's `bg-primary`, so the two surfaces agree on what "the main
+   action" looks like. */
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+/* White fill, near-black label — the reference's primary. Deliberately NOT
+   the coral brand fill: the reference's whole button system is monochrome,
+   and coral here was the loudest thing on the page. Coral survives only as a
+   functional accent (status dots, the over-budget figure). */
+.mk-btn-primary {
+  background: var(--mk-ink);
+  color: #0a0a0a;
+}
+.mk-btn-primary:hover {
+  background: #ffffff;
+}
+.mk-btn-secondary {
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-line);
+  color: var(--mk-ink);
+}
+.mk-btn-secondary:hover {
+  background: var(--mk-surface-2);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 /* Marketing page only: the same warm glow the dashboard's `body` background
@@ -167,12 +213,105 @@ body {
    Scoped to a class (not `body`) so the dashboard keeps its single warm
    glow. */
 .marketing-ambient-bg {
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(46% 38% at 84% 6%, rgba(255, 74, 61, 0.16), transparent 62%),
-    radial-gradient(44% 40% at 10% 96%, rgba(64, 110, 190, 0.13), transparent 62%);
+  background-color: var(--mk-ground);
+  /* One faint coral wash at the top instead of the previous two-blob
+     (coral + cool blue) ambient. The reference ground is essentially flat
+     black; two competing hues read as decoration, and the blue was the only
+     cool note anywhere in the product. */
+  background-image: radial-gradient(58% 34% at 50% 0%, rgba(255, 74, 61, 0.07), transparent 70%);
   background-attachment: fixed;
   background-repeat: no-repeat;
+  color: var(--mk-ink);
+}
+
+/* Display type: large, light, and tightly tracked — the reference sets its
+   64px hero at weight 400 with -0.06em, which is what stops big type reading
+   as shouty. Deliberately --font-sans (Geist), NOT --font-heading (Space
+   Grotesk): the geometric heading face fights the tight tracking. */
+/* h1: the reference sets 64px / weight 400 / -0.06em / line-height 1.0. */
+.mk-display {
+  font-family: var(--font-sans);
+  font-size: clamp(40px, 5.2vw, 64px);
+  font-weight: 400;
+  letter-spacing: -0.06em;
+  line-height: 1;
+}
+/* h2: every section heading on the reference is the same 56px / 450, with
+   the measure capped around 800px so long headings wrap to 2 lines. */
+.mk-display-sm {
+  font-family: var(--font-sans);
+  font-size: clamp(32px, 4.4vw, 56px);
+  font-weight: 450;
+  letter-spacing: -0.06em;
+  line-height: 1.05;
+  max-width: 805px;
+}
+/* Centred band. Applied to every section container so headings, lead copy,
+   CTAs, and the panel groups all sit on the page's centre line. Tabular and
+   log-style rows *inside* the mono panels keep their own left/right
+   alignment — centring label/value pairs would break their readability. */
+.mk-centered {
+  text-align: center;
+}
+.mk-centered > *,
+.mk-centered .mk-display,
+.mk-centered .mk-display-sm,
+.mk-centered p {
+  margin-left: auto;
+  margin-right: auto;
+}
+/* Machine output stays left-aligned inside its centred panel: terminal
+   lines, request/response rows, and table cells are read column-wise, and
+   centring them destroys that. The panel itself is still centred. */
+.mk-centered .glass,
+.mk-centered .mk-inset {
+  text-align: left;
+}
+
+/* Sub-heading inside a pillar block. */
+.mk-display-xs {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+/* Section rule — the hairline every marketing section separates on. */
+.mk-rule {
+  border-color: var(--mk-line);
+}
+
+/* Section label. Replaces the old `[ EYEBROW ]` idiom: mono, uppercase,
+   coral, .2em-tracked brackets are a strong motif, but nothing like it
+   exists on the reference — its section labels are plain sentence-case sans
+   in the muted tone. Mono is now reserved for actual machine output (the
+   readout panel, the terminal, spec values). */
+.mk-label {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-ink);
+}
+
+/* One vertical rhythm for every section, replacing the per-section clamp()
+   values that ranged from 48–132px and made the page feel unevenly paced. */
+.mk-section {
+  padding-top: clamp(56px, 9vw, 96px);
+  padding-bottom: clamp(56px, 9vw, 96px);
+}
+
+/* Visible keyboard focus for the marketing page's interactive chrome. The
+   base layer's `outline-ring/50` only sets an outline *color*, and the
+   sections' own anchors/inputs never set a width — so nothing rendered a
+   ring. Scoped here rather than added per-component so every current and
+   future marketing control is covered by one rule. */
+.marketing-ambient-bg :is(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
 }
 
 /* The hero telemetry card's pulsing LIVE dot. */

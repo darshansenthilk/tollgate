@@ -19,36 +19,24 @@ export function LiveDemoSection() {
 
   return (
     <ScrollReveal>
-      <section id="demo" className="border-b" style={{ borderColor: "rgba(255,255,255,.07)" }}>
-        <div className="mx-auto max-w-[1200px] px-5 py-[clamp(48px,12vw,80px)] sm:px-8">
-          <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-2.5">
-            <div className="font-mono text-xs tracking-[0.2em] text-brand">[ LIVE ]</div>
-            <span
-              className="inline-flex items-center gap-1.5 border px-2.5 py-1 font-mono text-[11px] tracking-[0.12em]"
-              style={{ borderColor: "rgba(255,255,255,.11)", color: "var(--dim)" }}
-            >
-              <span className="size-1.5 rounded-full bg-brand" />
-              ACTUAL DASHBOARD UI
-            </span>
-          </div>
-          <h2 className="mb-2 max-w-[20ch] font-heading text-[clamp(28px,3.8vw,46px)] leading-[1.02] font-semibold tracking-[-0.02em]">
-            This is the real dashboard.
-          </h2>
-          <p className="mb-7 max-w-[62ch] text-base leading-[1.6]" style={{ color: "var(--muted-ink)" }}>
-            Not a mockup — the actual Agent Dashboard component, wired to a simulated data feed so
-            you can drive it yourself.
+      <section id="demo" className="border-b" style={{ borderColor: "var(--mk-line)" }}>
+        <div className="mk-centered mx-auto max-w-[1400px] px-6 mk-section sm:px-8 lg:px-12">
+          <h2 className="mk-display-sm mb-6">Drive the real dashboard.</h2>
+          <p
+            className="mb-10 max-w-[58ch] text-[16px] leading-[24px]"
+            style={{ color: "var(--muted-ink)" }}
+          >
+            Not a mockup or a video. This is the same Agent Dashboard component the product ships,
+            running against a simulated traffic feed. Start the traffic and watch a budget fill.
           </p>
 
           {/* Demo feed controls — explicitly not part of the app UI. */}
           <div
-            className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-dashed p-3.5"
-            style={{ borderColor: "rgba(255,255,255,.16)" }}
+            className="mb-6 flex flex-wrap items-center justify-center gap-3 rounded-lg border border-dashed p-3.5"
+            style={{ borderColor: "var(--mk-line)" }}
           >
-            <span
-              className="font-mono text-[10.5px] tracking-[0.14em] uppercase"
-              style={{ color: "var(--faint)" }}
-            >
-              [ demo feed ]
+            <span className="mk-label text-[13px]" style={{ color: "var(--faint)" }}>
+              Demo feed
             </span>
             <Select
               items={pickerItems}
@@ -89,7 +77,12 @@ export function LiveDemoSection() {
               is "absolute" so the over-budget popup stays inside this panel
               instead of floating over the whole marketing page (the one
               deliberate containment deviation the design calls out). */}
-          <div className="relative mx-auto max-w-[920px]">
+          {/* overflow-x-auto contains the dashboard's own min-widths (its
+              header button row and table don't wrap below ~520px) inside this
+              panel. Without it that overflow escaped to the document and made
+              the whole marketing page scroll sideways on phones. Fixed here
+              rather than in AgentDashboard, which the real app also renders. */}
+          <div className="relative mx-auto max-w-[920px] overflow-x-auto">
             <AgentDashboard
               agents={sim.agents}
               actions={sim.actions}
