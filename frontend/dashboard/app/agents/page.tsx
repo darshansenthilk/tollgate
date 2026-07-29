@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentStatus } from "@tollgate/shared";
 import { AgentDashboard } from "@/components/agent-dashboard";
-import { ActivityLog } from "@/components/activity-log";
 import {
   applyCreated,
   applyDeleted,
@@ -83,20 +82,14 @@ export default function AgentsPage() {
           Loading…
         </p>
       ) : (
-        <>
-          <AgentDashboard
-            agents={agents}
-            actions={ACTIONS}
-            onCreated={handleCreated}
-            onStatusChange={handleStatusChange}
-            onUpdated={handleUpdated}
-            onDeleted={handleDeleted}
-          />
-          {/* Lives here rather than inside AgentDashboard on purpose: that
-              component is shared with the marketing page's demo simulator,
-              which has no real api to read an activity feed from. */}
-          <ActivityLog />
-        </>
+        <AgentDashboard
+          agents={agents}
+          actions={ACTIONS}
+          onCreated={handleCreated}
+          onStatusChange={handleStatusChange}
+          onUpdated={handleUpdated}
+          onDeleted={handleDeleted}
+        />
       )}
     </main>
   );

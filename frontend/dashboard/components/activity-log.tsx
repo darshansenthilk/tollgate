@@ -120,22 +120,17 @@ export function ActivityLog() {
   }, [refresh]);
 
   return (
-    <Card className="relative mt-6">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-brand to-transparent"
-      />
+    <Card className="relative">
       <CardHeader>
         <div className="flex items-center gap-3">
+          {/* Neutral chip, not brand-tinted — matches the same fix on
+              AgentDashboard's header icon (see agent-dashboard.tsx). */}
           <span
             aria-hidden
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg border text-brand"
-            style={{
-              borderColor: "color-mix(in oklch, var(--brand) 35%, transparent)",
-              backgroundColor: "color-mix(in oklch, var(--brand) 12%, transparent)",
-            }}
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg border"
+            style={{ borderColor: "var(--line)", backgroundColor: "var(--panel)" }}
           >
-            <ScrollText className="size-4" />
+            <ScrollText className="size-4" style={{ color: "var(--muted-foreground)" }} />
           </span>
           <div>
             <CardTitle>Activity log</CardTitle>

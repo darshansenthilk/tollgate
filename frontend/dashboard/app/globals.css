@@ -8,13 +8,13 @@
   /* Warm "industrial glass" palette (docs template). These custom tokens are
      NOT overridden in .dark — one value covers the dark-only app. The shadcn
      oklch tokens below are the (unused) light set; .dark holds the real ones. */
-  --bg: #08080a;
-  --panel: #121011;
-  --line: rgba(255, 255, 255, 0.09);
-  --ink: #ecebe6;
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --line: rgba(255, 255, 255, 0.14);
+  --ink: #ededed;
   --ok: #46c47f;
   --err: #ff5c5c;
-  --amber: #f0b03a;
+  --amber: #f2a742;
   /* Brand coral — the single warm accent, confined to brand chrome (logo mark,
      title, focus rings, primary CTAs). Never functional status: budget state
      stays green/amber/red on --ok/--amber/--err. Close in hue to --err by
@@ -35,6 +35,9 @@
   --mk-surface-2: #141414;
   --mk-line: rgba(255, 255, 255, 0.14);
   --mk-ink: #ededed;
+  /* Fixed slot width for the dashboard nav's tab carousel — sized to fit
+     "Dashboard Panel", the longest label, with room either side. */
+  --mk-tab-w: 160px;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -71,14 +74,10 @@
 body {
   background-color: var(--bg);
   color: var(--ink);
-  /* Fixed ambient coral glow the accent reads against — the warm "white→orange"
-     atmosphere. Low alpha so text contrast is untouched; background-color (not
-     the shorthand) so the image isn't wiped. */
-  background-image: radial-gradient(
-    48% 40% at 88% 0%,
-    rgba(255, 74, 61, 0.1),
-    transparent 60%
-  );
+  /* Same ambient formula as .marketing-ambient-bg below (one faint top-centre
+     coral wash on flat black) — the whole app now opens on the landing
+     page's atmosphere, not a separate warmer top-right glow. */
+  background-image: radial-gradient(58% 34% at 50% 0%, rgba(255, 74, 61, 0.07), transparent 70%);
   background-attachment: fixed;
   background-repeat: no-repeat;
 }
@@ -206,6 +205,226 @@ body {
   background: var(--mk-surface-2);
   border-color: rgba(255, 255, 255, 0.24);
 }
+/* Compact sizing for buttons living inside the island — the hero's h-40
+   pills would overpower a pill that's meant to read as one small floating
+   object, not a second hero. */
+.mk-btn-compact {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* Floating nav, replacing the old full-width sticky bar. Fixed and centred
+   rather than docked to the top edge, so it reads as one object sitting over
+   the page — the shape Apple's Dynamic Island uses on iPhone: a pill that
+   floats clear of both edges instead of a bar that owns the full width.
+   Actual Liquid Glass is an Apple-platform material with no web equivalent —
+   this is the standard approximation (backdrop-filter + a translucent fill +
+   a bright inner rim standing in for specular highlight + a soft outer
+   shadow for depth), same recipe the rest of the product deliberately does
+   NOT use elsewhere (page panels are flat, per the Vercel-style pass) — the
+   island is the one place this reads as the actual chrome it's modelled on,
+   not decoration sprinkled onto content. */
+.mk-island {
+  position: fixed;
+  top: clamp(12px, 2.4vw, 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 10px 6px 18px;
+  border-radius: 9999px;
+  background: rgba(20, 20, 20, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  /* Last-resort fallback if even the compressed layout (media query below)
+     doesn't fit: scroll the whole bar rather than wrapping (which breaks the
+     pill shape) or dropping items. This never puts the tab carousel's pill
+     over the logo or account cluster — the pill's position is entirely a
+     function of .mk-tabs' own separate internal scroll, untouched by
+     whatever this outer scroll does. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mk-island::-webkit-scrollbar {
+  display: none;
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .mk-island {
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+}
+/* Solid fallback for both "can't do it" (no backdrop-filter) and "asked not
+   to" (prefers-reduced-transparency) — the same two cases the design-taste
+   skill calls out for any glass treatment. */
+@media (prefers-reduced-transparency: reduce) {
+  .mk-island {
+    background: #141414;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+/* Below this width the full island (logo + tab carousel + account cluster
+   on the dashboard, or logo + CTAs + account on marketing) is tight —
+   compress instead of letting content overflow. Tab slots, the island's own
+   padding, and tab type all shrink together; the account cluster's own
+   sizing (.mk-btn-compact) is left alone since email/Sign out are already
+   the smallest text on the bar. If even compressed content doesn't fit, the
+   island's own overflow-x: auto (above) is the last-resort fallback — but
+   that never reaches the logo or account cluster, since neither one lives
+   inside the tab carousel's own separately-scrolled region. */
+@media (max-width: 640px) {
+  :root {
+    --mk-tab-w: 108px;
+  }
+  .mk-island {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  .mk-tab {
+    font-size: 12px;
+    padding: 0 4px;
+  }
+}
+.mk-island-sep {
+  width: 1px;
+  height: 20px;
+  flex: none;
+  /* A soft light-catching edge rather than a flat line — fits the glass
+     material better than a solid hairline would. */
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.28), transparent);
+}
+
+/* Plain white-text nav item — no pill, no background, no border. Same
+   height as .mk-btn-compact so it lines up with any pill buttons sharing
+   the island (e.g. marketing's Sign in), just without the fill. */
+.mk-nav-link {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mk-ink);
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+.mk-nav-link:hover {
+  color: var(--brand);
+}
+
+/* Every button living inside an island becomes glass too — scoped here
+   rather than on .mk-btn-primary/.mk-btn-secondary directly so the hero and
+   closing-CTA buttons elsewhere on the marketing page (same classes, outside
+   the island) stay the flat, solid, maximum-contrast fills a conversion CTA
+   needs. Only nav-bar chrome gets the material. */
+.mk-island .mk-btn-primary {
+  background: rgba(255, 255, 255, 0.55);
+  color: #0a0a0a;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.08);
+}
+.mk-island .mk-btn-primary:hover {
+  background: rgba(255, 255, 255, 0.68);
+}
+.mk-island .mk-btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--mk-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.mk-island .mk-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .mk-island :is(.mk-btn-primary, .mk-btn-secondary) {
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .mk-island .mk-btn-primary {
+    background: var(--mk-ink);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .mk-island .mk-btn-secondary {
+    background: var(--mk-surface-2);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Route-tab carousel (dashboard main-nav only) — a horizontally snapping
+   strip of the four route labels, three slots wide, scrolling past a fixed
+   centre point. No pill or background marks that centre, same "plain text"
+   treatment as the landing page's nav — main-nav.tsx tracks which label is
+   nearest it and recolours just that one label's text to the brand colour
+   (.mk-tab-current). Side padding on the scroller, equal to one slot, lets
+   the first and last label reach true centre too (without it, the outer
+   two could only ever sit adjacent to centre, never on it). */
+.mk-tabs-viewport {
+  position: relative;
+  width: calc(var(--mk-tab-w) * 3);
+  height: 32px;
+  overflow: hidden;
+}
+.mk-tabs {
+  /* position: relative makes this the offsetParent for its tab children —
+     without it, .mk-island (position: fixed, the nearest positioned
+     ancestor otherwise) would be, and main-nav.tsx's centring math reads
+     each tab's offsetLeft assuming it's relative to this scroll container,
+     not the whole island. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding-inline: var(--mk-tab-w);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.mk-tabs::-webkit-scrollbar {
+  display: none;
+}
+.mk-tab {
+  flex: none;
+  width: var(--mk-tab-w);
+  scroll-snap-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mk-ink);
+  text-align: center;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+.mk-tab:hover {
+  /* Same hover treatment as .mk-nav-link on the landing page. Higher
+     specificity than .mk-tab-current below (an extra pseudo-class), so
+     hovering the current tab is a harmless no-op — both land on --brand. */
+  color: var(--brand);
+}
+/* Whichever label is currently nearest the strip's centre — text colour
+   only, no background. */
+.mk-tab-current {
+  color: var(--brand);
+}
 
 /* Marketing page only: the same warm glow the dashboard's `body` background
    uses, plus a second cool-blue blob the dashboard doesn't have — this is
@@ -304,12 +523,16 @@ body {
   padding-bottom: clamp(56px, 9vw, 96px);
 }
 
-/* Visible keyboard focus for the marketing page's interactive chrome. The
-   base layer's `outline-ring/50` only sets an outline *color*, and the
-   sections' own anchors/inputs never set a width — so nothing rendered a
-   ring. Scoped here rather than added per-component so every current and
-   future marketing control is covered by one rule. */
-.marketing-ambient-bg :is(a, button, input, select, textarea):focus-visible {
+/* Visible keyboard focus for hand-styled chrome that isn't the shadcn Button
+   component (which sets its own focus ring in buttonVariants). The base
+   layer's `outline-ring/50` only sets an outline *color*, and none of these
+   plain anchors/buttons/inputs set a width — so nothing rendered a ring.
+   Covers both islands (marketing's sticky-nav and the dashboard's main-nav)
+   plus every marketing section, under one rule rather than per-component. */
+.marketing-ambient-bg :is(a, button, input, select, textarea):focus-visible,
+.mk-btn:focus-visible,
+.mk-tab:focus-visible,
+.mk-nav-logo:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 3px;
 }
@@ -326,39 +549,44 @@ body {
 }
 
 .dark {
-  /* Warmed near-black/ink neutrals — a whisper of chroma (~0.004) at a warm hue
-     so surfaces read warm, not tinted. Coral lands only on --primary, --ring,
-     and --sidebar-primary (brand chrome); danger stays on --destructive. */
-  --background: oklch(0.145 0.004 60);
-  --foreground: oklch(0.928 0.004 90);
-  --card: oklch(0.205 0.004 60);
-  --card-foreground: oklch(0.928 0.004 90);
-  --popover: oklch(0.205 0.004 60);
-  --popover-foreground: oklch(0.928 0.004 90);
-  --primary: #ff4a3d;
-  --primary-foreground: oklch(0.16 0.01 40);
-  --secondary: oklch(0.269 0.004 60);
-  --secondary-foreground: oklch(0.928 0.004 90);
-  --muted: oklch(0.269 0.004 60);
-  --muted-foreground: oklch(0.68 0.006 80);
-  --accent: oklch(0.269 0.004 60);
-  --accent-foreground: oklch(0.928 0.004 90);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
+  /* Flat monochrome surfaces — the landing page's own family (pure-black
+     ground, #0a0a0a / #141414 panel steps, #ededed ink), not a separate
+     warmed-oklch ramp. --primary is white-on-near-black now, matching
+     mk-btn-primary: coral stopped being the "main action" colour on the
+     landing page, so the app's default button shouldn't disagree with it.
+     Coral survives only as brand chrome — --ring/--sidebar-ring (focus) and
+     the standalone --brand token used explicitly (logo, nav underline,
+     hover accents, over-budget figures) — never as a fill on --primary. */
+  --background: #000000;
+  --foreground: #ededed;
+  --card: #0a0a0a;
+  --card-foreground: #ededed;
+  --popover: #0a0a0a;
+  --popover-foreground: #ededed;
+  --primary: #ededed;
+  --primary-foreground: #0a0a0a;
+  --secondary: #141414;
+  --secondary-foreground: #ededed;
+  --muted: #141414;
+  --muted-foreground: #a1a1a1;
+  --accent: #141414;
+  --accent-foreground: #ededed;
+  --destructive: var(--err);
+  --border: rgba(255, 255, 255, 0.14);
+  --input: rgba(255, 255, 255, 0.18);
   --ring: #ff4a3d;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0.004 60);
-  --sidebar-foreground: oklch(0.928 0.004 90);
-  --sidebar-primary: #ff4a3d;
-  --sidebar-primary-foreground: oklch(0.16 0.01 40);
-  --sidebar-accent: oklch(0.269 0.004 60);
-  --sidebar-accent-foreground: oklch(0.928 0.004 90);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #ededed;
+  --sidebar-primary: #ededed;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #141414;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: rgba(255, 255, 255, 0.14);
   --sidebar-ring: #ff4a3d;
 }
 

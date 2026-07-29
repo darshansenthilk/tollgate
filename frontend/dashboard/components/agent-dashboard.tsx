@@ -203,34 +203,13 @@ export function AgentDashboard({
     <>
       <header className="mb-6 flex items-center justify-between">
         <div>
-          {/* Bracketed title in the template's eyebrow idiom — coral mono
-              brackets flanking the wordmark. inline-block on the h1 keeps
-              bg-clip-text hugging the text so the white→coral ramp samples
-              across the word, not the whole row. */}
-          <div className="flex items-baseline gap-2">
-            {/* -6px pulls the bracket's glyph ink (which the monospace font
-                insets ~5px from its box) left to line up under the subtitle's
-                first character. Measured, not eyeballed. */}
-            {/* Brackets converge inward on load: the left one enters from
-                farther left, the right from farther right, settling onto the
-                stationary title. inline-block so the translate applies (transform
-                is a no-op on inline boxes). motion-reduce opts out. */}
-            <span
-              aria-hidden
-              className="-ml-[6px] inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-left-6 duration-500 ease-out motion-reduce:animate-none"
-            >
-              [
-            </span>
-            <h1 className="inline-block bg-linear-to-r from-white to-brand bg-clip-text font-heading text-[2.34rem] font-semibold tracking-tight text-transparent">
-              Agent Dashboard
-            </h1>
-            <span
-              aria-hidden
-              className="inline-block font-mono text-3xl font-normal text-brand animate-in slide-in-from-right-6 duration-500 ease-out motion-reduce:animate-none"
-            >
-              ]
-            </span>
-          </div>
+          {/* Plain heading — the coral bracket marks + white→brand gradient
+              clip were the same eyebrow idiom retired on the landing page.
+              Weight/tracking match mk-display-xs's sub-heading scale rather
+              than reusing font-heading (Space Grotesk), so a dashboard user
+              moving between this page and the marketing demo sees one
+              typographic voice, not two. */}
+          <h1 className="text-[2.1rem] font-medium tracking-[-0.02em]">Agent Dashboard</h1>
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
             Your group of agents, all managed in one place.
           </p>
@@ -262,23 +241,17 @@ export function AgentDashboard({
       </header>
 
       <Card className="relative">
-        {/* Coral hairline along the card's top edge, fading out at both ends.
-            Tailwind v4 renames bg-gradient-* → bg-linear-*. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-brand to-transparent"
-        />
         <CardHeader>
           <div className="flex items-center gap-3">
+            {/* Neutral surface chip, not a brand-tinted one — coral no longer
+                decorates chrome that isn't the logo, focus rings, or a
+                status/CTA accent. */}
             <span
               aria-hidden
-              className="flex size-9 shrink-0 items-center justify-center rounded-lg border text-brand"
-              style={{
-                borderColor: "color-mix(in oklch, var(--brand) 35%, transparent)",
-                backgroundColor: "color-mix(in oklch, var(--brand) 12%, transparent)",
-              }}
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg border"
+              style={{ borderColor: "var(--line)", backgroundColor: "var(--panel)" }}
             >
-              <Users className="size-4" />
+              <Users className="size-4" style={{ color: "var(--muted-foreground)" }} />
             </span>
             <div>
               <CardTitle>All agents</CardTitle>
@@ -421,15 +394,14 @@ export function AgentDashboard({
                           <span className="flex items-center gap-2">
                             <span
                               aria-hidden
-                              className="flex size-7 shrink-0 items-center justify-center rounded-md border text-brand"
-                              style={{
-                                borderColor:
-                                  "color-mix(in oklch, var(--brand) 35%, transparent)",
-                                backgroundColor:
-                                  "color-mix(in oklch, var(--brand) 12%, transparent)",
-                              }}
+                              className="flex size-7 shrink-0 items-center justify-center rounded-md border"
+                              style={{ borderColor: "var(--line)", backgroundColor: "var(--panel)" }}
                             >
-                              <Bot className="size-3.5" strokeWidth={1.75} />
+                              <Bot
+                                className="size-3.5"
+                                strokeWidth={1.75}
+                                style={{ color: "var(--muted-foreground)" }}
+                              />
                             </span>
                             {agent.name}
                           </span>

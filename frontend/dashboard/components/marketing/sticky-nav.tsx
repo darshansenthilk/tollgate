@@ -3,55 +3,63 @@
 import { authClient } from "@/lib/auth-client";
 
 /**
- * The landing page's one navbar — components/main-nav.tsx hides itself on "/"
- * (see its NO_NAV_ROUTES) so this is the only nav rendered here. Signed out:
- * "Sign in". Signed in: a single "Dashboard Panel" link into the real
- * dashboard — deliberately not the dashboard nav's own links/labels
- * (Agent Dashboard / System status / Settings / Sign out from main-nav.tsx),
- * which stay specific to the authenticated app shell.
+ * The landing page's one nav — main-nav.tsx hides itself on "/" (see its
+ * NO_NAV_ROUTES) so this is the only nav rendered here. A floating pill
+ * ("Dynamic Island" shape) instead of the previous full-width sticky bar:
+ * fixed, centred, clear of both edges, laid out left to right as
+ * Name | Get started | See it live | Dashboard Panel | Sign in (or email).
  *
- * Both buttons share one solid-fill treatment: bg-brand + near-black text is
- * the same primary-CTA recipe as the hero/contact buttons (see
- * hero-section.tsx), just with a permanent (not hover-only) shadow and a
- * sentence-case bold sans instead of those buttons' mono/uppercase style.
+ * Get started / See it live / Dashboard Panel are plain white text
+ * (.mk-nav-link) — no pill. Sign in keeps the solid pill (.mk-btn-primary)
+ * as the one real call to action in the bar.
+ *
+ * "Dashboard Panel" is always present, not conditional on sign-in — /agents
+ * itself is what decides whether a signed-out visitor gets bounced to
+ * sign-in; the island doesn't gate it.
  */
-const NAV_BUTTON_CLASSES = "mk-btn mk-btn-primary !h-8 !px-4 !text-[13px]";
+const PRIMARY = "mk-btn mk-btn-primary mk-btn-compact whitespace-nowrap";
 
 export function StickyNav() {
   const { data: sessionData } = authClient.useSession();
-  const signedIn = sessionData?.user != null;
+  const email = sessionData?.user?.email ?? null;
 
   return (
-    <nav
-      className="sticky top-0 z-20 border-b backdrop-blur-[22px] backdrop-saturate-150"
-      style={{ borderColor: "var(--mk-line)", background: "rgba(0,0,0,.6)" }}
-    >
-      <div className="flex items-center justify-between px-5 py-4 sm:px-8 lg:px-12">
-        <a href="/" className="flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
-              decorative mark; next/image's overhead isn't worth it here. */}
-          <img
-            src="/logo.svg"
-            alt=""
-            aria-hidden
-            className="size-5 shrink-0 rounded-sm"
-          />
-          <span className="text-[15px] font-medium" style={{ color: "var(--mk-ink)" }}>
-            Tollgate
-          </span>
+    <nav className="mk-island" aria-label="Primary">
+      <a href="/" className="mk-nav-logo flex shrink-0 items-center gap-2 pr-1">
+        {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
+            decorative mark; next/image's overhead isn't worth it here. */}
+        <img src="/logo.svg" alt="" aria-hidden className="size-5 shrink-0 rounded-sm" />
+        <span className="text-[15px] font-medium whitespace-nowrap" style={{ color: "var(--mk-ink)" }}>
+          Tollgate
+        </span>
+      </a>
+
+      <div className="mk-island-sep" aria-hidden />
+
+      <a href="#contact" className="mk-nav-link">
+        Get started
+      </a>
+      <a href="#demo" className="mk-nav-link">
+        See it live
+      </a>
+      <a href="/agents" className="mk-nav-link">
+        Dashboard Panel
+      </a>
+
+      <div className="mk-island-sep" aria-hidden />
+
+      {email !== null ? (
+        <span
+          className="shrink-0 px-1 text-[13px] lowercase"
+          style={{ color: "var(--muted-ink)" }}
+        >
+          {email}
+        </span>
+      ) : (
+        <a href="/sign-in" className={PRIMARY}>
+          Sign in
         </a>
-        <div className="flex items-center gap-4">
-          {signedIn ? (
-            <a href="/agents" className={NAV_BUTTON_CLASSES}>
-              Dashboard Panel
-            </a>
-          ) : (
-            <a href="/sign-in" className={NAV_BUTTON_CLASSES}>
-              Sign in
-            </a>
-          )}
-        </div>
-      </div>
+      )}
     </nav>
   );
 }

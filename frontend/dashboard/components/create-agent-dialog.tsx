@@ -145,7 +145,10 @@ export function CreateAgentDialog({
         else setOpen(true);
       }}
     >
-      <DialogTrigger render={<Button variant="brandOutline" />}>
+      {/* default, not brandOutline: coral is no longer the generic
+          "emphasised action" outline — the dashboard's primary button is now
+          the same white-on-near-black fill as the landing page's CTAs. */}
+      <DialogTrigger render={<Button variant="default" />}>
         <Plus />
         Create agent
       </DialogTrigger>

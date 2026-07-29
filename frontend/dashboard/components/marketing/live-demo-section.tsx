@@ -54,10 +54,13 @@ export function LiveDemoSection() {
                 ))}
               </SelectContent>
             </Select>
+            {/* default, not brandOutline: matches create-agent-dialog.tsx's
+                own trigger now — coral isn't the generic emphasised-action
+                outline on the dashboard either. */}
             <Button
               type="button"
               size="sm"
-              variant={sim.running ? "outline" : "brandOutline"}
+              variant={sim.running ? "outline" : "default"}
               onClick={sim.toggleTraffic}
               disabled={sim.runningId === null}
             >
