@@ -31,18 +31,33 @@ interface ScrollRevealProps {
  * starting point never got a down-scroll entry to reveal from, and since
  * reveals are deliberately down-only, scrolling up to them afterward
  * wouldn't reveal them either — they'd stay invisible forever. Fixed with a
- * direct, synchronous getBoundingClientRect() check right on mount (before
- * the observer is even created): anything already visible or already
- * scrolled past above reveals immediately. This deliberately does NOT lean
- * on IntersectionObserver's "initial callback" for that check — confirmed
+ * direct getBoundingClientRect() check right on mount (before the observer
+ * is even created): anything already visible or already scrolled past
+ * above reveals immediately. This deliberately does NOT lean on
+ * IntersectionObserver's "initial callback" for that check — confirmed
  * live that it doesn't reliably fire for a target that starts (and stays)
  * outside the viewport, which is exactly the case that needed covering.
+ *
+ * That mount-time check has its own race, though: on a hard refresh deep
+ * into the page, this effect can run BEFORE the browser has applied its own
+ * scroll-position restoration — at that instant window.scrollY still reads
+ * 0, so every section computes as "far below," including ones that will
+ * end up above the restored fold a moment later. Once restoration lands
+ * (an instant jump, not a scroll gesture), a section that was never
+ * intersecting before the jump and isn't intersecting after it either never
+ * fires the IntersectionObserver callback at all — nothing ever corrects
+ * the wrong initial verdict, so it stays invisible even though it's now
+ * above where the user is scrolled to. Fixed by re-running the exact same
+ * check a couple of animation frames later, by which point restoration has
+ * always landed in every engine tested; the first check still keeps the
+ * common case (no restoration race) instant with no flash.
  */
 export function ScrollReveal({ children, className }: ScrollRevealProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = useState(false);
   const directionRef = useRef<"down" | "up">("down");
   const prevScrollYRef = useRef(0);
+  const rafIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -65,9 +80,20 @@ export function ScrollReveal({ children, className }: ScrollRevealProps) {
     // Mid-page start: reveal immediately anything already visible or already
     // scrolled past above (top < viewport height covers both) — see the doc
     // comment above for why this can't wait on the observer.
-    if (node.getBoundingClientRect().top < window.innerHeight) {
-      setRevealed(true);
+    function checkAlreadyPastFold() {
+      if (node !== null && node.getBoundingClientRect().top < window.innerHeight) {
+        setRevealed(true);
+      }
     }
+    checkAlreadyPastFold();
+    // Second pass, deferred past the browser's own scroll-restoration jump
+    // on a hard refresh — see the doc comment above. A no-op (setRevealed
+    // is already true) for every case that didn't need it.
+    const rafId1 = requestAnimationFrame(() => {
+      const rafId2 = requestAnimationFrame(checkAlreadyPastFold);
+      rafIdRef.current = rafId2;
+    });
+    rafIdRef.current = rafId1;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -88,6 +114,7 @@ export function ScrollReveal({ children, className }: ScrollRevealProps) {
     return () => {
       window.removeEventListener("scroll", handleScroll);
       observer.disconnect();
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
     };
   }, []);
 

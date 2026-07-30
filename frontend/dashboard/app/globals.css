@@ -35,9 +35,6 @@
   --mk-surface-2: #141414;
   --mk-line: rgba(255, 255, 255, 0.14);
   --mk-ink: #ededed;
-  /* Fixed slot width for the dashboard nav's tab carousel — sized to fit
-     "Dashboard Panel", the longest label, with room either side. */
-  --mk-tab-w: 160px;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -244,11 +241,8 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 -1px 0 rgba(0, 0, 0, 0.25);
   /* Last-resort fallback if even the compressed layout (media query below)
-     doesn't fit: scroll the whole bar rather than wrapping (which breaks the
-     pill shape) or dropping items. This never puts the tab carousel's pill
-     over the logo or account cluster — the pill's position is entirely a
-     function of .mk-tabs' own separate internal scroll, untouched by
-     whatever this outer scroll does. */
+     doesn't fit: scroll the whole bar rather than wrapping (which breaks
+     the pill shape) or dropping items. */
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -271,24 +265,20 @@ body {
     -webkit-backdrop-filter: none;
   }
 }
-/* Below this width the full island (logo + tab carousel + account cluster
-   on the dashboard, or logo + CTAs + account on marketing) is tight —
-   compress instead of letting content overflow. Tab slots, the island's own
-   padding, and tab type all shrink together; the account cluster's own
-   sizing (.mk-btn-compact) is left alone since email/Sign out are already
-   the smallest text on the bar. If even compressed content doesn't fit, the
-   island's own overflow-x: auto (above) is the last-resort fallback — but
-   that never reaches the logo or account cluster, since neither one lives
-   inside the tab carousel's own separately-scrolled region. */
+/* Below this width the full island (logo + route/CTA links + account
+   cluster, same shape on both the dashboard and marketing now that both
+   reuse .mk-nav-link) is tight — compress instead of letting content
+   overflow. Link type and the island's own padding shrink together; the
+   account cluster's own sizing (.mk-btn-compact) is left alone since
+   email/Sign out are already the smallest text on the bar. If even
+   compressed content doesn't fit, the island's own overflow-x: auto
+   (above) is the last-resort fallback. */
 @media (max-width: 640px) {
-  :root {
-    --mk-tab-w: 108px;
-  }
   .mk-island {
     padding: 4px 8px;
     gap: 6px;
   }
-  .mk-tab {
+  .mk-nav-link {
     font-size: 12px;
     padding: 0 4px;
   }
@@ -304,7 +294,10 @@ body {
 
 /* Plain white-text nav item — no pill, no background, no border. Same
    height as .mk-btn-compact so it lines up with any pill buttons sharing
-   the island (e.g. marketing's Sign in), just without the fill. */
+   the island (e.g. marketing's Sign in), just without the fill. Shared by
+   both islands: marketing's Get started/See it live/Dashboard Panel, and
+   the dashboard's four route links (which additionally pick up
+   .mk-nav-link-current when active — see below). */
 .mk-nav-link {
   display: inline-flex;
   align-items: center;
@@ -319,22 +312,30 @@ body {
 .mk-nav-link:hover {
   color: var(--brand);
 }
+/* The dashboard nav's current-route link — steady coral rather than only
+   on hover, since unlike marketing's equal-weight action links, these are
+   the same page's route among siblings and "where you are" needs to read
+   without a pointer over it. Hovering the current link is a harmless
+   no-op: :hover has higher specificity (an extra pseudo-class) but lands
+   on the same --brand colour either way. */
+.mk-nav-link-current {
+  color: var(--brand);
+}
 
-/* Every button living inside an island becomes glass too — scoped here
-   rather than on .mk-btn-primary/.mk-btn-secondary directly so the hero and
-   closing-CTA buttons elsewhere on the marketing page (same classes, outside
-   the island) stay the flat, solid, maximum-contrast fills a conversion CTA
-   needs. Only nav-bar chrome gets the material. */
+/* Secondary buttons living inside an island become glass — scoped here
+   rather than on .mk-btn-secondary directly so the closing-CTA's "See it
+   live" button elsewhere on the marketing page (same class, outside the
+   island) stays the flat, solid fill a conversion CTA needs. Primary is
+   deliberately NOT glass: "Sign in" is pure opaque white with black text —
+   the one unambiguous, maximum-contrast action in the bar, same logic as a
+   conversion CTA even though it lives in the nav. */
 .mk-island .mk-btn-primary {
-  background: rgba(255, 255, 255, 0.55);
+  background: #ffffff;
   color: #0a0a0a;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.08);
+  border: 1px solid #ffffff;
 }
 .mk-island .mk-btn-primary:hover {
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--mk-ink);
 }
 .mk-island .mk-btn-secondary {
   background: rgba(255, 255, 255, 0.06);
@@ -347,83 +348,17 @@ body {
   border-color: rgba(255, 255, 255, 0.3);
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .mk-island :is(.mk-btn-primary, .mk-btn-secondary) {
+  .mk-island .mk-btn-secondary {
     backdrop-filter: blur(12px) saturate(160%);
     -webkit-backdrop-filter: blur(12px) saturate(160%);
   }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .mk-island .mk-btn-primary {
-    background: var(--mk-ink);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
   .mk-island .mk-btn-secondary {
     background: var(--mk-surface-2);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-}
-
-/* Route-tab carousel (dashboard main-nav only) — a horizontally snapping
-   strip of the four route labels, three slots wide, scrolling past a fixed
-   centre point. No pill or background marks that centre, same "plain text"
-   treatment as the landing page's nav — main-nav.tsx tracks which label is
-   nearest it and recolours just that one label's text to the brand colour
-   (.mk-tab-current). Side padding on the scroller, equal to one slot, lets
-   the first and last label reach true centre too (without it, the outer
-   two could only ever sit adjacent to centre, never on it). */
-.mk-tabs-viewport {
-  position: relative;
-  width: calc(var(--mk-tab-w) * 3);
-  height: 32px;
-  overflow: hidden;
-}
-.mk-tabs {
-  /* position: relative makes this the offsetParent for its tab children —
-     without it, .mk-island (position: fixed, the nearest positioned
-     ancestor otherwise) would be, and main-nav.tsx's centring math reads
-     each tab's offsetLeft assuming it's relative to this scroll container,
-     not the whole island. */
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 100%;
-  padding-inline: var(--mk-tab-w);
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  scrollbar-width: none;
-}
-.mk-tabs::-webkit-scrollbar {
-  display: none;
-}
-.mk-tab {
-  flex: none;
-  width: var(--mk-tab-w);
-  scroll-snap-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding: 0 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--mk-ink);
-  text-align: center;
-  white-space: nowrap;
-  transition: color 0.15s ease;
-}
-.mk-tab:hover {
-  /* Same hover treatment as .mk-nav-link on the landing page. Higher
-     specificity than .mk-tab-current below (an extra pseudo-class), so
-     hovering the current tab is a harmless no-op — both land on --brand. */
-  color: var(--brand);
-}
-/* Whichever label is currently nearest the strip's centre — text colour
-   only, no background. */
-.mk-tab-current {
-  color: var(--brand);
 }
 
 /* Marketing page only: the same warm glow the dashboard's `body` background
@@ -531,7 +466,7 @@ body {
    plus every marketing section, under one rule rather than per-component. */
 .marketing-ambient-bg :is(a, button, input, select, textarea):focus-visible,
 .mk-btn:focus-visible,
-.mk-tab:focus-visible,
+.mk-nav-link:focus-visible,
 .mk-nav-logo:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 3px;
