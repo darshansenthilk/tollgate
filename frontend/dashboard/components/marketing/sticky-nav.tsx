@@ -18,6 +18,10 @@ import { authClient } from "@/lib/auth-client";
  * See it live / Talk to us are plain white text (.mk-nav-link) — no pill.
  * "Talk to us" routes to #contact, the same closing-CTA section its own
  * button (components/marketing/access-cta-section.tsx) points to.
+ *
+ * "Dashboard Panel" (→ /agents) only appears once signed in — a signed-out
+ * visitor has nowhere useful to land there (middleware would just bounce
+ * them to /sign-in), so the link stays hidden until `email` is non-null.
  */
 const PRIMARY = "mk-btn mk-btn-primary mk-btn-compact whitespace-nowrap";
 const COMPACT = "mk-btn mk-btn-compact whitespace-nowrap";
@@ -52,6 +56,11 @@ export function StickyNav() {
       <a href="#contact" className="mk-nav-link">
         Talk to us
       </a>
+      {email !== null && (
+        <a href="/agents" className="mk-nav-link">
+          Dashboard Panel
+        </a>
+      )}
 
       <div className="mk-island-sep" aria-hidden />
 
