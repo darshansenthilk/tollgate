@@ -4,8 +4,11 @@ import { ScrollReveal } from "@/components/marketing/scroll-reveal";
 
 /**
  * Hero, laid out on the reference's own shape: left-aligned h1 with a capped
- * measure, two pill CTAs, then a row of three short supporting lines. No
- * eyebrow — the reference has no label above any section heading.
+ * measure, one pill CTA, then a row of three short supporting lines. No
+ * eyebrow — the reference has no label above any section heading. "Get
+ * started" (originally the primary pill here) is gone site-wide — See it
+ * live is promoted to mk-btn-primary so the lone remaining CTA still reads
+ * as solid/primary rather than an orphaned outline button.
  */
 const SUPPORTING = [
   "For every agent to hold its own token and its own monthly ceiling, never a shared key.",
@@ -25,10 +28,7 @@ export function HeroSection() {
             Kill your agents before they kill your budget.
           </h1>
           <div className="mb-14 flex flex-wrap justify-center gap-3">
-            <a href="/sign-up" className="mk-btn mk-btn-primary">
-              Get started
-            </a>
-            <a href="#demo" className="mk-btn mk-btn-secondary">
+            <a href="#demo" className="mk-btn mk-btn-primary">
               See it live
             </a>
           </div>

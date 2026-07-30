@@ -12,10 +12,11 @@ import { useState, type FormEvent } from "react";
 const FORM_ENDPOINT = "https://formsubmit.co/ajax/darshan.senthilk@gmail.com";
 
 /**
- * The sales/enquiry path, deliberately NOT the signup path — self-serve
- * signup is the hero's "Get started" → /sign-up. Keeping the two on
- * distinct labels ("Get started" vs "Talk to us") is what stops the page
- * reading as two competing versions of the same action.
+ * The sales/enquiry path. "Get started" (the old self-serve-signup pill)
+ * is gone from the page entirely — /sign-up is reachable only via the
+ * nav's "Sign in" pill (which itself links onward from the sign-in form)
+ * — so this form is now the only on-page call to action besides "See it
+ * live".
  */
 export function ContactForm() {
   const [email, setEmail] = useState("");

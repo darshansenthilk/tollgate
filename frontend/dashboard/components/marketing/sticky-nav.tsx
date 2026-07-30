@@ -8,17 +8,16 @@ import { authClient } from "@/lib/auth-client";
  * NO_NAV_ROUTES) so this is the only nav rendered here. A floating pill
  * ("Dynamic Island" shape) instead of the previous full-width sticky bar:
  * fixed, centred, clear of both edges, laid out left to right as
- * Name | Get started | See it live | Dashboard Panel | Sign in + Sign out
- * (or email + Sign out, once signed in) — same account-cluster shape as
- * main-nav.tsx's.
+ * Name | See it live | Talk to us | Sign in + Sign out (or email + Sign
+ * out, once signed in) — same account-cluster shape as main-nav.tsx's.
+ * No "Get started" anywhere on the page anymore (nav, hero, or closing
+ * section) — Sign in's own solid pill (.mk-btn-primary) is the one real
+ * call to action in the bar, and self-serve signup isn't otherwise called
+ * out; "Talk to us" now covers what "Dashboard Panel" used to.
  *
- * Get started / See it live / Dashboard Panel are plain white text
- * (.mk-nav-link) — no pill. Sign in keeps the solid pill (.mk-btn-primary)
- * as the one real call to action in the bar.
- *
- * "Dashboard Panel" is always present, not conditional on sign-in — /agents
- * itself is what decides whether a signed-out visitor gets bounced to
- * sign-in; the island doesn't gate it.
+ * See it live / Talk to us are plain white text (.mk-nav-link) — no pill.
+ * "Talk to us" routes to #contact, the same closing-CTA section its own
+ * button (components/marketing/access-cta-section.tsx) points to.
  */
 const PRIMARY = "mk-btn mk-btn-primary mk-btn-compact whitespace-nowrap";
 const COMPACT = "mk-btn mk-btn-compact whitespace-nowrap";
@@ -47,14 +46,11 @@ export function StickyNav() {
 
       <div className="mk-island-sep" aria-hidden />
 
-      <a href="#contact" className="mk-nav-link">
-        Get started
-      </a>
       <a href="#demo" className="mk-nav-link">
         See it live
       </a>
-      <a href="/agents" className="mk-nav-link">
-        Dashboard Panel
+      <a href="#contact" className="mk-nav-link">
+        Talk to us
       </a>
 
       <div className="mk-island-sep" aria-hidden />

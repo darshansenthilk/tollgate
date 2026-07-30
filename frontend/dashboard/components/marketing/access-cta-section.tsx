@@ -24,10 +24,7 @@ const FOOTER_COLUMNS = [
   },
   {
     heading: "Account",
-    links: [
-      { href: "/sign-up", label: "Get started" },
-      { href: "/sign-in", label: "Sign in" },
-    ],
+    links: [{ href: "/sign-in", label: "Sign in" }],
   },
 ];
 
@@ -44,14 +41,10 @@ export function AccessCtaSection() {
               className="mx-auto mb-10 max-w-[54ch] text-[16px] leading-[24px]"
               style={{ color: "var(--muted-ink)" }}
             >
-              Signup is open — start on your own with Get started. For larger fleets, custom limits,
-              or self-hosting, send us a note.
+              For larger fleets, custom limits, or self-hosting, send us a note below.
             </p>
             <div className="mb-10 flex flex-wrap justify-center gap-3">
-              <a href="/sign-up" className="mk-btn mk-btn-primary">
-                Get started
-              </a>
-              <a href="#demo" className="mk-btn mk-btn-secondary">
+              <a href="#demo" className="mk-btn mk-btn-primary">
                 See it live
               </a>
             </div>

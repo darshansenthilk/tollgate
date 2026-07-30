@@ -202,7 +202,12 @@ export function AgentDashboard({
   return (
     <>
       <header className="mb-6 flex items-center justify-between">
-        <div>
+        {/* pl-4 matches Card's own --card-spacing (16px) below, so the
+            heading's left edge lines up with the card's inner content (the
+            icon chip) rather than just its outer border — they were both
+            sitting flush at the container edge before, which put the card's
+            padded content visibly to the right of the plain-text heading. */}
+        <div className="pl-4">
           {/* Plain heading — the coral bracket marks + white→brand gradient
               clip were the same eyebrow idiom retired on the landing page.
               Weight/tracking match mk-display-xs's sub-heading scale rather
@@ -214,7 +219,10 @@ export function AgentDashboard({
             Your group of agents, all managed in one place.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Stack vertically below sm: two side-by-side buttons is what
+            actually breaks first when the header gets tight, since the
+            title on the left keeps its own line-length regardless. */}
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
           <CreateAgentDialog
             createAgent={actions.createAgent}
             onCreated={onCreated}
