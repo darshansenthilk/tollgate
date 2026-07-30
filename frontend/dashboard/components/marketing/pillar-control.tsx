@@ -1,6 +1,7 @@
 "use client";
 
 import { ScrollReveal } from "@/components/marketing/scroll-reveal";
+import { TerminalTypewriter, type TermLine } from "@/components/marketing/terminal-typewriter";
 
 /** Mirrors selection-toolbar.tsx's soft/hard freeze and the dashboard's
  *  batch selection mode — not aspirational copy. */
@@ -17,6 +18,22 @@ const CONTROLS = [
     title: "No restart, no rotation",
     body: "Freezing flips a Redis flag the proxy already reads. There is no deploy, no key rotation, and no downtime for anything else.",
   },
+] as const;
+
+const FREEZE_LINES: TermLine[] = [
+  [{ text: "→ ", color: "var(--faint)" }, { text: "operator: freeze agent-scraper" }],
+  [
+    { text: "→ ", color: "var(--faint)" },
+    { text: "redis flag set " },
+    { text: "ok", color: "var(--ok)" },
+    { text: " · 0ms", color: "var(--faint)" },
+  ],
+  [
+    { text: "→ ", color: "var(--faint)" },
+    { text: "next request " },
+    { text: "403 agent_frozen", color: "var(--err)" },
+  ],
+  [{ text: "   no restart · no propagation delay", color: "var(--faint)" }],
 ];
 
 export function PillarControl() {
@@ -50,28 +67,19 @@ export function PillarControl() {
             ))}
           </div>
 
+          {/* The freeze event, actually typing and re-running — see
+              terminal-typewriter.tsx — instead of the static lines this used
+              to be. */}
           <div className="mx-auto max-w-[520px]">
             <div className="glass p-[18px] font-mono text-[12.5px]">
               <div className="mk-label mb-3.5 text-[12px]" style={{ color: "var(--faint)" }}>
                 Freeze event
               </div>
-              <div className="leading-loose" style={{ color: "var(--dim)" }}>
-                <div>
-                  <span style={{ color: "var(--faint)" }}>→</span> operator: freeze agent-scraper
-                </div>
-                <div>
-                  <span style={{ color: "var(--faint)" }}>→</span> redis flag set{" "}
-                  <span style={{ color: "var(--ok)" }}>ok</span>{" "}
-                  <span style={{ color: "var(--faint)" }}>· 0ms</span>
-                </div>
-                <div>
-                  <span style={{ color: "var(--faint)" }}>→</span> next request{" "}
-                  <span style={{ color: "var(--err)" }}>403 agent_frozen</span>
-                </div>
-                <div style={{ color: "var(--faint)" }}>
-                  &nbsp;&nbsp;&nbsp;no restart · no propagation delay
-                </div>
-              </div>
+              <TerminalTypewriter
+                lines={FREEZE_LINES}
+                className="leading-loose"
+                style={{ color: "var(--dim)" }}
+              />
             </div>
           </div>
         </div>

@@ -28,9 +28,10 @@ import { LINKS } from "@/components/nav-links";
  */
 
 // /sign-up and /enroll-2fa (the post-sign-up 2FA opt-in, PLAN.md §5,
-// one-time onboarding) stay excluded, and "/" keeps using its own merged
-// nav (components/marketing/sticky-nav.tsx) instead of this one.
-const NO_NAV_ROUTES = new Set(["/sign-up", "/enroll-2fa", "/"]);
+// one-time onboarding) stay excluded, and "/" and "/security" keep using
+// their own merged nav (components/marketing/sticky-nav.tsx) instead of
+// this one — both live in the (marketing) route group.
+const NO_NAV_ROUTES = new Set(["/sign-up", "/enroll-2fa", "/", "/security"]);
 const COMPACT = "mk-btn mk-btn-compact whitespace-nowrap";
 
 export function MainNav() {

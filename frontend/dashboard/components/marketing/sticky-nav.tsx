@@ -16,8 +16,10 @@ import { authClient } from "@/lib/auth-client";
  * out; "Talk to us" now covers what "Dashboard Panel" used to.
  *
  * See it live / Talk to us are plain white text (.mk-nav-link) — no pill.
- * "Talk to us" routes to #contact, the same closing-CTA section its own
- * button (components/marketing/access-cta-section.tsx) points to.
+ * Both are absolute ("/#demo", "/#contact"), not bare hashes — this nav is
+ * also rendered on /security (main-nav.tsx's NO_NAV_ROUTES excludes it too),
+ * where a bare "#demo" would resolve against /security itself and find
+ * nothing instead of returning to the landing page's sections.
  *
  * "Dashboard Panel" (→ /agents) only appears once signed in — a signed-out
  * visitor has nowhere useful to land there (middleware would just bounce
@@ -50,10 +52,10 @@ export function StickyNav() {
 
       <div className="mk-island-sep" aria-hidden />
 
-      <a href="#demo" className="mk-nav-link">
+      <a href="/#demo" className="mk-nav-link">
         See it live
       </a>
-      <a href="#contact" className="mk-nav-link">
+      <a href="/#contact" className="mk-nav-link">
         Talk to us
       </a>
       {email !== null && (

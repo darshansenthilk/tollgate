@@ -68,6 +68,21 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+html {
+  scroll-behavior: smooth;
+  /* Offsets #hash scroll targets past the fixed nav island (both
+     sticky-nav.tsx and main-nav.tsx render it ~20px from the top, ~44px
+     tall) so "See it live" / "Talk to us" land the target's top edge
+     clear of the island instead of tucked underneath it. */
+  scroll-padding-top: 96px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 body {
   background-color: var(--bg);
   color: var(--ink);
@@ -481,6 +496,47 @@ body {
   50% {
     opacity: 0.35;
   }
+}
+
+/* Blinking caret for TypedText / TerminalTypewriter, trailing the
+   in-progress character. */
+@keyframes tg-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.mk-type-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.95em;
+  margin-left: 1px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: tg-caret 0.85s steps(1) infinite;
+}
+
+/* A freshly-inserted activity-log row (activity-log-panel.tsx) sliding/
+   fading into place at the top of the table. Applied unconditionally to
+   every <tr> — since each row is keyed by its own timestamp, only newly
+   mounted rows ever play it; rows already in the DOM just reflow down. */
+@keyframes tg-row-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mk-row-in {
+  animation: tg-row-in 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 .dark {

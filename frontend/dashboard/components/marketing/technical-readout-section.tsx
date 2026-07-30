@@ -34,9 +34,7 @@ export function TechnicalReadoutSection() {
                 <div className="mk-label mb-3.5 text-[13px]" style={{ color: "var(--faint)" }}>
                   {spec.label}
                 </div>
-                <div className="mk-display-sm text-[clamp(22px,2.4vw,30px)]">
-                  {spec.value}
-                </div>
+                <div className="mk-display-sm text-[clamp(22px,2.4vw,30px)]">{spec.value}</div>
               </div>
             ))}
           </div>

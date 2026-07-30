@@ -5,14 +5,19 @@ import { TollgateLogo } from "@/components/marketing/tollgate-logo";
 import { ContactForm } from "@/components/marketing/contact-form";
 
 /** Multi-column footer with 14px/500 sans column headings — the reference's
- *  own footer shape (Build / Learn / Explore / Company / …). */
+ *  own footer shape (Build / Learn / Explore / Company / …). This footer is
+ *  shared between "/" and "/security" (both render AccessCtaSection), so
+ *  the in-page anchors are absolute ("/#how", not "#how") — a bare hash
+ *  link resolves against whichever page is currently rendered, which is
+ *  wrong from /security. */
 const FOOTER_COLUMNS = [
   {
     heading: "Product",
     links: [
-      { href: "#how", label: "How it works" },
-      { href: "#demo", label: "Live demo" },
-      { href: "#contact", label: "Talk to us" },
+      { href: "/#how", label: "How it works" },
+      { href: "/#demo", label: "Live demo" },
+      { href: "/security", label: "Security" },
+      { href: "/#contact", label: "Talk to us" },
     ],
   },
   {
@@ -43,11 +48,6 @@ export function AccessCtaSection() {
             >
               For larger fleets, custom limits, or self-hosting, send us a note below.
             </p>
-            <div className="mb-10 flex flex-wrap justify-center gap-3">
-              <a href="#demo" className="mk-btn mk-btn-primary">
-                See it live
-              </a>
-            </div>
             <div className="flex justify-center">
               <ContactForm />
             </div>

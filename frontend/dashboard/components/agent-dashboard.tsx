@@ -206,8 +206,13 @@ export function AgentDashboard({
             heading's left edge lines up with the card's inner content (the
             icon chip) rather than just its outer border — they were both
             sitting flush at the container edge before, which put the card's
-            padded content visibly to the right of the plain-text heading. */}
-        <div className="pl-4">
+            padded content visibly to the right of the plain-text heading.
+            text-left is explicit, not the default here: the marketing
+            live-demo panel wraps this component in .mk-centered
+            (globals.css's site-wide text-align: center for that section),
+            which would otherwise centre this header and break the
+            "Your group of" / "agents, ..." line-start alignment below. */}
+        <div className="pl-4 text-left">
           {/* Plain heading — the coral bracket marks + white→brand gradient
               clip were the same eyebrow idiom retired on the landing page.
               Weight/tracking match mk-display-xs's sub-heading scale rather
@@ -216,13 +221,15 @@ export function AgentDashboard({
               typographic voice, not two. */}
           <h1 className="text-[2.1rem] font-medium tracking-[-0.02em]">Agent Dashboard</h1>
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Your group of agents, all managed in one place.
+            Your group of agents,
+            <br />
+            all managed in one place.
           </p>
         </div>
-        {/* Stack vertically below sm: two side-by-side buttons is what
-            actually breaks first when the header gets tight, since the
-            title on the left keeps its own line-length regardless. */}
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+        {/* Stack vertically below md (768px), not sm (640px) — at widths in
+            between, the header row was still tight enough for the two
+            buttons to crowd the title rather than breaking cleanly. */}
+        <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center">
           <CreateAgentDialog
             createAgent={actions.createAgent}
             onCreated={onCreated}
