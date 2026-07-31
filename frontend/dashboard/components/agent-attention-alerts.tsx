@@ -158,7 +158,7 @@ export function AgentAttentionAlerts({
               // translucent + blurred + saturated backdrop behind a glass-rim
               // inset highlight, gated behind `supports-backdrop-filter:` so
               // browsers without it get a plainer, more opaque fallback.
-              "cursor-pointer overflow-hidden rounded-xl border border-white/15 bg-popover/90 p-3 text-sm text-popover-foreground shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5),inset_1px_0_0_0_rgba(255,255,255,0.08),inset_0_1px_0_0_rgba(255,255,255,0.12)] outline-none duration-300 ease-out supports-backdrop-filter:bg-popover/55 supports-backdrop-filter:backdrop-blur-2xl supports-backdrop-filter:backdrop-saturate-150",
+              "cursor-pointer overflow-hidden rounded-xl border border-[color:var(--glass-hairline)] bg-popover/90 p-3 text-sm text-popover-foreground shadow-[var(--glass-shadow)] outline-none duration-300 ease-out supports-backdrop-filter:bg-popover/55 supports-backdrop-filter:backdrop-blur-2xl supports-backdrop-filter:backdrop-saturate-150",
               closing
                 ? "animate-out fade-out-0 slide-out-to-right duration-200"
                 : "animate-in fade-in-0 slide-in-from-right duration-300",
@@ -203,14 +203,14 @@ export function AgentAttentionAlerts({
             >
               <div className="overflow-hidden" aria-hidden={!expanded} inert={!expanded}>
                 <div
-                  className="mt-3 flex flex-col gap-2 border-t border-white/10 pt-3"
+                  className="mt-3 flex flex-col gap-2 border-t border-[color:var(--line)] pt-3"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <p className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
                     Currently working on
                   </p>
                   {hasPrompt ? (
-                    <pre className="max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-white/5 p-2 text-xs break-words whitespace-pre-wrap">
+                    <pre className="max-h-32 overflow-y-auto rounded-lg border border-[color:var(--line)] bg-[var(--subtle-fill)] p-2 text-xs break-words whitespace-pre-wrap">
                       {agent.currentPrompt}
                     </pre>
                   ) : (

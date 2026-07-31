@@ -59,7 +59,7 @@ function SidebarContent({
           // browsers without it fall back to a plain, more opaque panel
           // instead of looking washed out), plus a soft inset highlight
           // along the top/left edge to read as a glass rim catching light.
-          "fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-sm flex-col gap-4 overflow-y-auto border-l border-white/15 bg-popover/90 p-4 text-sm text-popover-foreground outline-none duration-300 ease-out shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5),inset_1px_0_0_0_rgba(255,255,255,0.08),inset_0_1px_0_0_rgba(255,255,255,0.12)] supports-backdrop-filter:bg-popover/55 supports-backdrop-filter:backdrop-blur-2xl supports-backdrop-filter:backdrop-saturate-150 data-open:animate-in data-open:slide-in-from-right data-open:fade-in-0 data-closed:animate-out data-closed:slide-out-to-right data-closed:fade-out-0",
+          "fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-sm flex-col gap-4 overflow-y-auto border-l border-[color:var(--glass-hairline)] bg-popover/90 p-4 text-sm text-popover-foreground outline-none duration-300 ease-out shadow-[var(--glass-shadow)] supports-backdrop-filter:bg-popover/55 supports-backdrop-filter:backdrop-blur-2xl supports-backdrop-filter:backdrop-saturate-150 data-open:animate-in data-open:slide-in-from-right data-open:fade-in-0 data-closed:animate-out data-closed:slide-out-to-right data-closed:fade-out-0",
           className
         )}
         {...props}

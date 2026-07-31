@@ -1,0 +1,167 @@
+import { createPublicKey, verify as cryptoVerify, type KeyObject } from "node:crypto";
+
+/**
+ * Self-host activation keys — see SELF_HOSTING.md's "Licensing" section for
+ * the business decision this implements: self-host images are private
+ * (GHCR inherits this repo's visibility) AND the running services refuse
+ * to start without a valid, unexpired key. Distribution being gated isn't
+ * enough on its own — an image obtained some other way would otherwise run
+ * forever with no ongoing relationship to Tollgate.
+ *
+ * Deliberately NOT re-exported from ./index.ts (the package's main "."
+ * export) — import this file only from server-only code
+ * (@tollgate/shared/license, see package.json's exports map). This file
+ * needs node:crypto, and index.ts's exports are reachable from the
+ * dashboard's browser bundle via transpilePackages; merging the two once
+ * broke the live dev server (webpack tried to bundle node:crypto for the
+ * browser). Only backend/api/src/check-license.ts and
+ * backend/proxy/src/check-license.ts should ever import from here.
+ *
+ * Format: `base64url(JSON payload) + "." + base64url(Ed25519 signature over
+ * the JSON payload's UTF-8 bytes)`. Deliberately NOT a JWT library — this
+ * is a small closed system (Tollgate signs, Tollgate's own product
+ * verifies), a full JWT implementation's header/alg-negotiation surface
+ * would be unused complexity and a source of confusable-algorithm bugs.
+ *
+ * Ed25519 (asymmetric), not HMAC: verification has to work fully offline,
+ * inside a customer's own network with no call back to Tollgate — an
+ * air-gapped enterprise deployment is a real self-hosting use case, not an
+ * edge case. That means the verification key ships inside the product
+ * (this file, compiled into every self-hosted image). If signing and
+ * verifying used the same secret (HMAC), that secret would ship too, and
+ * anyone with the image could read it out and mint their own valid keys.
+ * With asymmetric signing, only the PUBLIC key below ships — safe by
+ * construction, since it can verify but not forge. The matching PRIVATE
+ * key lives outside this repo entirely (see scripts/generate-license-key.mjs's
+ * own doc comment) and is what actually gates who can mint a real key.
+ */
+
+/**
+ * Ed25519 public key, SPKI/DER, base64 — safe to ship, verifies but can't
+ * sign. Rotated 2026-07-31: the original keypair's private half was
+ * generated and used in a chat session/shell history and treated as
+ * provisionally exposed rather than trusted to stay confidential — see
+ * SELF_HOSTING.md's "Licensing" section. Any key minted with the OLD
+ * private key will no longer verify against this constant; if you still
+ * have a customer running on one, they'll need a freshly-minted key from
+ * scripts/generate-license-key.mjs using the new private key.
+ */
+const PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAc6aRetoaQhKUuZRyWoHzkNA1I/PidI+4vlzSxSBCNvo=";
+
+let cachedPublicKey: KeyObject | null = null;
+function publicKey(): KeyObject {
+  if (cachedPublicKey === null) {
+    cachedPublicKey = createPublicKey({
+      key: Buffer.from(PUBLIC_KEY_B64, "base64"),
+      format: "der",
+      type: "spki",
+    });
+  }
+  return cachedPublicKey;
+}
+
+export interface LicensePayload {
+  /** Who this key was issued to — surfaced in startup logs so an operator
+   *  can confirm at a glance which customer's key is running. */
+  org: string;
+  issuedAt: string;
+  /** null = perpetual (no expiry) — an explicit choice per key, not a
+   *  parsing default, so a key can't accidentally end up unexpiring. */
+  expiresAt: string | null;
+}
+
+export type LicenseCheck =
+  | { valid: true; payload: LicensePayload }
+  | { valid: false; reason: "malformed" | "bad_signature" | "expired" };
+
+function base64urlDecode(input: string): Buffer {
+  return Buffer.from(input.replaceAll("-", "+").replaceAll("_", "/"), "base64");
+}
+
+/**
+ * Verifies a license key string. Pure and synchronous — no network call,
+ * by design (see file doc comment). Callers decide what "invalid" means for
+ * their startup path (backend/api and backend/proxy's docker-entrypoint.sh
+ * both treat anything other than `valid: true` as fatal — self-host only,
+ * never called from the hosted deployment's own startup path).
+ */
+export function verifyLicenseKey(key: string): LicenseCheck {
+  const parts = key.trim().split(".");
+  if (parts.length !== 2) return { valid: false, reason: "malformed" };
+  const [payloadPart, sigPart] = parts;
+  if (payloadPart === undefined || sigPart === undefined || payloadPart === "" || sigPart === "") {
+    return { valid: false, reason: "malformed" };
+  }
+
+  let payloadBytes: Buffer;
+  let signatureBytes: Buffer;
+  try {
+    payloadBytes = base64urlDecode(payloadPart);
+    signatureBytes = base64urlDecode(sigPart);
+  } catch {
+    return { valid: false, reason: "malformed" };
+  }
+
+  let signatureOk: boolean;
+  try {
+    // Ed25519: the algorithm argument to verify() is null — the curve
+    // fixes the hash, there's nothing to negotiate (and negotiating one
+    // is exactly the class of bug that makes hand-rolled JWT-likes unsafe
+    // if done carelessly).
+    signatureOk = cryptoVerify(null, payloadBytes, publicKey(), signatureBytes);
+  } catch {
+    return { valid: false, reason: "bad_signature" };
+  }
+  if (!signatureOk) return { valid: false, reason: "bad_signature" };
+
+  let payload: LicensePayload;
+  try {
+    const parsed: unknown = JSON.parse(payloadBytes.toString("utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).org !== "string" ||
+      typeof (parsed as Record<string, unknown>).issuedAt !== "string" ||
+      !("expiresAt" in parsed) ||
+      (typeof (parsed as Record<string, unknown>).expiresAt !== "string" &&
+        (parsed as Record<string, unknown>).expiresAt !== null)
+    ) {
+      return { valid: false, reason: "malformed" };
+    }
+    payload = parsed as LicensePayload;
+  } catch {
+    return { valid: false, reason: "malformed" };
+  }
+
+  if (payload.expiresAt !== null && new Date(payload.expiresAt).getTime() < Date.now()) {
+    return { valid: false, reason: "expired" };
+  }
+
+  return { valid: true, payload };
+}
+
+/**
+ * Reads TOLLGATE_LICENSE_KEY from the environment, verifies it, and either
+ * returns the payload or exits the process (code 1) with a clear stderr
+ * message. Meant to be called from a service's OWN self-host-only
+ * entrypoint (backend/api/src/check-license.ts, backend/proxy/src/check-
+ * license.ts) — never from index.ts itself, which both the hosted
+ * deployment and the self-hosted one share; the hosted deployment must
+ * never see this check at all.
+ */
+export function checkLicenseOrExit(): LicensePayload {
+  const key = process.env.TOLLGATE_LICENSE_KEY;
+  if (key === undefined || key.trim() === "") {
+    console.error(
+      "TOLLGATE_LICENSE_KEY is not set. This self-hosted image requires a valid activation key — request one from Tollgate.",
+    );
+    process.exit(1);
+  }
+  const result = verifyLicenseKey(key);
+  if (!result.valid) {
+    console.error(`Invalid self-host license key (${result.reason}). Refusing to start.`);
+    process.exit(1);
+  }
+  console.error(`Licensed to: ${result.payload.org} (expires ${result.payload.expiresAt ?? "never"})`);
+  return result.payload;
+}

@@ -1,0 +1,131 @@
+name: tollgate-selfhost
+
+# The full deployable stack — NOT the same file as docker-compose.yml,
+# which only runs Redis/Postgres for local dev against services you run
+# yourself via `pnpm dev`. This one builds and runs all five pieces.
+# See SELF_HOSTING.md for the architecture this implements and what's still
+# missing (TLS termination, a Helm chart).
+#
+# `api` and `proxy` will refuse to start without a valid TOLLGATE_LICENSE_KEY
+# in .env (their own Docker images gate on it — see backend/api/docker-
+# entrypoint.sh and backend/proxy/docker-entrypoint.sh); there's no self-
+# serve way to get one, see .env.example.
+#
+# Usage:
+#   cp .env.example .env   # then fill in the real secrets/URLs, including
+#                           # the license key Tollgate sent you
+#
+# Building from source (always works, needs this repo checked out):
+#   docker compose -f docker-compose.selfhost.yml up -d --build
+#
+# Pulling published images instead of building (once .github/workflows/
+# publish-images.yml has actually run at least once for a version tag —
+# see SELF_HOSTING.md's "What's not built yet" if it hasn't):
+#   docker compose -f docker-compose.selfhost.yml pull
+#   docker compose -f docker-compose.selfhost.yml up -d
+# `image:` on each service below is what makes both work — compose builds
+# and tags it locally under that name if you pass --build, or pulls it
+# under that name if you don't and it isn't already present.
+
+services:
+  redis:
+    image: redis:7-alpine
+    # AOF persistence, not the default — Redis holds live budget/freeze
+    # state the proxy checks on every request (SELF_HOSTING.md), losing it
+    # on a restart is an enforcement gap, not just a slowdown.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tollgate
+      POSTGRES_PASSWORD: tollgate
+      POSTGRES_DB: tollgate
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tollgate -d tollgate"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ghcr.io/darshansenthilk/tollgate-api:latest
+    build:
+      context: .
+      dockerfile: backend/api/Dockerfile
+    env_file: .env
+    environment:
+      # Override the dev defaults in .env.example, which point at
+      # localhost — inside this compose network the real hostnames are the
+      # other services' names.
+      DATABASE_URL: postgres://tollgate:tollgate@postgres:5432/tollgate
+      REDIS_URL: redis://redis:6379
+    # Both sides use the same variable — api reads API_PORT itself and
+    # binds to it (backend/api/src/index.ts), so if a deployment overrides
+    # API_PORT in .env, the container-side port has to move with it, not
+    # stay pinned to the default.
+    ports:
+      - "${API_PORT:-4000}:${API_PORT:-4000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Healthcheck is inherited from backend/api/Dockerfile's own
+    # HEALTHCHECK — not redeclared here.
+
+  proxy:
+    image: ghcr.io/darshansenthilk/tollgate-proxy:latest
+    build:
+      context: .
+      dockerfile: backend/proxy/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tollgate:tollgate@postgres:5432/tollgate
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "${PROXY_PORT:-8080}:${PROXY_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The load-bearing one: proxy has zero migration logic of its own and
+      # reads tables api creates on boot (SELF_HOSTING.md's "Migrations")
+      # — condition: service_healthy, not just "started", so proxy doesn't
+      # come up against a schema that isn't there yet.
+      api:
+        condition: service_healthy
+
+  dashboard:
+    image: ghcr.io/darshansenthilk/tollgate-dashboard:latest
+    build:
+      context: .
+      dockerfile: frontend/dashboard/Dockerfile
+    # Runtime, not a build arg — frontend/dashboard/docker-entrypoint.sh
+    # substitutes these into the built client JS at container startup
+    # (Next.js normally bakes NEXT_PUBLIC_* in at build time, which would
+    # make a published image unusable for anyone whose api/proxy aren't at
+    # Tollgate's own URLs). Must be wherever api/proxy are actually
+    # reachable from a browser in THIS deployment, not the container-
+    # network hostnames the api/proxy services above use internally.
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_PROXY_URL: ${NEXT_PUBLIC_PROXY_URL}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  postgres-data:

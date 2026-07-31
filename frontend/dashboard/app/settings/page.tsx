@@ -10,6 +10,7 @@ import {
 import { TwoFactorEnroll } from "@/components/two-factor-enroll";
 import { TwoFactorManage } from "@/components/two-factor-manage";
 import { UpstreamKeysSettings } from "@/components/upstream-keys-settings";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { authClient } from "@/lib/auth-client";
 
 /**
@@ -31,6 +32,18 @@ export default function SettingsPage() {
       </header>
 
       <Card>
+        <CardHeader>
+          <CardTitle>Appearance</CardTitle>
+          <CardDescription>
+            Applies to the dashboard only — the marketing pages stay dark.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ThemeToggle />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
         <CardHeader>
           <CardTitle>Two-factor authentication</CardTitle>
           <CardDescription>

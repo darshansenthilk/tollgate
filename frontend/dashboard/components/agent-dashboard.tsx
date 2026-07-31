@@ -220,10 +220,8 @@ export function AgentDashboard({
               moving between this page and the marketing demo sees one
               typographic voice, not two. */}
           <h1 className="text-[2.1rem] font-medium tracking-[-0.02em]">Agent Dashboard</h1>
-          <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Your group of agents,
-            <br />
-            all managed in one place.
+          <p className="text-sm whitespace-nowrap" style={{ color: "var(--muted-foreground)" }}>
+            Your group of agents, all managed in one place.
           </p>
         </div>
         {/* Stack vertically below md (768px), not sm (640px) — at widths in

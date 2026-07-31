@@ -1,0 +1,80 @@
+name: Publish self-host images
+
+# Builds and pushes all three self-hostable service images to GitHub
+# Container Registry — see SELF_HOSTING.md for what these images are and
+# docker-compose.selfhost.yml for how a self-hoster actually uses them
+# (`docker compose -f docker-compose.selfhost.yml pull && ... up -d`,
+# instead of building from source).
+#
+# Triggered by pushing a version tag (vMAJOR.MINOR.PATCH, e.g. v1.0.0) —
+# not on every push to main, so "latest" always means the last intentional
+# release, not whatever happened to be on main most recently. Also runnable
+# by hand (workflow_dispatch) to republish an existing tag, e.g. after a
+# registry outage.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required to push to ghcr.io using the built-in GITHUB_TOKEN — no extra
+  # registry secret to configure.
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing image shouldn't cancel the other two mid-push.
+      fail-fast: false
+      matrix:
+        include:
+          - image: tollgate-proxy
+            dockerfile: backend/proxy/Dockerfile
+          - image: tollgate-api
+            dockerfile: backend/api/Dockerfile
+          - image: tollgate-dashboard
+            dockerfile: frontend/dashboard/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Every build context below is the repo root, never the service's own
+      # directory — see each Dockerfile's opening comment for why (a
+      # workspace-wide `pnpm install` is what resolves the @tollgate/shared
+      # link).
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          # No `enable={{is_default_branch}}` gate on the `latest` tag —
+          # this workflow only ever triggers on a version-tag push or a
+          # manual re-run (see `on:` above), never a plain branch push, so
+          # that check would never actually evaluate true and `latest`
+          # would silently never get applied. Every run of this workflow IS
+          # a real release, so `latest` moving every time is correct here.
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

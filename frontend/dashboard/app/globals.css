@@ -5,36 +5,66 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Warm "industrial glass" palette (docs template). These custom tokens are
-     NOT overridden in .dark — one value covers the dark-only app. The shadcn
-     oklch tokens below are the (unused) light set; .dark holds the real ones. */
-  --bg: #000000;
-  --panel: #0a0a0a;
-  --line: rgba(255, 255, 255, 0.14);
-  --ink: #ededed;
-  --ok: #46c47f;
-  --err: #ff5c5c;
-  --amber: #f2a742;
+  /* Light-mode values for the flat custom tokens (dashboard-only — the
+     marketing pages force .dark on their own root wrapper, see
+     .marketing-ambient-bg, so they never see these). .dark below carries
+     the original dark-only values unchanged. Greys are deepened relative to
+     a naive "just invert the hex" pass — a straight invert of the dark
+     scale reads as washed-out/low-contrast on white (this is the same
+     reason the functional colours below are darkened too, not just the
+     greys). */
+  --bg: #ffffff;
+  --panel: #f7f7f7;
+  --line: rgba(0, 0, 0, 0.12);
+  --ink: #171717;
+  /* Deepened from the dark values (--ok #46c47f, --err #ff5c5c, --amber
+     #f2a742) — those read as pale/washed-out on white and fail text-contrast
+     at this weight; darkening preserves the hue while restoring contrast. */
+  --ok: #1f9d5c;
+  --err: #d92d20;
+  --amber: #b5760a;
   /* Brand coral — the single warm accent, confined to brand chrome (logo mark,
      title, focus rings, primary CTAs). Never functional status: budget state
      stays green/amber/red on --ok/--amber/--err. Close in hue to --err by
-     design; the two never share a component context. */
+     design; the two never share a component context. Unchanged from dark —
+     already has good contrast on white. */
   --brand: #ff4a3d;
-  /* Marketing-page-only tones. Retuned to the reference landing page's
-     neutral ramp (pure-black ground, #ededed ink, #a1a1a1 body) — the old
-     values were warm-greys (#9c9c95/#8f8f88) carried over from the original
-     handoff. Neutral, not warm, is what makes the reference read crisp
-     rather than cosy; the warmth on this page now comes only from coral. */
-  --muted-ink: #a1a1a1;
-  --dim: #8b8b8b;
-  --faint: #6b6b6b;
-  /* Marketing surface stack: near-black panels on a pure-black ground, with
-     one hairline value used for every rule, divider, and panel edge. */
-  --mk-ground: #000000;
-  --mk-surface: #0a0a0a;
-  --mk-surface-2: #141414;
-  --mk-line: rgba(255, 255, 255, 0.14);
-  --mk-ink: #ededed;
+  --muted-ink: #525252;
+  --dim: #6b6b6b;
+  --faint: #8a8a8a;
+  /* mk-* tokens back main-nav.tsx's floating pill nav (rendered on every
+     dashboard route) as well as the marketing page — these light values are
+     what the dashboard's nav actually uses when toggled to light. */
+  --mk-ground: #ffffff;
+  --mk-surface: #f7f7f7;
+  --mk-surface-2: #efefef;
+  --mk-line: rgba(0, 0, 0, 0.12);
+  --mk-ink: #171717;
+  /* Nav-pill (.mk-island) chrome, and its "Sign in"/"Sign out" buttons —
+     split out from the hardcoded rgba values those rules used to carry
+     directly, since a translucent-white-on-dark glass recipe inverts to a
+     translucent-black-on-light one, not the same numbers. */
+  --nav-pill-bg: rgba(255, 255, 255, 0.55);
+  --nav-pill-border: rgba(0, 0, 0, 0.1);
+  --nav-pill-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+  --nav-pill-fallback-bg: #ffffff;
+  --nav-sep-mid: rgba(0, 0, 0, 0.2);
+  --nav-secondary-bg: rgba(0, 0, 0, 0.05);
+  --nav-secondary-border: rgba(0, 0, 0, 0.16);
+  --nav-secondary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --nav-secondary-hover-bg: rgba(0, 0, 0, 0.09);
+  --nav-secondary-hover-border: rgba(0, 0, 0, 0.26);
+  /* Glass-panel recipe shared by ui/sidebar.tsx and agent-attention-alerts.tsx
+     (both hand-roll it via arbitrary Tailwind classes rather than a plain
+     class like .glass, which is marketing-only). */
+  --glass-hairline: rgba(0, 0, 0, 0.12);
+  --glass-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+  /* The barely-there tinted fill agent-attention-alerts.tsx uses under a
+     "currently working on" prompt preview (was a flat bg-white/5). */
+  --subtle-fill: rgba(0, 0, 0, 0.04);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -45,6 +75,7 @@
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
@@ -249,12 +280,9 @@ body {
   max-width: calc(100vw - 24px);
   padding: 6px 10px 6px 18px;
   border-radius: 9999px;
-  background: rgba(20, 20, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow:
-    0 10px 40px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  background: var(--nav-pill-bg);
+  border: 1px solid var(--nav-pill-border);
+  box-shadow: var(--nav-pill-shadow);
   /* Last-resort fallback if even the compressed layout (media query below)
      doesn't fit: scroll the whole bar rather than wrapping (which breaks
      the pill shape) or dropping items. */
@@ -275,7 +303,7 @@ body {
    skill calls out for any glass treatment. */
 @media (prefers-reduced-transparency: reduce) {
   .mk-island {
-    background: #141414;
+    background: var(--nav-pill-fallback-bg);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -304,7 +332,7 @@ body {
   flex: none;
   /* A soft light-catching edge rather than a flat line — fits the glass
      material better than a solid hairline would. */
-  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.28), transparent);
+  background: linear-gradient(to bottom, transparent, var(--nav-sep-mid), transparent);
 }
 
 /* Plain white-text nav item — no pill, no background, no border. Same
@@ -341,26 +369,30 @@ body {
    rather than on .mk-btn-secondary directly so the closing-CTA's "See it
    live" button elsewhere on the marketing page (same class, outside the
    island) stays the flat, solid fill a conversion CTA needs. Primary is
-   deliberately NOT glass: "Sign in" is pure opaque white with black text —
-   the one unambiguous, maximum-contrast action in the bar, same logic as a
-   conversion CTA even though it lives in the nav. */
+   deliberately NOT glass: "Sign in" is the one unambiguous, maximum-contrast
+   action in the bar, same logic as a conversion CTA even though it lives in
+   the nav — var(--primary)/var(--primary-foreground) (already near-black-on-
+   white in light, near-white-on-black in dark, same pair app-wide) gives
+   that regardless of theme; a hover-only :hover { filter: brightness() }
+   swap works on either base color instead of needing two more hardcoded
+   hex values. */
 .mk-island .mk-btn-primary {
-  background: #ffffff;
-  color: #0a0a0a;
-  border: 1px solid #ffffff;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid var(--primary);
 }
 .mk-island .mk-btn-primary:hover {
-  background: var(--mk-ink);
+  filter: brightness(0.92);
 }
 .mk-island .mk-btn-secondary {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--nav-secondary-bg);
+  border: 1px solid var(--nav-secondary-border);
   color: var(--mk-ink);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: var(--nav-secondary-shadow);
 }
 .mk-island .mk-btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: var(--nav-secondary-hover-bg);
+  border-color: var(--nav-secondary-hover-border);
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .mk-island .mk-btn-secondary {
@@ -548,6 +580,44 @@ body {
      Coral survives only as brand chrome — --ring/--sidebar-ring (focus) and
      the standalone --brand token used explicitly (logo, nav underline,
      hover accents, over-budget figures) — never as a fill on --primary. */
+  /* Flat custom tokens' dark values — unchanged from before the light mode
+     split, just moved down here from :root (which now holds the light
+     values). */
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --line: rgba(255, 255, 255, 0.14);
+  --ink: #ededed;
+  --ok: #46c47f;
+  --err: #ff5c5c;
+  --amber: #f2a742;
+  --brand: #ff4a3d;
+  --muted-ink: #a1a1a1;
+  --dim: #8b8b8b;
+  --faint: #6b6b6b;
+  --mk-ground: #000000;
+  --mk-surface: #0a0a0a;
+  --mk-surface-2: #141414;
+  --mk-line: rgba(255, 255, 255, 0.14);
+  --mk-ink: #ededed;
+  --nav-pill-bg: rgba(20, 20, 20, 0.55);
+  --nav-pill-border: rgba(255, 255, 255, 0.16);
+  --nav-pill-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  --nav-pill-fallback-bg: #141414;
+  --nav-sep-mid: rgba(255, 255, 255, 0.28);
+  --nav-secondary-bg: rgba(255, 255, 255, 0.06);
+  --nav-secondary-border: rgba(255, 255, 255, 0.2);
+  --nav-secondary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --nav-secondary-hover-bg: rgba(255, 255, 255, 0.12);
+  --nav-secondary-hover-border: rgba(255, 255, 255, 0.3);
+  --glass-hairline: rgba(255, 255, 255, 0.15);
+  --glass-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    inset 1px 0 0 0 rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+  --subtle-fill: rgba(255, 255, 255, 0.05);
   --background: #000000;
   --foreground: #ededed;
   --card: #0a0a0a;

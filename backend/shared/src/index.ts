@@ -2,6 +2,16 @@
  * @tollgate/shared — domain types shared across proxy, api, and dashboard.
  *
  * Types only for now; business logic lands in later milestones.
+ *
+ * License-key verification (self-hosting) deliberately does NOT live here,
+ * even though it's conceptually "shared logic" — it needs node:crypto,
+ * and this file's exports are reachable from the dashboard's CLIENT
+ * bundle (browser code), which can't resolve Node built-ins. It lives at
+ * @tollgate/shared/license instead (src/license.ts), a separate package
+ * export only backend/api and backend/proxy's server-only
+ * check-license.ts import — never anything client-side. Putting it here
+ * once actually broke the live dashboard dev server (webpack tried to
+ * bundle node:crypto for the browser and failed outright); keep it split.
  */
 
 // ---------------------------------------------------------------------------
