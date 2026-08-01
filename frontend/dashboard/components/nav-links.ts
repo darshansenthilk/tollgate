@@ -1,4 +1,5 @@
 export const LINKS = [
+  { href: "/dashboards", label: "Manage Dashboards" },
   { href: "/agents", label: "Dashboard Panel" },
   { href: "/status", label: "System status" },
   { href: "/activity", label: "Activity Log" },

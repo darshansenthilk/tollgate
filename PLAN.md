@@ -1,5 +1,61 @@
 # PLAN.md
 
+Status: **Dashboard Expansion is the active feature idea (scaffold-only so far — see below).** The
+one-navbar plan that used to sit at the top of this file is now history (its own status line below is
+unchanged and still accurate — landing-page nav merge implemented, pending your manual signed-in
+check); nothing new has touched it.
+
+---
+
+## Active feature idea: Dashboard Expansion
+
+**The pitch:** today Tollgate has exactly one dashboard per account (`/agents` and friends). Dashboard
+Expansion treats a dashboard the way Google Docs treats a doc — a user can create *multiple*
+dashboards, each one shareable with other users, and each shared user can hold a different permission
+level on that specific dashboard (independent of their permissions on any other dashboard they can
+see). This is the natural next step for the stated audience — companies managing fleets of AI agents —
+once a single company has more agents/teams than fit sanely under one shared view: separate dashboards
+per team, environment, or client, shared selectively instead of all-or-nothing.
+
+This is presumably what the `Eshaan-feature-permissions` branch (checked out as a clean copy of `main`
+before this idea was captured) was created for — flagging the connection here in case that context gets
+lost later.
+
+**Done so far (scaffold only, 2026-07-31):**
+- New nav tab **"Manage Dashboards"** added to `components/nav-links.ts`, immediately to the left of
+  the existing "Dashboard Panel" tab — renders in `main-nav.tsx` (the dashboard-wide nav) only; the
+  marketing landing page's separate nav (`sticky-nav.tsx`) doesn't consume this list, so it's
+  unaffected.
+- New route `app/dashboards/page.tsx` — a placeholder "Coming soon" card so the new nav link doesn't
+  404. Not in `middleware.ts`'s `PUBLIC_ROUTES`, so it's gated behind sign-in the same as every other
+  dashboard route, automatically, with no middleware change needed.
+- `tsc --noEmit` passes clean. Verified live against the running dev server via `curl` (session-cookie
+  auth): `/dashboards` 307s to `/sign-in` when signed out, 200s with the placeholder content when
+  signed in; `/agents`' rendered nav HTML confirms the link order is `/dashboards`, `/agents`,
+  `/status`, `/activity`, `/settings` — "Manage Dashboards" immediately left of "Dashboard Panel", as
+  asked.
+
+**Explicitly not done — this is a name and a doorway, not the feature:**
+- No data model. Needs at minimum a `dashboards` table (owner, name, created_at) and a membership table
+  (`dashboard_members`: dashboard_id, user_id, role) — schema, migrations, and how this interacts with
+  the existing single-implicit-dashboard-per-account assumption baked into `/agents` and the agent
+  routes today are all unscoped.
+- No permission model. "Varying permissions" needs actual tiers defined (viewer / editor / owner? who
+  can invite/remove members, delete the dashboard, change other members' roles?) before any API or UI
+  work can start.
+- No create/share/invite UI — the stub page has no form, no dashboard list, no member list, no invite
+  flow.
+- No decision on how an agent (today implicitly scoped to one account) gets assigned to a specific
+  dashboard, or what happens to existing accounts' single implicit dashboard during migration.
+- No decision on org/team boundaries — can a dashboard be shared with someone outside the owner's
+  organization entirely, or only within it?
+
+None of the above is designed yet; this section will grow into a real implementation plan (file-by-file
+changes, defaults, verification steps — matching the level of detail the navbar plan below models) once
+those questions have answers.
+
+---
+
 Status: **IMPLEMENTED, PENDING YOUR MANUAL SIGNED-IN CHECK.** The plan below for consolidating the
 landing page's two navbars into one has been carried out (see "File-by-file changes" — all three
 edits applied as written, defaults D1–D4 taken as-is). `tsc --noEmit` passes clean. Verified via
