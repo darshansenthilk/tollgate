@@ -6,6 +6,86 @@
 
 ---
 
+## Session summary — 2026-07-26 (Landing page navbar + hero CTA)
+
+### Merged the landing page's two navbars into one
+
+**Problem:** `"/"` rendered two stacked navbars — `components/main-nav.tsx` (mounted globally in
+`app/layout.tsx`, hidden only on `/sign-in`/`/sign-up`/`/enroll-2fa`, so it rendered on the marketing
+page too) sitting above `components/marketing/sticky-nav.tsx` (the page's own bespoke nav, rendered
+first inside `app/(marketing)/page.tsx`). User-specified, fully-scoped fix, planned in `PLAN.md` before
+any implementation per this repo's convention.
+
+**What changed (in order, each a direct user correction on the previous round):**
+- `components/main-nav.tsx` — added `"/"` to `NO_NAV_ROUTES`, so it no longer renders on the landing
+  page at all; `sticky-nav.tsx` is now the landing page's only nav.
+- `components/nav-links.ts` (new) — the `{href, label}[]` dashboard-links array, extracted out of
+  `main-nav.tsx` so both nav files import the same data instead of duplicating it.
+- `components/marketing/sticky-nav.tsx` — rewritten several times over the course of the session:
+  - Logo: swapped the inline `TollgateLogo` SVG component for the same `<img src="/logo.svg">` markup
+    `main-nav.tsx` uses (that component is still used elsewhere, by `access-cta-section.tsx`).
+  - Container: dropped a `max-w-[1200px] mx-auto` wrapper that was insetting the logo/right-cluster
+    away from the true viewport edges on wide screens — now flush left/right like `main-nav.tsx`.
+  - Logo+wordmark click-through: wrapped in a link to `/` on **both** navs (`main-nav.tsx`'s logo had
+    never been clickable anywhere in the app before this).
+  - Wordmark styling: went through `font-heading` (StickyNav's original style) before settling — per
+    explicit user correction — on `font-mono uppercase tracking-[0.25em] text-foreground/90` "Tollgate",
+    matching `main-nav.tsx` **and** the sign-in page's brand mark (`auth-form.tsx`), which documents
+    itself as "the dashboard nav's logo + uppercase mono wordmark, scaled up" — this is the app's one
+    canonical brand-mark treatment.
+  - Signed-in state simplified: originally showed `main-nav.tsx`'s own links (Agent Dashboard/System
+    status/Settings) plus a "Sign out" button; per user correction this now shows a single **"Dashboard
+    Panel"** button → `/agents` instead — deliberately not the dashboard nav's own labels/actions.
+  - Both "Sign in" (signed out) and "Dashboard Panel" (signed in) became solid pill buttons: `bg-brand`
+    background, near-black text (`#0b0b0d` — reusing the exact color the hero/waitlist CTA buttons
+    already use), a permanent (not hover-only) dark+brand-tinted drop shadow, `font-sans font-bold`
+    sentence-case text (not the mono/uppercase style the hero CTAs use) — per a user-supplied reference
+    screenshot too small (102×46px) to identify the exact typeface with certainty; flagged that
+    uncertainty to the user rather than guessing silently.
+- `components/main-nav.tsx` — wordmark styling unified to match the above exactly (same `/logo.svg` +
+  same mono/tracking-wide treatment); the signed-in email span's font-mono override was removed so it
+  inherits the nav's ambient `font-sans`, matching the nav links and the sign-out button (the only
+  intentional font-mono exception in this nav is the brand wordmark itself).
+
+**Verified:** `tsc --noEmit` clean after every round. Structural checks via `curl` against the running
+dev server (SSR output, since both navs are client components that always render signed-out first):
+exactly one `<nav>` on `"/"`, correct signed-out content, zero regression on `/sign-in`/`/sign-up`
+(still no nav) or `/agents` unauthenticated (still 307s to `/sign-in`, `middleware.ts` untouched). The
+signed-in branch (client-side-only after hydration, invisible to `curl`) was checked by the user
+themselves in a real browser across several rounds — no browser-automation tool was installed for it,
+per standing instruction to ask before installing anything; the user opted to check it manually instead
+since the dev server was already running locally.
+
+### Hero section CTA swap
+
+**What changed** (`components/marketing/hero-section.tsx`): removed the "Request access" button
+(`href="#access"`, glass-style secondary button) from the hero's two-button row. "See it live ↓"
+(`href="#demo"`) moved into that vacated secondary/glass-style slot. A new primary button, **"Get
+started"** (`href="/sign-up"`, the same solid `bg-brand` primary style "See it live" used to have),
+took over the vacated first/primary slot. Net: same two-button layout, "Request access" gone, stronger
+sign-up-directed primary CTA. The separate "Request access" waitlist-signup flow further down the page
+(`access-cta-section.tsx` / `waitlist-form.tsx`) is untouched — a distinct feature, not part of this
+button pair.
+
+**Verified:** `tsc --noEmit` clean; confirmed via `curl` against the running dev server that the hero
+now renders `"Get started"` → `/sign-up` first and `"See it live ↓"` → `#demo` second, with no
+"Request access" button remaining in the hero.
+
+### Branch/commit state (discovered, not performed, by this session)
+
+All of the above was committed by the user directly, via their own Windows-side git client, in
+parallel with this conversation — not via any `git commit` this session ran. Three commits landed on
+`Eshaan-test-main`: `4175a5e` ("Improved landing page nav bar"), `9ac035d` ("Fixed user email font in
+dashboard nav bar"), `839b7bf` ("Added \"Get Started\", Removed \"Request Access\" Buttons"). The user
+also merged `Eshaan-test-main` into `main` twice during the session (once via fast-forward, once via a
+proper merge commit, `14dc85c`) and pushed — `main` and `origin/main` currently both include this work.
+Told about this mid-session, the user clarified `Eshaan-test-main` (not `main`) is the branch to keep
+working on, and — since the merge was already pushed and reverting would need either a revert commit or
+a history-rewriting force-push — explicitly chose to **leave `main`/`origin/main` as they are** rather
+than unwind it. Working directory is back on `Eshaan-test-main` (`839b7bf`) for future sessions.
+
+---
+
 ## Session summary — 2026-07-26
 
 ### TOTP two-factor authentication — mandatory → opt-in
