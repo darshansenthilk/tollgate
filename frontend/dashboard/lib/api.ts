@@ -1,7 +1,45 @@
 import type { AgentStatus } from "@tollgate/shared";
+import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 export const PROXY_URL = process.env.NEXT_PUBLIC_PROXY_URL ?? "http://localhost:8080";
+
+/**
+ * Handles a 401 from any /v1/* call by actually signing out — not just
+ * navigating to /sign-in — before redirecting.
+ *
+ * The bug this fixes: middleware.ts's route gate is deliberately "optimistic"
+ * (checks only whether the session COOKIE is present, not whether the
+ * session it names is still valid server-side — see its own doc comment for
+ * why). A stale-but-present cookie (expired, revoked, or otherwise rejected
+ * by the api) used to produce an infinite redirect loop: a 401 here sent the
+ * browser to /sign-in via a bare `window.location.href`, but the cookie was
+ * still sitting in the browser, so middleware's own
+ * `if (sessionCookie && isAuthPage) redirect("/agents")` bounced it straight
+ * back — landing back on this same 401, forever, with no backoff between
+ * cycles (confirmed live: a freshly-restarted, empty-bucket rate limiter was
+ * exhausted within under a second of the loop starting).
+ *
+ * Calling signOut() first actually clears the cookie server-side, so by the
+ * time /sign-in loads, middleware correctly finds no cookie and lets the
+ * page render instead of bouncing it away again. `handling401` guards
+ * against a burst of concurrent 401s (e.g. several in-flight requests
+ * failing around the same moment) each independently kicking off their own
+ * sign-out + redirect.
+ */
+let handling401 = false;
+async function handleUnauthorized(): Promise<void> {
+  if (handling401) return;
+  handling401 = true;
+  try {
+    await authClient.signOut();
+  } catch {
+    // Best-effort — staying on a page that will keep 401ing is worse than
+    // redirecting with a session that failed to sign out cleanly.
+  } finally {
+    window.location.href = "/sign-in";
+  }
+}
 
 /** Exact shape returned by GET /v1/agents (backend/api/src/routes/agents.ts). */
 export interface AgentListItem {
@@ -113,11 +151,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    // A 401 means the session is missing/expired. Bounce to sign-in rather than
-    // surfacing a raw error into the table. (The middleware also guards routes,
-    // but this covers a session that lapses mid-session.)
+    // A 401 means the session is missing/expired. Sign out (clears the
+    // cookie) then bounce to sign-in, rather than surfacing a raw error into
+    // the table — see handleUnauthorized's doc comment for why this has to
+    // actually sign out, not just navigate.
     if (res.status === 401 && typeof window !== "undefined") {
-      window.location.href = "/sign-in";
+      void handleUnauthorized();
     }
     const body: unknown = await res.json().catch(() => null);
     const rec = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
