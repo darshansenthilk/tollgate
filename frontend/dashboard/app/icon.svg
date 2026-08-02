@@ -7,6 +7,7 @@
     }
     .t { font-family: "JetBrains Mono Logo", "JetBrains Mono", monospace; font-size: 32px; font-weight: 700; }
   </style>
+  <rect width="48" height="48" fill="#000000"></rect>
   <rect x="23.2" y="8" width="19.2" height="32" fill="#e15d57"></rect>
   <text class="t" x="4" y="33" fill="#ededed">t</text>
   <text class="t" x="23.2" y="33" fill="#ededed">g</text>
