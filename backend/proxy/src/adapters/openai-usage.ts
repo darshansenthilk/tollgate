@@ -1,4 +1,4 @@
-import type { ModelPrice, ProviderCost } from "@tollgate/shared";
+import { findModelPrice, type ModelPrice, type ProviderCost } from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
 /**
@@ -112,8 +112,9 @@ export function parseOpenAiFormatCost(
   };
 
   // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
-  // and is left for reconciliation rather than guessed at.
-  const price = prices[usage.model];
+  // and is left for reconciliation rather than guessed at. findModelPrice
+  // additionally resolves dated releases (gpt-4o-2024-08-06) to their family.
+  const price = findModelPrice(usage.model, prices);
   if (price === undefined) return { costCents: 0, ...tokenCounts };
 
   const costCents =

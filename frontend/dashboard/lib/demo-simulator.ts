@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CLAUDE_PRICES, OPENAI_PRICES, type ModelPrice } from "@tollgate/shared";
+import {
+  AZURE_PRICES,
+  CLAUDE_PRICES,
+  GEMINI_PRICES,
+  OPENAI_PRICES,
+  findModelPrice,
+  type ModelPrice,
+} from "@tollgate/shared";
 import type { AgentDashboardActions } from "@/components/agent-dashboard";
 import { applyCreated, applyDeleted, applyStatusChange, applyUpdated } from "@/lib/agent-list-updates";
 import { isStopped } from "@/lib/agent-status";
@@ -20,21 +27,26 @@ const LOG_LIMIT = 20;
 
 /** The dashboard's create-agent dialog uses short slugs ("sonnet") for
  *  Claude models; the real price table (imported from @tollgate/shared, the
- *  same one adapters/claude.ts meters real traffic with) is keyed by the
- *  dated API model string. This is the one place that bridges the two. */
+ *  same one adapters/claude.ts meters real traffic with) is keyed by model
+ *  family. This is the one place that bridges the two. */
 const CLAUDE_MODEL_SLUGS: Record<string, string> = {
-  opus: "claude-3-opus-20240229",
-  sonnet: "claude-3-5-sonnet-20241022",
-  haiku: "claude-3-5-haiku-20241022",
+  opus: "claude-3-opus",
+  sonnet: "claude-3-5-sonnet",
+  haiku: "claude-3-5-haiku",
 };
 
+/** Resolved through findModelPrice, exactly as the real adapters do, so the
+ *  marketing demo keeps telling the truth about what Tollgate would charge —
+ *  including the dated-release fallback. */
 function priceForAgent(agent: AgentListItem): ModelPrice | undefined {
   if (agent.model === null) return undefined;
-  if (agent.providerSlug === "chatgpt") return OPENAI_PRICES[agent.model];
+  if (agent.providerSlug === "chatgpt") return findModelPrice(agent.model, OPENAI_PRICES);
   if (agent.providerSlug === "claude") {
-    const dated = CLAUDE_MODEL_SLUGS[agent.model];
-    return dated === undefined ? undefined : CLAUDE_PRICES[dated];
+    const family = CLAUDE_MODEL_SLUGS[agent.model] ?? agent.model;
+    return findModelPrice(family, CLAUDE_PRICES);
   }
+  if (agent.providerSlug === "gemini") return findModelPrice(agent.model, GEMINI_PRICES);
+  if (agent.providerSlug === "azure") return findModelPrice(agent.model, AZURE_PRICES);
   return undefined;
 }
 

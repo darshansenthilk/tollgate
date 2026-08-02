@@ -1,4 +1,9 @@
-import { CLAUDE_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
+import {
+  CLAUDE_PRICES,
+  findModelPrice,
+  type ProviderAdapter,
+  type ProviderCost,
+} from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
 interface Usage {
@@ -119,7 +124,7 @@ export const claudeAdapter: ProviderAdapter = {
 
     // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
     // and is left for reconciliation rather than guessed at.
-    const price = CLAUDE_PRICES[usage.model];
+    const price = findModelPrice(usage.model, CLAUDE_PRICES);
     if (price === undefined) return { costCents: 0, ...tokenCounts };
 
     const costCents =

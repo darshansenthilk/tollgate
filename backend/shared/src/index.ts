@@ -162,6 +162,53 @@ export interface ModelPrice {
 }
 
 /**
+ * Trailing name segments that identify a RELEASE of a model rather than a
+ * different model, and so can be dropped when looking up a price.
+ *
+ * Deliberately narrow. Providers publish a new dated id every few weeks
+ * ("gpt-4o-2024-08-06", "claude-3-5-sonnet-20241022", "gemini-1.5-flash-001")
+ * and each one that misses the price table meters at $0 — silently disabling
+ * budget enforcement for that agent. Stripping these suffixes fixes that
+ * whole class of gap without a table edit.
+ *
+ * What is NOT here matters more than what is. Stripping any trailing segment
+ * would make an unknown "gpt-4o-nano" resolve to "gpt-4o" and bill ~16x its
+ * real rate, so only segments that cannot name a distinct model are removed:
+ * pure numbers, vN revisions, and "latest". "preview" and "mini"/"nano"-style
+ * words are excluded on purpose — those genuinely are different models at
+ * different prices, and guessing at them is worse than reporting $0 honestly.
+ */
+const RELEASE_SUFFIX = /^(\d+|v\d+|latest)$/;
+
+/**
+ * Look up a model's price, falling back to its family when the exact id is a
+ * dated or versioned release of one.
+ *
+ * Returns undefined when nothing matches — callers must treat that as "cost
+ * unknown", never as free. See ProviderCost: token counts are still reported,
+ * so an unpriced model is visible as usage-without-cost rather than vanishing.
+ */
+export function findModelPrice(
+  model: string,
+  prices: Record<string, ModelPrice>,
+): ModelPrice | undefined {
+  const exact = prices[model];
+  if (exact !== undefined) return exact;
+
+  // Peel release suffixes off the end, most specific first:
+  // gpt-4o-2024-08-06 -> gpt-4o-2024-08 -> gpt-4o-2024 -> gpt-4o
+  const parts = model.split("-");
+  let end = parts.length;
+  while (end > 1 && RELEASE_SUFFIX.test(parts[end - 1] ?? "")) {
+    end -= 1;
+    const candidate = prices[parts.slice(0, end).join("-")];
+    if (candidate !== undefined) return candidate;
+  }
+
+  return undefined;
+}
+
+/**
  * OpenAI's real chat-completions pricing — the single source of truth,
  * imported by proxy/src/adapters/openai.ts (which meters real traffic) and
  * the dashboard's marketing-page demo simulator (which never calls OpenAI,
@@ -171,13 +218,25 @@ export interface ModelPrice {
 export const OPENAI_PRICES: Record<string, ModelPrice> = {
   "gpt-4o": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
   "gpt-4o-mini": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
+  "gpt-4-turbo": { inputCentsPerMTok: 1000, outputCentsPerMTok: 3000 },
+  "gpt-4": { inputCentsPerMTok: 3000, outputCentsPerMTok: 6000 },
+  "gpt-3.5-turbo": { inputCentsPerMTok: 50, outputCentsPerMTok: 150 },
 };
 
-/** Anthropic's real Messages API pricing — same reuse as OPENAI_PRICES. */
+/**
+ * Anthropic's Messages API pricing — same reuse as OPENAI_PRICES.
+ *
+ * Keyed by FAMILY, without the dated suffix Anthropic puts on every model id:
+ * findModelPrice strips "-20241022" and matches "claude-3-5-sonnet", so a
+ * newly-dated release of a known family prices correctly the day it ships
+ * instead of silently metering $0 until someone edits this file.
+ */
 export const CLAUDE_PRICES: Record<string, ModelPrice> = {
-  "claude-3-5-sonnet-20241022": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
-  "claude-3-5-haiku-20241022": { inputCentsPerMTok: 80, outputCentsPerMTok: 400 },
-  "claude-3-opus-20240229": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
+  "claude-3-5-sonnet": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
+  "claude-3-5-haiku": { inputCentsPerMTok: 80, outputCentsPerMTok: 400 },
+  "claude-3-opus": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
+  "claude-3-sonnet": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
+  "claude-3-haiku": { inputCentsPerMTok: 25, outputCentsPerMTok: 125 },
 };
 
 /**
@@ -192,7 +251,9 @@ export const CLAUDE_PRICES: Record<string, ModelPrice> = {
  */
 export const GEMINI_PRICES: Record<string, ModelPrice> = {
   "gemini-1.5-flash": { inputCentsPerMTok: 7.5, outputCentsPerMTok: 30 },
+  "gemini-1.5-flash-8b": { inputCentsPerMTok: 3.75, outputCentsPerMTok: 15 },
   "gemini-1.5-pro": { inputCentsPerMTok: 125, outputCentsPerMTok: 500 },
+  "gemini-2.0-flash": { inputCentsPerMTok: 10, outputCentsPerMTok: 40 },
 };
 
 /**
@@ -212,9 +273,14 @@ export const GEMINI_PRICES: Record<string, ModelPrice> = {
  */
 export const AZURE_PRICES: Record<string, ModelPrice> = {
   "gpt-4o": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
-  "gpt-4o-2024-08-06": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
   "gpt-4o-mini": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
-  "gpt-4o-mini-2024-07-18": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
+  "gpt-4-turbo": { inputCentsPerMTok: 1000, outputCentsPerMTok: 3000 },
+  "gpt-4": { inputCentsPerMTok: 3000, outputCentsPerMTok: 6000 },
+  // Azure spells its 3.5 deployments "gpt-35-turbo" (no dot) — a genuinely
+  // different id from OpenAI's own, not a dated variant, so it needs its
+  // own entry rather than relying on suffix stripping.
+  "gpt-35-turbo": { inputCentsPerMTok: 50, outputCentsPerMTok: 150 },
+  "gpt-3.5-turbo": { inputCentsPerMTok: 50, outputCentsPerMTok: 150 },
 };
 
 // ---------------------------------------------------------------------------

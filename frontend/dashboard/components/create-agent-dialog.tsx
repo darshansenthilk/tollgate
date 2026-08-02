@@ -239,25 +239,26 @@ export function CreateAgentDialog({
 
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="agent-model">Model</Label>
-                <Select
-                  items={modelOptions}
-                  value={model}
-                  onValueChange={(value) => setModel(value)}
+                {/* Free text with suggestions, not a fixed dropdown: the proxy
+                    never validates the model (it just forwards whatever the
+                    agent sends), and providers ship new ids constantly — so
+                    limiting this list would block real models for no benefit.
+                    The datalist keeps the common ones one keystroke away. */}
+                <Input
+                  id="agent-model"
+                  list="agent-model-options"
+                  autoComplete="off"
+                  spellCheck={false}
                   disabled={providerSlug === null}
-                >
-                  <SelectTrigger id="agent-model">
-                    <SelectValue
-                      placeholder={providerSlug === null ? "Provider first" : "Select model"}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {modelOptions.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  value={model ?? ""}
+                  onChange={(e) => setModel(e.target.value.trim() === "" ? null : e.target.value)}
+                  placeholder={providerSlug === null ? "Provider first" : "e.g. gpt-4o"}
+                />
+                <datalist id="agent-model-options">
+                  {modelOptions.map((m) => (
+                    <option key={m.value} value={m.value} />
+                  ))}
+                </datalist>
               </div>
             </div>
 

@@ -1,4 +1,9 @@
-import { GEMINI_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
+import {
+  GEMINI_PRICES,
+  findModelPrice,
+  type ProviderAdapter,
+  type ProviderCost,
+} from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
 interface Usage {
@@ -109,7 +114,7 @@ export const geminiAdapter: ProviderAdapter = {
     // and is left for reconciliation rather than guessed at. Gemini's
     // modelVersion is often more specific than the pricing table's keys
     // (e.g. a dated/pinned version) — see GEMINI_PRICES's own doc comment.
-    const price = GEMINI_PRICES[usage.model];
+    const price = findModelPrice(usage.model, GEMINI_PRICES);
     if (price === undefined) return { costCents: 0, ...tokenCounts };
 
     const costCents =

@@ -103,8 +103,9 @@ export function EditAgentDialog({
   }
 
   // An agent created via the api (or before the current model list) can hold a
-  // model that isn't in MODELS_BY_PROVIDER. Append it so the Select still shows
-  // the real current value instead of rendering blank.
+  // model that isn't in MODELS_BY_PROVIDER. The field itself is free text so it
+  // always displays correctly either way; appending keeps the agent's own
+  // current model in the suggestion list after the user starts editing.
   const modelOptions = useMemo(() => {
     const base = modelsForProvider(editing?.providerSlug ?? "");
     const current = editing?.model;
@@ -206,22 +207,21 @@ export function EditAgentDialog({
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-agent-model">Model</Label>
-              <Select
-                items={modelOptions}
-                value={model}
-                onValueChange={(value) => setModel(value)}
-              >
-                <SelectTrigger id="edit-agent-model">
-                  <SelectValue placeholder="Select model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Free text with suggestions — see create-agent-dialog.tsx. */}
+              <Input
+                id="edit-agent-model"
+                list="edit-agent-model-options"
+                autoComplete="off"
+                spellCheck={false}
+                value={model ?? ""}
+                onChange={(e) => setModel(e.target.value.trim() === "" ? null : e.target.value)}
+                placeholder="e.g. gpt-4o"
+              />
+              <datalist id="edit-agent-model-options">
+                {modelOptions.map((m) => (
+                  <option key={m.value} value={m.value} />
+                ))}
+              </datalist>
             </div>
           </div>
 

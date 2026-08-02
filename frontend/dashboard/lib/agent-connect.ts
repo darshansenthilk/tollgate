@@ -18,8 +18,9 @@ const ADAPTER_SLUGS: Record<string, string> = {
  * The dashboard's Claude model dropdown stores short labels
  * (lib/agent-options.ts's MODELS_BY_PROVIDER), but the real Anthropic API
  * only accepts the exact dated model id — sending "sonnet" literally would
- * fail upstream. Keep in sync with backend/shared/src/index.ts's CLAUDE_PRICES
- * keys, which this must match for cost metering to actually price the call.
+ * fail upstream. These stay dated for that reason; metering still prices them
+ * because findModelPrice strips the date back to the family key that
+ * backend/shared/src/index.ts's CLAUDE_PRICES is keyed by.
  */
 const CLAUDE_UPSTREAM_MODEL_IDS: Record<string, string> = {
   opus: "claude-3-opus-20240229",
