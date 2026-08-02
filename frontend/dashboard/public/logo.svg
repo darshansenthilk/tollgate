@@ -1,22 +1,14 @@
-<svg width="600" height="600" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
-  <rect width="600" height="600" fill="#0d0d12"/>
-
-  <defs>
-    <clipPath id="inside">
-      <path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z"/>
-    </clipPath>
-  </defs>
-
-  <g fill="#F2543D">
-    <!-- 3 bars at 18 wide, matching the frame weight, centers 67.5 apart -->
-    <g clip-path="url(#inside)">
-      <rect x="223.5" y="145" width="18" height="310"/>
-      <rect x="291" y="145" width="18" height="310"/>
-      <rect x="358.5" y="145" width="18" height="310"/>
-    </g>
-
-    <!-- Frame: S rail starts low on the left, sweeps up to the right -->
-    <path d="M 165 285 C 251 285, 266 155, 435 155 L 435 445 L 165 445 Z"
-          fill="none" stroke="#F2543D" stroke-width="18" stroke-linejoin="round"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="169" height="32" viewBox="0 0 169 32">
+  <style>
+    @font-face {
+      font-family: "JetBrains Mono Logo";
+      font-weight: 700;
+      src: url(data:font/woff2;base64,d09GMgABAAAAAAQIAA8AAAAAB9QAAAOxAAI2BAAAAAAAAAAAAAAAAAAAAAAAAAAAGhYbIBwqBmA/U1RBVEwAZBEICoRQhAQBNgIkAxILEgAEIAWERgcgG20GUZQvyocAXxxkQ4a+YZPUA4bBxtJct6velAuGtGIxjL/PjR39JIJ6W689b/fTroAIQt1P7yIR2pEqtx2KMjPlgBnB0Jq7IaY/0Z+pIP+MiWhFOh7FEo0UiDSIJne/MLXAIwvc63+A7LKFkPD/3zt93/4XXqMh1gnp9lrTxqY84LGBOlGACbR1jEUU4CPTdE4joj4eqNjClmXfEmgBSEKoFwKFHnqJBYtWbDAlh/8FYNhBhki9LZzYe+GULSRlep62pCfqSNW0BbB83z924WYOkGhiLMPQZQN4YZQL9c9/nzD/EDECAWlQ+gp91AmhUUIHCQOky4ePXAgcvb0norWQ6yJB1KcnpC1A+gWZkKINCJCQoYNMoIPcGkAbbWQYZa+ElLyS+vP+1r3soQfuuOVaQeIhuJdrjdAI2qDE6/gTkAOS9cd4TvQsuxW9W7Vu16p9i43Vz6L587KM5veK6jtdis8/L2ufSkUUwyufbKp9HlFUn6i8uxcLzdYwZO1PaaHyYVl7u3v5ySfbo/mjovoBmzfK2vOIzXTwYgrWAsN6U5lLflvt45gQwdcyaC4rouV1t6dlKQdQrH6yCauntEiySBWa56PuaX2sT/9Q5YNfbkQjdk8uFL9iUeQMqs/ZnXJ0YqeJ+nmw0UHWpIqICXss0Apg3QXpbwDZDuiNKYEY0VxrNnBIGA1Jx/HjPrK0K6LJc715Y9e/qj+QHAmFA8n6f7h7Nf1MuydRMcndL53TqvOfVdAcIj5/edLX7kh6QPIVEGRVxTbzEJ6ZzRbxEb4IVCa5YYZb8PNdYVAOcAdvFQAzJvliRHupLXCIG00JYTRXKBHJc72XuhQkuJyG4JLfBGlXOORYuqncPA2ffs/+LvF5txUAh7EwjFu+j9UOrsAgTco/7/y7dHfrGb9OZdl38PVHjx/hm5udy3/K/++dtmc/oF4CwV8RSVsQ9H/LbWAYT9wSJkpsEbNdi8DeE2h0VaPX1LNmyySUqjKRN+EJZz708IRPWvmCz8zwDZ8bkX58nW5ZxdUbliO6oEVc4+s1xiO+tRbxeLM2injFfCVlHVUZKWl1kHHGrPE+NnipxOeWSajTqkJlFNVAViopKoGsUVWSlRBXB5mroS6tpIr2D4kNQnxZjdRoox2WUZfWcIZpv5IClkxF/e7crVOfLO6VqOYNeagqrnycscaa3qmWLHYDBr90aQSNZFDivf0ZTBSSu1I5Ucj9Pbzaap53zqIOJSwjzqukAFU0Cvw/XAQD) format("woff2");
+    }
+    .t { font-family: "JetBrains Mono Logo", "JetBrains Mono", monospace; font-size: 32px; font-weight: 700; }
+  </style>
+  <rect x="57.7" y="0" width="19.2" height="32" fill="#e15d57"></rect>
+  <text class="t" x="0" y="25" fill="#ededed">tol</text>
+  <text class="t" x="57.7" y="25" fill="#ededed">l</text>
+  <text class="t" x="76.9" y="25" fill="#ededed">gate.</text>
 </svg>

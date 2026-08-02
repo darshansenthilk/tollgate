@@ -186,22 +186,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-12">
       <div className="w-full max-w-sm">
-        {/* Brand mark — the dashboard nav's logo + uppercase mono wordmark (see
-            main-nav.tsx), scaled up to span the card's width as a page header.
-            gap-3 keeps the mark-to-text spacing in step with the letter tracking
-            at this size; sized so the mark fills roughly the full 24rem card width. */}
-        <div className="mb-6 flex items-center justify-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
-              decorative mark; next/image's overhead isn't worth it here. */}
-          <img
-            src="/logo.svg"
-            alt=""
-            aria-hidden
-            className="size-9 shrink-0 rounded-md"
-          />
-          <span className="font-mono text-5xl uppercase tracking-[0.25em] text-foreground/90">
-            Tollgate
-          </span>
+        {/* Brand mark — the same wordmark as the dashboard nav (see
+            main-nav.tsx), scaled up to span the card's width as a page
+            header. Rendered near its native size (240x48) rather than the
+            nav's small icon-sized rendering. */}
+        <div className="mb-6 flex items-center justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size
+              wordmark; next/image's overhead isn't worth it here. */}
+          <img src="/logo.svg" alt="Tollgate" className="h-12 w-auto" />
         </div>
 
         <Card>
