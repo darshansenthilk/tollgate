@@ -4,10 +4,11 @@
  * needed them — same reason lib/agent-status.ts exists.
  */
 
-/** The only assistants selectable from the dashboard today. */
+/** The assistants selectable from the dashboard today. */
 export const PROVIDERS = [
   { value: "chatgpt", label: "ChatGPT" },
   { value: "claude", label: "Claude" },
+  { value: "gemini", label: "Gemini" },
 ] as const;
 
 export type ProviderSlug = (typeof PROVIDERS)[number]["value"];
@@ -26,6 +27,10 @@ export const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: st
     { value: "opus", label: "Opus" },
     { value: "sonnet", label: "Sonnet" },
     { value: "haiku", label: "Haiku" },
+  ],
+  gemini: [
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
   ],
 };
 

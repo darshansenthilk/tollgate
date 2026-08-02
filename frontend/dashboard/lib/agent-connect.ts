@@ -10,6 +10,7 @@ import { PROXY_URL } from "@/lib/api";
 const ADAPTER_SLUGS: Record<string, string> = {
   chatgpt: "openai",
   claude: "claude",
+  gemini: "gemini",
 };
 
 /**
@@ -44,6 +45,12 @@ function upstreamModelId(providerSlug: string, model: string): string {
  *   - Anthropic's default baseURL is "https://api.anthropic.com" (no "/v1")
  *     and the SDK's own request path literal is "/v1/messages" — so the
  *     override must NOT add "/v1", or it would double up.
+ *   - Google's genai SDK (google-genai / @google/genai) defaults to
+ *     "https://generativelanguage.googleapis.com" and builds paths like
+ *     "/v1beta/models/{model}:generateContent" itself — same shape as
+ *     Anthropic's, so the override must NOT add anything either. Matches
+ *     backend/proxy/src/adapters/gemini.ts's route
+ *     ("/gemini/v1beta/models/...:generateContent").
  */
 function proxyBaseUrl(providerSlug: string): string | null {
   const adapterSlug = ADAPTER_SLUGS[providerSlug];
@@ -99,6 +106,35 @@ console.log(response.content[0].text);`,
     };
   }
 
+  if (providerSlug === "gemini") {
+    return {
+      python: `from google import genai
+
+client = genai.Client(
+    api_key="${token}",
+    http_options={"base_url": "${baseUrl}"},
+)
+
+response = client.models.generate_content(
+    model="${upstreamModel}",
+    contents="Hello",
+)
+print(response.text)`,
+      typescript: `import { GoogleGenAI } from "@google/genai";
+
+const client = new GoogleGenAI({
+  apiKey: "${token}",
+  httpOptions: { baseUrl: "${baseUrl}" },
+});
+
+const response = await client.models.generateContent({
+  model: "${upstreamModel}",
+  contents: "Hello",
+});
+console.log(response.text);`,
+    };
+  }
+
   return {
     python: `from openai import OpenAI
 
@@ -147,6 +183,18 @@ export function buildTestRequest(
         model: upstreamModel,
         max_tokens: 1,
         messages: [{ role: "user", content: "hi" }],
+      },
+    };
+  }
+
+  if (providerSlug === "gemini") {
+    return {
+      // Model is in the URL path, not the body — see gemini.ts's own doc
+      // comment on why (Gemini's request body carries no "model" field).
+      path: `/${adapterSlug}/v1beta/models/${upstreamModel}:generateContent`,
+      body: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: { maxOutputTokens: 1 },
       },
     };
   }

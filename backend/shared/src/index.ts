@@ -137,6 +137,21 @@ export const CLAUDE_PRICES: Record<string, ModelPrice> = {
   "claude-3-opus-20240229": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
 };
 
+/**
+ * Google's Gemini API pricing — same reuse as OPENAI_PRICES/CLAUDE_PRICES.
+ * Keyed on `modelVersion` as Gemini's own API reports it back on every
+ * response (proxy/src/adapters/gemini.ts), which is often a dated/pinned
+ * string (e.g. "gemini-1.5-flash-001") rather than the bare model name — an
+ * entry here has to match that exact string or it silently prices at $0
+ * (by design, same as an unpriced OpenAI/Claude model — see gemini.ts's
+ * parseCost). Verify against Google's current pricing page before relying
+ * on these for real billing; add pinned-version keys as they're seen.
+ */
+export const GEMINI_PRICES: Record<string, ModelPrice> = {
+  "gemini-1.5-flash": { inputCentsPerMTok: 7.5, outputCentsPerMTok: 30 },
+  "gemini-1.5-pro": { inputCentsPerMTok: 125, outputCentsPerMTok: 500 },
+};
+
 // ---------------------------------------------------------------------------
 // Upstream provider keys (BYOK)
 //
@@ -156,6 +171,7 @@ export const CLAUDE_PRICES: Record<string, ModelPrice> = {
 export const UPSTREAM_PROVIDERS = [
   { slug: "openai", label: "OpenAI (ChatGPT)" },
   { slug: "claude", label: "Anthropic (Claude)" },
+  { slug: "gemini", label: "Google (Gemini)" },
 ] as const;
 
 export type UpstreamProviderSlug = (typeof UPSTREAM_PROVIDERS)[number]["slug"];

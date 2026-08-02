@@ -1,6 +1,7 @@
 import type { ProviderAdapter } from "@tollgate/shared";
 import { openaiAdapter } from "./openai.js";
 import { claudeAdapter } from "./claude.js";
+import { geminiAdapter } from "./gemini.js";
 
 /**
  * The provider registry: slug → adapter. The hot path looks an adapter up here
@@ -24,7 +25,11 @@ export function buildRegistry(
 }
 
 /** Default registry wired for production. */
-export const providers: ProviderRegistry = buildRegistry([openaiAdapter, claudeAdapter]);
+export const providers: ProviderRegistry = buildRegistry([
+  openaiAdapter,
+  claudeAdapter,
+  geminiAdapter,
+]);
 
 /**
  * The descriptive assistant label an agent is created with (dashboard's
@@ -45,4 +50,5 @@ export const providers: ProviderRegistry = buildRegistry([openaiAdapter, claudeA
 export const assistantAdapterSlugs: ReadonlyMap<string, string> = new Map([
   ["chatgpt", "openai"],
   ["claude", "claude"],
+  ["gemini", "gemini"],
 ]);
