@@ -46,6 +46,7 @@ import type {
   CreateAgentResponse,
   UpdateAgentInput,
   UpdateAgentResponse,
+  UpstreamKeysResponse,
 } from "@/lib/api";
 
 const WARNING_THRESHOLD = 0.8;
@@ -106,6 +107,15 @@ export interface AgentDashboardActions {
   freezeAgent: (id: string, mode: "soft" | "hard") => Promise<AgentMutationResponse>;
   unfreezeAgent: (id: string) => Promise<AgentMutationResponse>;
   deleteAgent: (id: string) => Promise<AgentMutationResponse>;
+  /**
+   * Optional: lets the create/edit dialogs offer "which stored BYOK key
+   * should this agent use" when the org has any. Omitted on the marketing
+   * page's demo simulator (no real org/session to fetch keys for), in which
+   * case the dialogs simply skip that field — same pattern as every other
+   * action here, injected rather than imported so this component works
+   * unmodified against either the real api or the demo.
+   */
+  listUpstreamKeys?: () => Promise<UpstreamKeysResponse>;
 }
 
 interface AgentDashboardProps {
@@ -230,6 +240,7 @@ export function AgentDashboard({
         <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center">
           <CreateAgentDialog
             createAgent={actions.createAgent}
+            listUpstreamKeys={actions.listUpstreamKeys}
             onCreated={onCreated}
             existingNames={agents.map((a) => a.name)}
           />
@@ -525,6 +536,7 @@ export function AgentDashboard({
       <EditAgentDialog
         agent={editingAgent}
         updateAgent={actions.updateAgent}
+        listUpstreamKeys={actions.listUpstreamKeys}
         onOpenChange={(open) => {
           if (!open) setEditingAgentId(null);
         }}

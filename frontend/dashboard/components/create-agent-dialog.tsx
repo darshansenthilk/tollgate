@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
+import { ASSISTANT_ADAPTER_SLUGS } from "@tollgate/shared";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,6 +26,7 @@ import {
   ApiError,
   type CreateAgentInput,
   type CreateAgentResponse,
+  type UpstreamKeysResponse,
 } from "@/lib/api";
 import {
   MODELS_BY_PROVIDER,
@@ -33,11 +35,21 @@ import {
 } from "@/lib/agent-options";
 import { ConnectAgentSnippet } from "@/components/connect-agent-snippet";
 
+/** Sentinel Select value for "don't pin a specific key" — Select's `value`
+ *  being null shows the placeholder rather than a selectable "cleared" state,
+ *  so an explicit option is simpler than fighting that. */
+const DEPLOYMENT_DEFAULT_KEY = "__deployment_default__";
+
 interface CreateAgentDialogProps {
   /** Injected so the exact same dialog works against the real api
    *  (lib/api.ts's createAgent) or the marketing page's demo simulator —
    *  neither is imported directly here. */
   createAgent: (input: CreateAgentInput) => Promise<CreateAgentResponse>;
+  /** Optional: omitted on the marketing demo (no real org to fetch keys for)
+   *  — see AgentDashboardActions's doc comment. When present, lets the org
+   *  pin this agent to one of its stored BYOK keys instead of the deployment's
+   *  shared one. */
+  listUpstreamKeys?: () => Promise<UpstreamKeysResponse>;
   onCreated: (agent: CreateAgentResponse) => void;
   /**
    * Names of agents already fetched via GET /v1/agents. The backend also
@@ -50,6 +62,7 @@ interface CreateAgentDialogProps {
 
 export function CreateAgentDialog({
   createAgent,
+  listUpstreamKeys,
   onCreated,
   existingNames,
 }: CreateAgentDialogProps) {
@@ -58,12 +71,36 @@ export function CreateAgentDialog({
   const [providerSlug, setProviderSlug] = useState<ProviderSlug | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
+  const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKeysResponse | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreateAgentResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
   const modelOptions = providerSlug === null ? [] : MODELS_BY_PROVIDER[providerSlug];
+
+  // Fetched once per open rather than on mount — a page that renders the
+  // dialog behind a trigger shouldn't hit the api before the user asks for it.
+  useEffect(() => {
+    if (!open || listUpstreamKeys === undefined) return;
+    let cancelled = false;
+    void listUpstreamKeys().then((data) => {
+      if (!cancelled) setUpstreamKeys(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, listUpstreamKeys]);
+
+  // agent-options.ts's PROVIDERS values are the ASSISTANT label ("chatgpt");
+  // org_upstream_keys is stored under the ADAPTER slug ("openai") — see
+  // ASSISTANT_ADAPTER_SLUGS's doc comment for why the two differ.
+  const keyOptions =
+    providerSlug === null || upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === ASSISTANT_ADAPTER_SLUGS[providerSlug])
+          ?.keys ?? []);
 
   function resetAndClose() {
     setOpen(false);
@@ -73,6 +110,7 @@ export function CreateAgentDialog({
       setProviderSlug(null);
       setModel(null);
       setMaxBudgetCents("");
+      setUpstreamKeyId(null);
       setError(null);
       setCreated(null);
       setCopied(false);
@@ -110,6 +148,7 @@ export function CreateAgentDialog({
         providerSlug,
         maxBudgetCents: budget,
         model,
+        upstreamKeyId,
       });
       setCreated(agent);
       onCreated(agent);
@@ -182,6 +221,7 @@ export function CreateAgentDialog({
                   onValueChange={(value) => {
                     setProviderSlug(value);
                     setModel(null);
+                    setUpstreamKeyId(null);
                   }}
                 >
                   <SelectTrigger id="agent-provider">
@@ -233,6 +273,34 @@ export function CreateAgentDialog({
                 placeholder="500 (= $5.00) — leave blank for unlimited"
               />
             </div>
+
+            {keyOptions.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="agent-upstream-key">Upstream key</Label>
+                <Select
+                  items={[
+                    { value: DEPLOYMENT_DEFAULT_KEY, label: "Deployment default" },
+                    ...keyOptions.map((k) => ({ value: k.id, label: `${k.label} (${k.keyHint})` })),
+                  ]}
+                  value={upstreamKeyId ?? DEPLOYMENT_DEFAULT_KEY}
+                  onValueChange={(value) =>
+                    setUpstreamKeyId(value === DEPLOYMENT_DEFAULT_KEY ? null : value)
+                  }
+                >
+                  <SelectTrigger id="agent-upstream-key">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DEPLOYMENT_DEFAULT_KEY}>Deployment default</SelectItem>
+                    {keyOptions.map((k) => (
+                      <SelectItem key={k.id} value={k.id}>
+                        {k.label} ({k.keyHint})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {error !== null && (
               <p className="text-sm" style={{ color: "var(--err)" }}>

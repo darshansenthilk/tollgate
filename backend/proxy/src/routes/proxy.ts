@@ -178,7 +178,11 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       //    agent's org so a BYOK org forwards with THEIR provider key (and is
       //    billed for it) — see lib/vault.ts for the full resolution order,
       //    including why an undecryptable org key denies rather than falls back.
-      const upstreamKey = await deps.vault.getUpstreamKey(agent.orgId, adapter.slug);
+      const upstreamKey = await deps.vault.getUpstreamKey(
+        agent.orgId,
+        adapter.slug,
+        agent.upstreamKeyId,
+      );
       if (upstreamKey === null) {
         reply.code(502);
         return { error: "upstream_key_unavailable" };

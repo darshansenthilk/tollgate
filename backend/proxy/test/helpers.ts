@@ -25,13 +25,21 @@ export const DEFAULT_TEST_ORG_ID = "org-test";
 export class FakeAgentStore implements AgentStore {
   private readonly byHash = new Map<string, AuthedAgent>();
 
-  /** orgId is optional and defaults to DEFAULT_TEST_ORG_ID: it only matters for
-   *  vault (BYOK) scoping, so the many tests that predate it stay unchanged
-   *  while a BYOK test can still pin a specific org. */
-  add(token: string, agent: Omit<AuthedAgent, "orgId"> & { orgId?: string }): void {
+  /** orgId and upstreamKeyId are optional: orgId only matters for vault (BYOK)
+   *  scoping and upstreamKeyId only for multi-key resolution, so the many
+   *  tests that predate either stay unchanged while a BYOK/multi-key test can
+   *  still pin a specific value. */
+  add(
+    token: string,
+    agent: Omit<AuthedAgent, "orgId" | "upstreamKeyId"> & {
+      orgId?: string;
+      upstreamKeyId?: string | null;
+    },
+  ): void {
     this.byHash.set(hashToken(token), {
       ...agent,
       orgId: agent.orgId ?? DEFAULT_TEST_ORG_ID,
+      upstreamKeyId: agent.upstreamKeyId ?? null,
     });
   }
 
@@ -71,17 +79,24 @@ export class FakeSpendLog implements SpendLog {
 /** Vault that hands out a fixed key for any (org, slug), recording every lookup
  *  so a test can assert the hot path scoped by the right org. */
 export class FakeVault implements Vault {
-  readonly lookups: { orgId: string; slug: string }[] = [];
+  readonly lookups: { orgId: string; slug: string; keyId: string | null }[] = [];
 
   constructor(private readonly key: string | null) {}
 
-  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
-    this.lookups.push({ orgId, slug });
+  async getUpstreamKey(
+    orgId: string,
+    slug: string,
+    keyId: string | null,
+  ): Promise<string | null> {
+    this.lookups.push({ orgId, slug, keyId });
     return this.key;
   }
 }
 
-/** Vault with per-org keys, for exercising BYOK resolution end to end. */
+/** Vault with per-org keys, for exercising BYOK resolution end to end.
+ *  Ignores keyId deliberately — this fake proves the proxy forwards with
+ *  whatever the vault resolves, not the resolution logic itself (that's
+ *  pgVault's job, covered directly in byok-vault.test.ts). */
 export class FakeOrgVault implements Vault {
   /** Keyed "orgId:slug". */
   private readonly keys = new Map<string, string>();
@@ -92,7 +107,11 @@ export class FakeOrgVault implements Vault {
     this.keys.set(`${orgId}:${slug}`, key);
   }
 
-  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
+  async getUpstreamKey(
+    orgId: string,
+    slug: string,
+    _keyId: string | null,
+  ): Promise<string | null> {
     return this.keys.get(`${orgId}:${slug}`) ?? this.fallback;
   }
 }

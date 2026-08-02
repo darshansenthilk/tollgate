@@ -9,10 +9,11 @@ import {
   currentPromptKey,
   freezeKey,
   microCentsToCents,
+  ASSISTANT_ADAPTER_SLUGS,
   type AgentStatus,
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
-import { agents, policies } from "../db/schema.js";
+import { agents, policies, orgUpstreamKeys } from "../db/schema.js";
 import { hashToken, generateToken } from "../lib/tokens.js";
 
 interface CreateAgentBody {
@@ -20,6 +21,7 @@ interface CreateAgentBody {
   providerSlug: string;
   maxBudgetCents: number | null;
   model: string | null;
+  upstreamKeyId: string | null;
 }
 
 /**
@@ -37,6 +39,7 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
   const providerSlug = rec["providerSlug"];
   const maxBudgetCentsRaw = rec["maxBudgetCents"];
   const modelRaw = rec["model"];
+  const upstreamKeyIdRaw = rec["upstreamKeyId"];
 
   if (typeof name !== "string" || name.trim() === "") return null;
   if (typeof providerSlug !== "string" || providerSlug.trim() === "") return null;
@@ -59,7 +62,45 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
     return null;
   }
 
-  return { name, providerSlug, maxBudgetCents, model };
+  let upstreamKeyId: string | null;
+  if (upstreamKeyIdRaw === undefined || upstreamKeyIdRaw === null) {
+    upstreamKeyId = null;
+  } else if (typeof upstreamKeyIdRaw === "string" && upstreamKeyIdRaw.trim() !== "") {
+    upstreamKeyId = upstreamKeyIdRaw;
+  } else {
+    return null;
+  }
+
+  return { name, providerSlug, maxBudgetCents, model, upstreamKeyId };
+}
+
+/**
+ * An agent may only be pointed at a stored BYOK key that (a) belongs to the
+ * caller's own org and (b) was saved for the ADAPTER this agent's assistant
+ * label maps to — see @tollgate/shared's ASSISTANT_ADAPTER_SLUGS doc comment
+ * for why those two vocabularies differ. Without this check an agent could be
+ * silently assigned a key for the wrong provider, which the proxy would then
+ * hand to an upstream it was never meant for.
+ */
+async function upstreamKeyBelongsToProvider(
+  upstreamKeyId: string,
+  orgId: string,
+  assistantProviderSlug: string,
+): Promise<boolean> {
+  const adapterSlug = ASSISTANT_ADAPTER_SLUGS[assistantProviderSlug];
+  if (adapterSlug === undefined) return false;
+
+  const rows = await db
+    .select({ id: orgUpstreamKeys.id })
+    .from(orgUpstreamKeys)
+    .where(
+      and(
+        eq(orgUpstreamKeys.id, upstreamKeyId),
+        eq(orgUpstreamKeys.orgId, orgId),
+        eq(orgUpstreamKeys.providerSlug, adapterSlug),
+      ),
+    );
+  return rows.length > 0;
 }
 
 /** Partial update from PATCH /v1/agents/:id. Every field is optional; an
@@ -69,6 +110,7 @@ interface UpdateAgentBody {
   name?: string;
   model?: string | null;
   maxBudgetCents?: number | null;
+  upstreamKeyId?: string | null;
 }
 
 type UpdateParseResult =
@@ -107,6 +149,13 @@ function parseUpdateBody(body: unknown): UpdateParseResult {
     else return { ok: false, error: "invalid_body" };
   }
 
+  if ("upstreamKeyId" in rec) {
+    const raw = rec["upstreamKeyId"];
+    if (raw === null) out.upstreamKeyId = null;
+    else if (typeof raw === "string" && raw.trim() !== "") out.upstreamKeyId = raw;
+    else return { ok: false, error: "invalid_body" };
+  }
+
   // An empty patch is a caller mistake, not a no-op success.
   if (Object.keys(out).length === 0) return { ok: false, error: "invalid_body" };
 
@@ -142,12 +191,14 @@ async function findAgent(
   id: string;
   policyId: string | null;
   status: AgentStatus;
+  providerSlug: string;
 } | null> {
   const rows = await db
     .select({
       id: agents.id,
       policyId: agents.policyId,
       status: agents.status,
+      providerSlug: agents.providerSlug,
     })
     .from(agents)
     .where(and(eq(agents.id, id), eq(agents.orgId, orgId)));
@@ -175,6 +226,14 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         error: "invalid_provider_slug",
         message: `providerSlug must be one of: ${[...ALLOWED_PROVIDER_SLUGS].join(", ")}`,
       };
+    }
+
+    if (
+      body.upstreamKeyId !== null &&
+      !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, orgId, body.providerSlug))
+    ) {
+      reply.code(400);
+      return { error: "invalid_upstream_key" };
     }
 
     // Scoped to this org (+ non-archived): a name only needs to be free within
@@ -223,6 +282,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       model: body.model,
       policyId,
       tokenHash,
+      upstreamKeyId: body.upstreamKeyId,
     });
 
     reply.code(201);
@@ -233,6 +293,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       model: body.model,
       status: "active" satisfies AgentStatus,
       maxBudgetCents: body.maxBudgetCents,
+      upstreamKeyId: body.upstreamKeyId,
       // Returned once. Only the hash is ever persisted — this response is the
       // only chance the caller has to see the raw token.
       token,
@@ -249,6 +310,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         model: agents.model,
         status: agents.status,
         maxBudgetCents: policies.maxBudgetCents,
+        upstreamKeyId: agents.upstreamKeyId,
       })
       .from(agents)
       // Scoped to the caller's org so one account never sees another's agents.
@@ -277,6 +339,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           model: row.model,
           status: row.status,
           maxBudgetCents: row.maxBudgetCents,
+          upstreamKeyId: row.upstreamKeyId,
           currentMonthSpendCents: microCentsToCents(
             Number.isNaN(spentMicroCents) ? 0 : spentMicroCents,
           ),
@@ -344,9 +407,20 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_has_no_policy" };
       }
 
-      const agentFields: { name?: string; model?: string | null } = {};
+      if (
+        body.upstreamKeyId !== undefined &&
+        body.upstreamKeyId !== null &&
+        !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, orgId, agent.providerSlug))
+      ) {
+        reply.code(400);
+        return { error: "invalid_upstream_key" };
+      }
+
+      const agentFields: { name?: string; model?: string | null; upstreamKeyId?: string | null } =
+        {};
       if (body.name !== undefined) agentFields.name = body.name;
       if (body.model !== undefined) agentFields.model = body.model;
+      if (body.upstreamKeyId !== undefined) agentFields.upstreamKeyId = body.upstreamKeyId;
 
       if (Object.keys(agentFields).length > 0) {
         await db
@@ -375,6 +449,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           model: agents.model,
           status: agents.status,
           maxBudgetCents: policies.maxBudgetCents,
+          upstreamKeyId: agents.upstreamKeyId,
         })
         .from(agents)
         .leftJoin(policies, eq(policies.id, agents.policyId))

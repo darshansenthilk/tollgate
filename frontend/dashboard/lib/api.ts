@@ -57,6 +57,10 @@ export interface AgentListItem {
    *  Redis for ~2 minutes by the proxy, never persisted to Postgres. null
    *  once nothing has run recently (or the TTL has lapsed). */
   currentPrompt: string | null;
+  /** Which stored BYOK key (see UpstreamKey.id) this agent forwards with, if
+   *  any. null means no specific key chosen — the proxy falls straight
+   *  through to the deployment's shared key. See backend/proxy/src/lib/vault.ts. */
+  upstreamKeyId: string | null;
 }
 
 /** Exact shape returned by POST /v1/agents — token is present ONLY here. */
@@ -67,6 +71,7 @@ export interface CreateAgentResponse {
   model: string | null;
   status: AgentStatus;
   maxBudgetCents: number | null;
+  upstreamKeyId: string | null;
   token: string;
 }
 
@@ -75,6 +80,7 @@ export interface CreateAgentInput {
   providerSlug: string;
   maxBudgetCents: number | null;
   model: string | null;
+  upstreamKeyId?: string | null;
 }
 
 /**
@@ -88,6 +94,7 @@ export interface UpdateAgentInput {
   name?: string;
   model?: string | null;
   maxBudgetCents?: number | null;
+  upstreamKeyId?: string | null;
 }
 
 /** Exact shape returned by PATCH /v1/agents/:id — a committed agent row, no token. */
@@ -98,6 +105,7 @@ export interface UpdateAgentResponse {
   model: string | null;
   status: AgentStatus;
   maxBudgetCents: number | null;
+  upstreamKeyId: string | null;
 }
 
 /** Shared shape of POST .../freeze, POST .../unfreeze, PATCH .../policy. */
@@ -133,7 +141,8 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_body: "That request wasn't valid — check the fields and try again.",
   missing_token: "Paste the agent's token to continue.",
   invalid_token: "That token doesn't match this agent.",
-  upstream_key_not_found: "No key is saved for that provider.",
+  upstream_key_not_found: "That key no longer exists.",
+  invalid_upstream_key: "That key isn't valid for this agent's provider.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -174,23 +183,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
- * One provider's BYOK status. Deliberately has no field for the key itself —
- * the api never returns a stored key (write-once-reveal-never, same as agent
- * tokens); `keyHint` is a non-secret display fragment like "sk-…7mQ4".
+ * One stored BYOK key. Deliberately has no field for the key itself — the api
+ * never returns a stored key (write-once-reveal-never, same as agent tokens);
+ * `keyHint` is a non-secret display fragment like "sk-…7mQ4". `label` is the
+ * org-chosen name ("Prod", "Jane's key") that distinguishes it from any other
+ * key stored for the same provider — an org can have several.
  */
-export interface UpstreamKeyStatus {
+export interface UpstreamKey {
+  id: string;
+  label: string;
+  keyHint: string;
+  updatedAt: string;
+}
+
+export interface UpstreamKeyProvider {
   slug: string;
   label: string;
-  isSet: boolean;
-  keyHint: string | null;
-  updatedAt: string | null;
+  keys: UpstreamKey[];
 }
 
 export interface UpstreamKeysResponse {
   /** False when the deployment can't store keys at all (no VAULT_ENCRYPTION_KEY
    *  on the api), so the UI can explain a save failure that isn't the user's. */
   vaultConfigured: boolean;
-  providers: UpstreamKeyStatus[];
+  providers: UpstreamKeyProvider[];
 }
 
 export function listUpstreamKeys(): Promise<UpstreamKeysResponse> {
@@ -198,23 +214,28 @@ export function listUpstreamKeys(): Promise<UpstreamKeysResponse> {
 }
 
 /**
- * Saves (or rotates) this org's own provider key. The api verifies it against
+ * Adds a new key for a provider, or rotates the existing one if `label`
+ * matches an already-saved key for that provider. The api verifies it against
  * the real provider BEFORE storing, so a rejected key throws an ApiError whose
- * message is the provider's own reason — surface it verbatim.
+ * message is the provider's own reason — surface it verbatim. Omitting
+ * `label` saves under "Default", for callers that don't need to distinguish
+ * multiple keys.
  */
 export function saveUpstreamKey(
   providerSlug: string,
   key: string,
-): Promise<{ slug: string; isSet: boolean; keyHint: string; updatedAt: string }> {
+  label?: string,
+): Promise<{ id: string; providerSlug: string; label: string; keyHint: string; updatedAt: string }> {
   return request("/v1/upstream-keys", {
-    method: "PUT",
-    body: JSON.stringify({ providerSlug, key }),
+    method: "POST",
+    body: JSON.stringify({ providerSlug, key, label }),
   });
 }
 
-/** Removes this org's key, reverting to whatever the deployment fallback is. */
-export function deleteUpstreamKey(providerSlug: string): Promise<{ slug: string; isSet: boolean }> {
-  return request(`/v1/upstream-keys/${providerSlug}`, { method: "DELETE" });
+/** Removes one stored key by id. Any agent assigned to it falls back to the
+ *  deployment's shared key on its next request. */
+export function deleteUpstreamKey(id: string): Promise<{ id: string; deleted: boolean }> {
+  return request(`/v1/upstream-keys/${id}`, { method: "DELETE" });
 }
 
 /**

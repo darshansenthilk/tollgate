@@ -72,6 +72,7 @@ function seedAgents(): AgentListItem[] {
       currentMonthSpendCents: 0,
       currentMonthTokens: 0,
       currentPrompt: null,
+      upstreamKeyId: null,
     },
     {
       id: "demo-research-agent",
@@ -83,6 +84,7 @@ function seedAgents(): AgentListItem[] {
       currentMonthSpendCents: 41,
       currentMonthTokens: 18_420,
       currentPrompt: null,
+      upstreamKeyId: null,
     },
     {
       id: "demo-data-scraper",
@@ -94,6 +96,7 @@ function seedAgents(): AgentListItem[] {
       currentMonthSpendCents: 46,
       currentMonthTokens: 52_310,
       currentPrompt: null,
+      upstreamKeyId: null,
     },
     {
       id: "demo-nightly-backfill",
@@ -105,6 +108,7 @@ function seedAgents(): AgentListItem[] {
       currentMonthSpendCents: 0,
       currentMonthTokens: 0,
       currentPrompt: null,
+      upstreamKeyId: null,
     },
   ];
 }
@@ -201,6 +205,7 @@ export function useAgentSimulator(): AgentSimulator {
       model: input.model,
       status: "active",
       maxBudgetCents: input.maxBudgetCents,
+      upstreamKeyId: input.upstreamKeyId ?? null,
       token: `tg_demo_${Math.random().toString(36).slice(2, 10)}`,
     };
     setAgents((prev) => applyCreated(prev, response));
@@ -220,6 +225,8 @@ export function useAgentSimulator(): AgentSimulator {
       status: current.status,
       maxBudgetCents:
         input.maxBudgetCents !== undefined ? input.maxBudgetCents : current.maxBudgetCents,
+      upstreamKeyId:
+        input.upstreamKeyId !== undefined ? input.upstreamKeyId : current.upstreamKeyId,
     };
     setAgents((prev) => applyUpdated(prev, updated));
     return updated;

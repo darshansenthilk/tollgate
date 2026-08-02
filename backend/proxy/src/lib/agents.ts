@@ -21,6 +21,10 @@ export interface AuthedAgent {
   maxBudgetCents: number | null;
   /** Descriptive assistant label the agent was created with (e.g. "chatgpt"). */
   providerSlug: string;
+  /** Which stored BYOK key (org_upstream_keys.id) this agent forwards with, if
+   *  any — null means no specific key chosen, so the vault falls straight
+   *  through to the deployment's env key. See lib/vault.ts's doc comment. */
+  upstreamKeyId: string | null;
 }
 
 /** Tokens are never stored in the clear; we look agents up by SHA-256 hash. */
@@ -42,6 +46,7 @@ interface AgentRow {
   status: AgentStatus;
   max_budget_cents: number | null;
   provider_slug: string;
+  upstream_key_id: string | null;
 }
 
 /** Production AgentStore backed by Postgres. */
@@ -49,7 +54,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
   return {
     async findByTokenHash(tokenHash) {
       const result = await pool.query<AgentRow>(
-        `SELECT a.id, a.org_id, a.status, a.provider_slug, p.max_budget_cents
+        `SELECT a.id, a.org_id, a.status, a.provider_slug, a.upstream_key_id, p.max_budget_cents
            FROM agents a
            LEFT JOIN policies p ON p.id = a.policy_id
           WHERE a.token_hash = $1`,
@@ -66,6 +71,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
         status: row.status,
         maxBudgetCents: row.max_budget_cents,
         providerSlug: row.provider_slug,
+        upstreamKeyId: row.upstream_key_id,
       };
     },
   };

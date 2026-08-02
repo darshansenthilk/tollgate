@@ -181,6 +181,24 @@ export function isUpstreamProviderSlug(value: string): value is UpstreamProvider
 }
 
 /**
+ * Bridges the descriptive assistant label an agent is created with (dashboard's
+ * PROVIDERS list, stored as agents.provider_slug — "chatgpt"/"claude"/"gemini")
+ * to the ADAPTER slug that routes proxy requests and names org_upstream_keys
+ * rows and *_UPSTREAM_KEY env vars ("openai"/"claude"/"gemini"). The two
+ * vocabularies differ on purpose (the label is consumer-facing, the adapter
+ * slug is a routing/storage detail) — this is the one source of truth for the
+ * mapping, consumed by backend/proxy/src/adapters/registry.ts (the proxy's
+ * authorization gate) and backend/api/src/routes/agents.ts (validating that an
+ * agent's chosen upstream_key_id actually belongs to a key for its provider).
+ * Keep in sync with frontend/dashboard/lib/agent-options.ts's PROVIDERS list.
+ */
+export const ASSISTANT_ADAPTER_SLUGS: Readonly<Record<string, string>> = {
+  chatgpt: "openai",
+  claude: "claude",
+  gemini: "gemini",
+};
+
+/**
  * Env var holding Tollgate's own shared key for a provider, e.g.
  * "openai" -> OPENAI_UPSTREAM_KEY. This is the deployment-wide fallback used
  * for orgs that haven't configured BYOK; see backend/proxy/src/lib/vault.ts.
