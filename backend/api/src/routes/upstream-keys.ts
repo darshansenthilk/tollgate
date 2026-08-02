@@ -3,6 +3,9 @@ import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
 import {
   UPSTREAM_PROVIDERS,
+  credentialFieldsFor,
+  hintFieldFor,
+  isOptionalCredentialField,
   isUpstreamProviderSlug,
   maskUpstreamKey,
   type UpstreamProviderSlug,
@@ -42,19 +45,30 @@ import { verifyUpstreamKey } from "../lib/upstream-key-verify.js";
 interface SaveKeyBody {
   providerSlug: UpstreamProviderSlug;
   label: string;
-  key: string;
+  /** Encrypted at rest, keyed by CredentialField.name. */
+  secrets: Record<string, string>;
+  /** Stored in the clear, keyed by CredentialField.name. */
+  config: Record<string, string>;
 }
 
 type ParseResult =
   | { ok: true; body: SaveKeyBody }
-  | { ok: false; error: "invalid_body" | "invalid_provider_slug" };
+  | { ok: false; error: "invalid_body" | "invalid_provider_slug" }
+  | { ok: false; error: "invalid_field"; message: string };
 
+/**
+ * Validates a submitted credential against the provider's declared fields
+ * (@tollgate/shared's UPSTREAM_PROVIDERS), rather than branching per provider.
+ * Adding a provider therefore needs no change here at all.
+ *
+ * Accepts `key` as an alias for a single-field provider's `apiKey` so callers
+ * written against the pre-structured API keep working unchanged.
+ */
 function parseSaveBody(body: unknown): ParseResult {
   if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
   const rec = body as Record<string, unknown>;
 
   const providerSlug = rec["providerSlug"];
-  const key = rec["key"];
   // Optional on the wire: a caller that doesn't care about naming multiple
   // keys still gets a sane single-key experience.
   const rawLabel = rec["label"];
@@ -63,14 +77,69 @@ function parseSaveBody(body: unknown): ParseResult {
   if (!isUpstreamProviderSlug(providerSlug)) {
     return { ok: false, error: "invalid_provider_slug" };
   }
-  if (typeof key !== "string" || key.trim() === "") return { ok: false, error: "invalid_body" };
   if (rawLabel !== undefined && typeof rawLabel !== "string") {
     return { ok: false, error: "invalid_body" };
   }
 
+  const submitted =
+    typeof rec["fields"] === "object" && rec["fields"] !== null
+      ? (rec["fields"] as Record<string, unknown>)
+      : rec;
+
+  const secrets: Record<string, string> = {};
+  const config: Record<string, string> = {};
+
+  for (const field of credentialFieldsFor(providerSlug)) {
+    // Back-compat: the original single-key API took { key }, so accept that
+    // spelling for a provider whose only secret is the api key.
+    const raw =
+      submitted[field.name] ?? (field.name === "apiKey" ? submitted["key"] : undefined);
+
+    if (raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+      if (isOptionalCredentialField(field)) continue;
+      return {
+        ok: false,
+        error: "invalid_field",
+        message: `${field.label} is required.`,
+      };
+    }
+    if (typeof raw !== "string") return { ok: false, error: "invalid_body" };
+
+    const value = raw.trim();
+    if (field.pattern !== undefined && !field.pattern.test(value)) {
+      return {
+        ok: false,
+        error: "invalid_field",
+        message: field.patternHelp ?? `${field.label} isn't in the expected format.`,
+      };
+    }
+
+    if (field.secret) secrets[field.name] = value;
+    else config[field.name] = value;
+  }
+
+  if (Object.keys(secrets).length === 0) return { ok: false, error: "invalid_body" };
+
   const label = rawLabel === undefined || rawLabel.trim() === "" ? "Default" : rawLabel.trim();
 
-  return { ok: true, body: { providerSlug, label, key: key.trim() } };
+  return { ok: true, body: { providerSlug, label, secrets, config } };
+}
+
+/** Read back the plain-JSON config column for display. A malformed value
+ *  degrades to "no config" rather than failing the whole listing. */
+function parseStoredConfig(raw: string | null): Record<string, string> {
+  if (raw === null || raw.trim() === "") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
@@ -89,6 +158,7 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
         providerSlug: orgUpstreamKeys.providerSlug,
         label: orgUpstreamKeys.label,
         keyHint: orgUpstreamKeys.keyHint,
+        config: orgUpstreamKeys.config,
         updatedAt: orgUpstreamKeys.updatedAt,
       })
       .from(orgUpstreamKeys)
@@ -113,6 +183,10 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
           label: row.label,
           // Never the key itself — see the module doc comment.
           keyHint: row.keyHint,
+          // Non-secret config only (an Azure resource name, a Bedrock region),
+          // so the dashboard can show WHICH resource a key points at. Secrets
+          // are never in this column at all — see schema.ts.
+          config: parseStoredConfig(row.config),
           updatedAt: row.updatedAt.toISOString(),
         })),
       })),
@@ -131,14 +205,20 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
     const parsed = parseSaveBody(req.body);
     if (!parsed.ok) {
       reply.code(400);
-      return parsed.error === "invalid_provider_slug"
-        ? {
-            error: "invalid_provider_slug",
-            message: `providerSlug must be one of: ${UPSTREAM_PROVIDERS.map((p) => p.slug).join(", ")}`,
-          }
-        : { error: "invalid_body" };
+      if (parsed.error === "invalid_provider_slug") {
+        return {
+          error: "invalid_provider_slug",
+          message: `providerSlug must be one of: ${UPSTREAM_PROVIDERS.map((p) => p.slug).join(", ")}`,
+        };
+      }
+      // A named, fixable problem with one field ("Resource name is required")
+      // rather than a blanket invalid_body the user can't act on.
+      if (parsed.error === "invalid_field") {
+        return { error: "invalid_field", message: parsed.message };
+      }
+      return { error: "invalid_body" };
     }
-    const { providerSlug, label, key } = parsed.body;
+    const { providerSlug, label, secrets, config } = parsed.body;
 
     // Fail before touching the network if this deployment can't store a key
     // anyway — otherwise we'd send the user's key to the provider only to
@@ -152,7 +232,7 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
       };
     }
 
-    const verification = await verifyUpstreamKey(providerSlug, key);
+    const verification = await verifyUpstreamKey(providerSlug, { secrets, config });
     if (!verification.ok) {
       reply.code(400);
       return { error: "key_rejected", message: verification.reason };
@@ -160,7 +240,11 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
 
     let encrypted;
     try {
-      encrypted = encryptUpstreamKey(key);
+      // Always a JSON object, even for single-secret providers: one storage
+      // format is easier to reason about than "sometimes JSON, sometimes a
+      // bare string", and the proxy's reader already tolerates both (it has
+      // to, for rows written before this existed).
+      encrypted = encryptUpstreamKey(JSON.stringify(secrets));
     } catch (err) {
       // isVaultConfigured() passed a moment ago, so this is genuinely
       // unexpected — surface it rather than storing something unusable.
@@ -175,7 +259,13 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
       };
     }
 
-    const keyHint = maskUpstreamKey(key);
+    // Hint is taken from the provider's designated hint field (the api key,
+    // or for AWS the access key id) — the one secret a human recognises.
+    const hintField = hintFieldFor(providerSlug);
+    const keyHint = maskUpstreamKey(
+      (hintField === null ? undefined : secrets[hintField]) ?? "",
+    );
+    const serializedConfig = Object.keys(config).length === 0 ? null : JSON.stringify(config);
     const now = new Date();
 
     // Upsert on the (org, provider, label) unique index so saving under an
@@ -191,6 +281,7 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
         iv: encrypted.iv,
         authTag: encrypted.authTag,
         keyHint,
+        config: serializedConfig,
       })
       .onConflictDoUpdate({
         target: [orgUpstreamKeys.orgId, orgUpstreamKeys.providerSlug, orgUpstreamKeys.label],
@@ -199,12 +290,13 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
           iv: encrypted.iv,
           authTag: encrypted.authTag,
           keyHint,
+          config: serializedConfig,
           updatedAt: now,
         },
       })
       .returning({ id: orgUpstreamKeys.id });
 
-    return { id: row!.id, providerSlug, label, keyHint, updatedAt: now.toISOString() };
+    return { id: row!.id, providerSlug, label, keyHint, config, updatedAt: now.toISOString() };
   });
 
   /**

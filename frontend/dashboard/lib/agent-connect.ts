@@ -11,6 +11,7 @@ const ADAPTER_SLUGS: Record<string, string> = {
   chatgpt: "openai",
   claude: "claude",
   gemini: "gemini",
+  azure: "azure",
 };
 
 /**
@@ -106,6 +107,41 @@ console.log(response.content[0].text);`,
     };
   }
 
+  if (providerSlug === "azure") {
+    // The Azure SDK builds /openai/deployments/{deployment}/... itself and
+    // appends ?api-version=, so azure_endpoint is just Tollgate's /azure root.
+    // `model` here is the DEPLOYMENT name, not a model id — Azure resolves the
+    // real model from the deployment (see agent-options.ts).
+    return {
+      python: `from openai import AzureOpenAI
+
+client = AzureOpenAI(
+    azure_endpoint="${baseUrl}",
+    api_key="${token}",
+    api_version="2024-10-21",
+)
+
+response = client.chat.completions.create(
+    model="${upstreamModel}",  # your Azure deployment name
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(response.choices[0].message.content)`,
+      typescript: `import { AzureOpenAI } from "openai";
+
+const client = new AzureOpenAI({
+  endpoint: "${baseUrl}",
+  apiKey: "${token}",
+  apiVersion: "2024-10-21",
+});
+
+const response = await client.chat.completions.create({
+  model: "${upstreamModel}", // your Azure deployment name
+  messages: [{ role: "user", content: "Hello" }],
+});
+console.log(response.choices[0].message.content);`,
+    };
+  }
+
   if (providerSlug === "gemini") {
     return {
       python: `from google import genai
@@ -195,6 +231,18 @@ export function buildTestRequest(
       body: {
         contents: [{ role: "user", parts: [{ text: "hi" }] }],
         generationConfig: { maxOutputTokens: 1 },
+      },
+    };
+  }
+
+  if (providerSlug === "azure") {
+    return {
+      // Deployment in the path, mandatory api-version in the query — Azure
+      // rejects the request outright without the latter.
+      path: `/${adapterSlug}/openai/deployments/${upstreamModel}/chat/completions?api-version=2024-10-21`,
+      body: {
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
       },
     };
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { credentialFieldsFor, isOptionalCredentialField } from "@tollgate/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,16 +38,18 @@ type FormState =
 type RemoveState = { kind: "idle" } | { kind: "removing" } | { kind: "error"; message: string };
 
 function KeyRow({
-  providerSlug,
   keyId,
   label,
   keyHint,
+  config,
   onChanged,
 }: {
-  providerSlug: string;
   keyId: string;
   label: string;
   keyHint: string;
+  /** Non-secret fields, shown so an org with several Azure resources (or AWS
+   *  regions) can tell its keys apart by more than a label. */
+  config: Record<string, string>;
   onChanged: () => Promise<void>;
 }) {
   const [state, setState] = useState<RemoveState>({ kind: "idle" });
@@ -72,6 +75,15 @@ function KeyRow({
           <span className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>
             {keyHint}
           </span>
+          {Object.entries(config).map(([name, value]) => (
+            <span
+              key={name}
+              className="font-mono text-xs"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              · {value}
+            </span>
+          ))}
         </div>
         <Button
           type="button"
@@ -92,6 +104,12 @@ function KeyRow({
   );
 }
 
+/**
+ * Rendered from the provider's declared credential fields
+ * (@tollgate/shared's UPSTREAM_PROVIDERS) rather than a hardcoded single key
+ * input — that's what lets Azure ask for a resource name and Bedrock for an
+ * access-key pair plus a region without this component knowing either exists.
+ */
 function AddKeyForm({
   providerSlug,
   onChanged,
@@ -99,18 +117,30 @@ function AddKeyForm({
   providerSlug: string;
   onChanged: () => Promise<void>;
 }) {
+  const fields = credentialFieldsFor(providerSlug);
   const [label, setLabel] = useState("");
-  const [key, setKey] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<FormState>({ kind: "idle" });
 
+  // Every field the provider actually requires must be filled before the
+  // button does anything; sessionToken is the one legitimately-blank case.
+  const complete = fields.every(
+    (f) => isOptionalCredentialField(f) || (values[f.name] ?? "").trim() !== "",
+  );
+
   async function handleSave() {
-    if (key.trim() === "") return;
+    if (!complete) return;
     setState({ kind: "saving" });
     try {
-      await saveUpstreamKey(providerSlug, key.trim(), label.trim() || undefined);
-      // Clear immediately: the plaintext key should not linger in a form field
-      // once it's stored, and it can never be shown again anyway.
-      setKey("");
+      const submitted: Record<string, string> = {};
+      for (const field of fields) {
+        const value = (values[field.name] ?? "").trim();
+        if (value !== "") submitted[field.name] = value;
+      }
+      await saveUpstreamKey(providerSlug, submitted, label.trim() || undefined);
+      // Clear immediately: plaintext secrets should not linger in a form field
+      // once stored, and they can never be shown again anyway.
+      setValues({});
       setLabel("");
       setState({ kind: "idle" });
       await onChanged();
@@ -125,32 +155,71 @@ function AddKeyForm({
   }
 
   const saving = state.kind === "saving";
+  // Single-secret providers (OpenAI/Claude/Gemini) stay on one compact row;
+  // multi-field ones get a stacked, labelled form so it's clear what goes where.
+  const inline = fields.length === 1;
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+      <div className={inline ? "flex items-center gap-2" : "flex flex-col gap-3"}>
         <Input
-          className="w-32"
+          className={inline ? "w-32" : undefined}
           placeholder="Label (optional)"
           disabled={saving}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
         />
-        <Input
-          // type=password so the key isn't shoulder-surfable while pasting, and
-          // browsers don't offer to remember it as ordinary text.
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          disabled={saving}
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={providerSlug === "claude" ? "sk-ant-…" : "sk-…"}
-        />
-        <Button type="button" onClick={handleSave} disabled={saving || key.trim() === ""}>
+
+        {fields.map((field) => {
+          const input = (
+            <Input
+              id={`cred-${providerSlug}-${field.name}`}
+              // type=password so a secret isn't shoulder-surfable while
+              // pasting, and browsers don't offer to remember it as ordinary
+              // text. Non-secret config (a region) stays readable so the user
+              // can check what they typed.
+              type={field.secret ? "password" : "text"}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={saving}
+              value={values[field.name] ?? ""}
+              onChange={(e) =>
+                setValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+              }
+              placeholder={field.placeholder}
+            />
+          );
+
+          if (inline) return <span key={field.name} className="flex-1">{input}</span>;
+
+          return (
+            <div key={field.name} className="flex flex-col gap-1">
+              <Label htmlFor={`cred-${providerSlug}-${field.name}`}>
+                {field.label}
+                {isOptionalCredentialField(field) && (
+                  <span style={{ color: "var(--muted-foreground)" }}> (optional)</span>
+                )}
+              </Label>
+              {input}
+              {field.help !== undefined && (
+                <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  {field.help}
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        <Button
+          type="button"
+          className={inline ? undefined : "self-start"}
+          onClick={handleSave}
+          disabled={saving || !complete}
+        >
           {saving ? "Verifying…" : "Add key"}
         </Button>
       </div>
+
       {state.kind === "error" && (
         <p className="text-sm" style={{ color: "var(--err)" }}>
           {state.message}
@@ -183,10 +252,10 @@ function ProviderSection({
           {provider.keys.map((k) => (
             <KeyRow
               key={k.id}
-              providerSlug={provider.slug}
               keyId={k.id}
               label={k.label}
               keyHint={k.keyHint}
+              config={k.config}
               onChanged={onChanged}
             />
           ))}

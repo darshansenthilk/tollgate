@@ -71,20 +71,20 @@ export const geminiAdapter: ProviderAdapter = {
   slug: "gemini",
   baseUrl: "https://generativelanguage.googleapis.com",
 
-  // Header, not the `?key=` query param Google's own quickstart docs lead
-  // with — a key in the URL ends up in access logs and proxy/CDN history
-  // wherever this request transits; the header doesn't.
-  buildAuthHeaders: (upstreamKey) => ({
-    "x-goog-api-key": upstreamKey,
-  }),
-
   // Mirrors Gemini's real path 1:1 under the provider slug — the proxied
   // path already includes "v1beta" (e.g.
   // POST /gemini/v1beta/models/gemini-1.5-flash:generateContent), so this
   // must NOT also prepend it.
-  buildUpstreamUrl: (path) => {
+  //
+  // Auth goes in a header, not the `?key=` query param Google's own
+  // quickstart docs lead with — a key in the URL ends up in access logs and
+  // proxy/CDN history wherever this request transits; the header doesn't.
+  buildUpstreamRequest: ({ path, query, credential }) => {
     const clean = path.replace(/^\/+/, "");
-    return `${geminiAdapter.baseUrl}/${clean}`;
+    return {
+      url: `${geminiAdapter.baseUrl}/${clean}${query}`,
+      headers: { "x-goog-api-key": credential.secrets["apiKey"] ?? "" },
+    };
   },
 
   // No prepareRequestBody: Gemini reports usageMetadata unconditionally on

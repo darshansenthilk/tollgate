@@ -163,10 +163,23 @@ export const orgUpstreamKeys = pgTable(
     label: text("label").notNull().default("Default"),
     /** AES-256-GCM ciphertext + its iv and auth tag, all base64. Split into
      *  columns rather than one packed string so the AEAD parts stay legible
-     *  (and a missing tag is a schema error, not a parse error at decrypt). */
+     *  (and a missing tag is a schema error, not a parse error at decrypt).
+     *
+     *  Holds a JSON object of every SECRET field the provider needs
+     *  ({"accessKeyId":…,"secretAccessKey":…}) — or, for rows written before
+     *  structured credentials, the bare API key string. The proxy's vault
+     *  reads both (see its parseSecrets); there's deliberately no migration
+     *  re-encrypting old rows, because only the running service holds
+     *  VAULT_ENCRYPTION_KEY and SQL therefore can't. */
     encryptedKey: text("encrypted_key").notNull(),
     iv: text("iv").notNull(),
     authTag: text("auth_tag").notNull(),
+    /** NON-secret credential fields, as plain JSON ({"region":"us-east-1"},
+     *  {"resourceName":"my-company"}). Deliberately unencrypted: these are
+     *  hostnames and regions that appear in every request URL anyway, and
+     *  storing them readable lets the dashboard show which resource a key
+     *  points at. Null for providers that need nothing but a key. */
+    config: text("config"),
     /** Non-secret display hint ("sk-…7mQ4") so the dashboard can show which key
      *  is configured without the plaintext ever being recoverable. */
     keyHint: text("key_hint").notNull(),

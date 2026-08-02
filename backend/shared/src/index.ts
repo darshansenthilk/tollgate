@@ -79,15 +79,58 @@ export interface ProviderCost {
  * names a concrete provider. Adding a provider = one new adapter object in the
  * registry, zero route changes.
  */
+/** Everything an adapter needs to address and authenticate one forwarded
+ *  request. Assembled by the proxy hot path; consumed only by
+ *  ProviderAdapter.buildUpstreamRequest. */
+export interface UpstreamRequestArgs {
+  /** The wildcard portion after the provider slug, with no leading slash
+   *  (e.g. "v1/chat/completions"). */
+  path: string;
+  /** The caller's raw query string including its leading "?", or "" when
+   *  they sent none. The adapter — not the hot path — decides where this
+   *  lands, because a signing provider has to sign the exact final URL. */
+  query: string;
+  method: string;
+  /** The body exactly as it will go out on the wire, or undefined for a
+   *  bodyless request. Present because request-signing schemes (AWS SigV4)
+   *  hash the payload as part of the signature. */
+  body: string | undefined;
+  /** Decrypted credential for this org — see UpstreamCredential. */
+  credential: UpstreamCredential;
+}
+
+/** Where a forwarded request goes and what it carries. */
+export interface UpstreamRequestSpec {
+  /** Absolute URL, query string included. */
+  url: string;
+  /** Auth (and any provider-required) headers. Merged over the hot path's
+   *  defaults, so an adapter can override content-type if it must. */
+  headers: Record<string, string>;
+}
+
 export interface ProviderAdapter {
   /** Stable slug used in proxy routes, e.g. "openai" → POST /openai/*. */
   slug: string;
-  /** Upstream base URL requests are forwarded to. */
+  /**
+   * Upstream base URL requests are forwarded to. Documentation only for
+   * providers whose host is per-customer (Azure's is
+   * https://{resourceName}.openai.azure.com, Bedrock's is per-region) — those
+   * derive the real host from the credential inside buildUpstreamRequest.
+   */
   baseUrl: string;
-  /** Auth headers for the upstream, built from the vaulted upstream key. */
-  buildAuthHeaders: (upstreamKey: string) => Record<string, string>;
-  /** Turn the proxied sub-path (the "*" segment) into a full upstream URL. */
-  buildUpstreamUrl: (path: string) => string;
+  /**
+   * Build the full outgoing request: URL (including query) and auth headers.
+   *
+   * One method rather than a separate URL builder and header builder because
+   * the two aren't independent for every provider. AWS SigV4 signs the method,
+   * path, query, headers and a hash of the body together, so its auth header
+   * can only be produced once the final URL and body are known — a
+   * `buildAuthHeaders(key)` seam is structurally incapable of expressing it.
+   * Allowed to be async for the same reason (signing is crypto work).
+   */
+  buildUpstreamRequest: (
+    args: UpstreamRequestArgs,
+  ) => UpstreamRequestSpec | Promise<UpstreamRequestSpec>;
   /**
    * Meter an upstream response into a settled cost.
    *
@@ -152,6 +195,28 @@ export const GEMINI_PRICES: Record<string, ModelPrice> = {
   "gemini-1.5-pro": { inputCentsPerMTok: 125, outputCentsPerMTok: 500 },
 };
 
+/**
+ * Azure OpenAI pricing. Azure serves OpenAI's models, and its standard
+ * (pay-as-you-go) rates have historically matched OpenAI's list price — but
+ * they are set by Microsoft, bill to an Azure subscription, and can diverge,
+ * so this is deliberately its OWN table rather than an alias of
+ * OPENAI_PRICES: a future divergence should be a one-line edit here, not a
+ * silent mispricing everywhere.
+ *
+ * Keyed on what Azure reports back in the response's `model` field, which is
+ * the dated deployment version (e.g. "gpt-4o-2024-08-06") rather than the
+ * bare family name — hence both spellings below. An unlisted key prices at $0
+ * by design (same as every other adapter); verify against your own Azure
+ * pricing page before relying on these for real billing, since rates also
+ * vary by region and deployment type.
+ */
+export const AZURE_PRICES: Record<string, ModelPrice> = {
+  "gpt-4o": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
+  "gpt-4o-2024-08-06": { inputCentsPerMTok: 250, outputCentsPerMTok: 1000 },
+  "gpt-4o-mini": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
+  "gpt-4o-mini-2024-07-18": { inputCentsPerMTok: 15, outputCentsPerMTok: 60 },
+};
+
 // ---------------------------------------------------------------------------
 // Upstream provider keys (BYOK)
 //
@@ -162,6 +227,52 @@ export const GEMINI_PRICES: Record<string, ModelPrice> = {
 // ---------------------------------------------------------------------------
 
 /**
+ * One input a provider needs before Tollgate can call it on an org's behalf.
+ *
+ * Not every provider authenticates with a single opaque string. OpenAI,
+ * Anthropic and Gemini do; Azure OpenAI additionally needs the customer's own
+ * resource name (its endpoint hostname is per-customer), and AWS Bedrock needs
+ * an access-key/secret pair plus a region. Describing those inputs as data —
+ * rather than branching on the provider in the api, the vault and the
+ * dashboard independently — is what keeps "add a provider" a change to this
+ * list plus one adapter file.
+ *
+ * `secret: true` fields are encrypted at rest and NEVER returned by any api
+ * route (same write-once-reveal-never rule as agent tokens). `secret: false`
+ * fields are plain config that shows up in URLs anyway (a region, a hostname)
+ * — stored in the clear so the dashboard can display which resource a key
+ * points at.
+ */
+export interface CredentialField {
+  /** Key this value is stored and looked up under. */
+  name: string;
+  label: string;
+  /** Encrypted at rest and never echoed back when true. */
+  secret: boolean;
+  placeholder?: string;
+  /** Shown under the input — say where to find the value, not what it is. */
+  help?: string;
+  /**
+   * Accepted shape, enforced at save time by the api AND re-checked by the
+   * adapter at request time. Belt-and-braces on purpose for values that get
+   * interpolated into a URL: Azure's resourceName becomes the upstream
+   * HOSTNAME, so a value containing a slash or dot could redirect an org's
+   * traffic — and its api key — to a server of the submitter's choosing.
+   * Defining it here means the two checks cannot drift apart.
+   */
+  pattern?: RegExp;
+  /** Why `pattern` rejected the value, in the user's terms. */
+  patternHelp?: string;
+}
+
+/** The single opaque API key that OpenAI/Anthropic/Gemini all use. */
+const API_KEY_FIELD: CredentialField = {
+  name: "apiKey",
+  label: "API key",
+  secret: true,
+};
+
+/**
  * Providers an org can bring their own key for, keyed by ADAPTER slug — the
  * same vocabulary backend/proxy/src/adapters/registry.ts routes on and that
  * the *_UPSTREAM_KEY env vars use, NOT the "chatgpt"/"claude" assistant labels
@@ -169,12 +280,117 @@ export const GEMINI_PRICES: Record<string, ModelPrice> = {
  * two differ). The label here is the user-facing name for the dashboard.
  */
 export const UPSTREAM_PROVIDERS = [
-  { slug: "openai", label: "OpenAI (ChatGPT)" },
-  { slug: "claude", label: "Anthropic (Claude)" },
-  { slug: "gemini", label: "Google (Gemini)" },
+  {
+    slug: "openai",
+    label: "OpenAI (ChatGPT)",
+    fields: [{ ...API_KEY_FIELD, placeholder: "sk-…" }],
+  },
+  {
+    slug: "claude",
+    label: "Anthropic (Claude)",
+    fields: [{ ...API_KEY_FIELD, placeholder: "sk-ant-…" }],
+  },
+  {
+    slug: "gemini",
+    label: "Google (Gemini)",
+    fields: [{ ...API_KEY_FIELD, placeholder: "AIza…" }],
+  },
+  {
+    slug: "azure",
+    label: "Azure OpenAI",
+    fields: [
+      { ...API_KEY_FIELD, placeholder: "32-character key from the Azure portal" },
+      {
+        name: "resourceName",
+        label: "Resource name",
+        secret: false,
+        placeholder: "my-company",
+        // Deliberately the bare name, not the full URL: the adapter builds
+        // https://{resourceName}.openai.azure.com itself, so accepting a whole
+        // URL here would mean two ways to express the same thing and a class
+        // of "did they include https://?" bugs.
+        help: "Just the name from https://<name>.openai.azure.com — not the full URL.",
+        pattern: /^[a-zA-Z0-9-]+$/,
+        patternHelp:
+          "Use only the resource name itself — letters, numbers and hyphens, with no https:// or dots.",
+      },
+    ],
+  },
+  {
+    slug: "bedrock",
+    label: "AWS Bedrock",
+    fields: [
+      {
+        name: "accessKeyId",
+        label: "Access key ID",
+        secret: true,
+        placeholder: "AKIA…",
+      },
+      { name: "secretAccessKey", label: "Secret access key", secret: true },
+      {
+        name: "sessionToken",
+        label: "Session token",
+        secret: true,
+        help: "Only for temporary (STS) credentials — leave blank for a long-lived IAM user.",
+      },
+      {
+        name: "region",
+        label: "Region",
+        secret: false,
+        placeholder: "us-east-1",
+        help: "The region your Bedrock models are enabled in.",
+        // Same hostname-interpolation risk as Azure's resourceName: this
+        // becomes part of bedrock-runtime.{region}.amazonaws.com.
+        pattern: /^[a-z0-9-]+$/,
+        patternHelp: "An AWS region id such as us-east-1 — lowercase, no spaces.",
+      },
+    ],
+  },
 ] as const;
 
 export type UpstreamProviderSlug = (typeof UPSTREAM_PROVIDERS)[number]["slug"];
+
+/**
+ * The credential fields a provider needs, or an empty list for a slug this
+ * build doesn't know. Callers that iterate this (the api's save validation,
+ * the dashboard's key form) therefore degrade to "no fields" rather than
+ * throwing on an unrecognised provider.
+ */
+export function credentialFieldsFor(slug: string): readonly CredentialField[] {
+  return UPSTREAM_PROVIDERS.find((p) => p.slug === slug)?.fields ?? [];
+}
+
+/**
+ * Fields the org must actually supply. `sessionToken` is the only optional one
+ * today (AWS long-lived IAM users don't have one), and it's marked optional by
+ * carrying a `help` that says so — rather than adding a `required` flag whose
+ * only false value would be this single field.
+ */
+export function isOptionalCredentialField(field: CredentialField): boolean {
+  return field.name === "sessionToken";
+}
+
+/**
+ * A decrypted credential, as the proxy's vault hands it to an adapter.
+ *
+ * Split rather than one flat bag so the two halves keep their different
+ * handling rules visible at the point of use: `secrets` came out of the
+ * encrypted column and must never be logged or returned over the api, while
+ * `config` is ordinary data that already appears in request URLs.
+ */
+export interface UpstreamCredential {
+  secrets: Readonly<Record<string, string>>;
+  config: Readonly<Record<string, string>>;
+}
+
+/**
+ * The field whose value the dashboard shows a masked hint of ("sk-…7mQ4").
+ * The first secret field, by convention — for Bedrock that's the access key
+ * id, which is the half of an AWS credential pair a human actually recognises.
+ */
+export function hintFieldFor(slug: string): string | null {
+  return credentialFieldsFor(slug).find((f) => f.secret)?.name ?? null;
+}
 
 export function isUpstreamProviderSlug(value: string): value is UpstreamProviderSlug {
   return UPSTREAM_PROVIDERS.some((p) => p.slug === value);
@@ -196,6 +412,11 @@ export const ASSISTANT_ADAPTER_SLUGS: Readonly<Record<string, string>> = {
   chatgpt: "openai",
   claude: "claude",
   gemini: "gemini",
+  // Azure and Bedrock are the two cases where the assistant label and the
+  // adapter slug coincide — they name a HOSTING platform rather than a
+  // model family, so there's no consumer-facing alias to translate to.
+  azure: "azure",
+  bedrock: "bedrock",
 };
 
 /**

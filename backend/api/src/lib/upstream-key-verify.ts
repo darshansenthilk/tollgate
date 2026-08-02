@@ -1,4 +1,4 @@
-import type { UpstreamProviderSlug } from "@tollgate/shared";
+import type { UpstreamCredential, UpstreamProviderSlug } from "@tollgate/shared";
 
 /**
  * Validate-before-save: proves a submitted BYOK key actually works against the
@@ -30,17 +30,55 @@ interface ProbeSpec {
   displayName: string;
 }
 
-function probeSpec(slug: UpstreamProviderSlug, key: string): ProbeSpec {
+/**
+ * How to prove a credential works, per provider. Returning null means "this
+ * provider has no cheap read-only probe" — the caller then skips verification
+ * rather than inventing one that costs the org money or gives a false pass.
+ */
+function probeSpec(slug: UpstreamProviderSlug, credential: UpstreamCredential): ProbeSpec | null {
+  const apiKey = credential.secrets["apiKey"] ?? "";
+
   if (slug === "claude") {
     return {
       url: "https://api.anthropic.com/v1/models?limit=1",
-      headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION },
+      headers: { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION },
       displayName: "Anthropic",
     };
   }
+
+  if (slug === "gemini") {
+    return {
+      url: "https://generativelanguage.googleapis.com/v1beta/models",
+      headers: { "x-goog-api-key": apiKey },
+      displayName: "Google",
+    };
+  }
+
+  if (slug === "azure") {
+    const resourceName = credential.config["resourceName"];
+    // parseSaveBody already enforced presence and the hostname-safe pattern,
+    // so this is a belt-and-braces guard rather than an expected branch.
+    if (resourceName === undefined) return null;
+    return {
+      // Lists the resource's deployments: authenticates exactly like a
+      // completion would, consumes no tokens, and additionally proves the
+      // resource name is real — the one thing an api key alone can't.
+      url: `https://${resourceName}.openai.azure.com/openai/deployments?api-version=2023-03-15-preview`,
+      headers: { "api-key": apiKey },
+      displayName: "Azure OpenAI",
+    };
+  }
+
+  if (slug === "bedrock") {
+    // AWS authenticates with a SigV4 signature over the request rather than a
+    // static header, so there's no probe that can be built here from headers
+    // alone. Verified at first use instead.
+    return null;
+  }
+
   return {
     url: "https://api.openai.com/v1/models",
-    headers: { authorization: `Bearer ${key}` },
+    headers: { authorization: `Bearer ${apiKey}` },
     displayName: "OpenAI",
   };
 }
@@ -62,10 +100,14 @@ function extractProviderMessage(body: string): string | null {
 
 export async function verifyUpstreamKey(
   slug: UpstreamProviderSlug,
-  key: string,
+  credential: UpstreamCredential,
   fetchImpl: typeof fetch = fetch,
 ): Promise<VerifyResult> {
-  const spec = probeSpec(slug, key);
+  const spec = probeSpec(slug, credential);
+  // No cheap probe exists for this provider (see probeSpec). Storing
+  // unverified is the lesser evil versus either refusing the provider
+  // outright or burning the org's money on a real completion to check.
+  if (spec === null) return { ok: true };
 
   let res: Response;
   try {

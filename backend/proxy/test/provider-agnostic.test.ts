@@ -12,8 +12,10 @@ import { buildHarness, FIXED_NOW, FakeVault } from "./helpers.js";
 const acmeAdapter: ProviderAdapter = {
   slug: "acme",
   baseUrl: "https://acme.example/api",
-  buildAuthHeaders: (key) => ({ "x-acme-key": key }),
-  buildUpstreamUrl: (path) => `https://acme.example/api/v2/${path}`,
+  buildUpstreamRequest: ({ path, query, credential }) => ({
+    url: `https://acme.example/api/v2/${path}${query}`,
+    headers: { "x-acme-key": credential.secrets["apiKey"] ?? "" },
+  }),
   parseCost: () => ({ costCents: 3, estimatedCostCents: 5 }),
 };
 
@@ -76,6 +78,59 @@ describe("route handler is provider-agnostic", () => {
       actualCostCents: 3,
       estimatedCostCents: 5,
     });
+  });
+
+  it("forwards the caller's query string verbatim", async () => {
+    // Not cosmetic: Gemini selects its streaming format with ?alt=sse, and
+    // Azure OpenAI rejects any request without ?api-version=. Dropping the
+    // query (which req.params["*"] does on its own — it's path-only) silently
+    // sends the upstream a different request than the caller wrote.
+    const h = await buildHarness({
+      adapters: [acmeAdapter],
+      assistantAdapterSlugs: acmeAssistantAdapterSlugs,
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "acme-assistant",
+    });
+    h.upstream.setResponder(() => new Response("{}", { status: 200 }));
+
+    await h.app.inject({
+      method: "POST",
+      url: "/acme/widgets/create?alt=sse&api-version=2024-10-21",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {},
+    });
+
+    expect(h.upstream.calls[0]?.url).toBe(
+      "https://acme.example/api/v2/widgets/create?alt=sse&api-version=2024-10-21",
+    );
+  });
+
+  it("appends nothing when the caller sent no query string", async () => {
+    const h = await buildHarness({
+      adapters: [acmeAdapter],
+      assistantAdapterSlugs: acmeAssistantAdapterSlugs,
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "acme-assistant",
+    });
+    h.upstream.setResponder(() => new Response("{}", { status: 200 }));
+
+    await h.app.inject({
+      method: "POST",
+      url: "/acme/widgets/create",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {},
+    });
+
+    // No stray trailing "?" — an empty query must leave the URL untouched.
+    expect(h.upstream.calls[0]?.url).toBe("https://acme.example/api/v2/widgets/create");
   });
 
   it("knows no provider it wasn't given: /openai 404s under an acme-only registry", async () => {

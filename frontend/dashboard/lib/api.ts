@@ -143,6 +143,8 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_token: "That token doesn't match this agent.",
   upstream_key_not_found: "That key no longer exists.",
   invalid_upstream_key: "That key isn't valid for this agent's provider.",
+  upstream_credential_incomplete:
+    "This provider key is missing something it needs — re-save it in Settings.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -193,6 +195,10 @@ export interface UpstreamKey {
   id: string;
   label: string;
   keyHint: string;
+  /** Non-secret credential fields only (an Azure resource name, a Bedrock
+   *  region) so the UI can show which resource a key points at. Secrets are
+   *  never returned by any route — see the api's upstream-keys module doc. */
+  config: Record<string, string>;
   updatedAt: string;
 }
 
@@ -223,12 +229,21 @@ export function listUpstreamKeys(): Promise<UpstreamKeysResponse> {
  */
 export function saveUpstreamKey(
   providerSlug: string,
-  key: string,
+  /** Keyed by CredentialField.name — a single { apiKey } for most providers,
+   *  or several for Azure/Bedrock. See @tollgate/shared's UPSTREAM_PROVIDERS. */
+  fields: Record<string, string>,
   label?: string,
-): Promise<{ id: string; providerSlug: string; label: string; keyHint: string; updatedAt: string }> {
+): Promise<{
+  id: string;
+  providerSlug: string;
+  label: string;
+  keyHint: string;
+  config: Record<string, string>;
+  updatedAt: string;
+}> {
   return request("/v1/upstream-keys", {
     method: "POST",
-    body: JSON.stringify({ providerSlug, key, label }),
+    body: JSON.stringify({ providerSlug, fields, label }),
   });
 }
 

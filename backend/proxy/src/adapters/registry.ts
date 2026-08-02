@@ -2,6 +2,7 @@ import { ASSISTANT_ADAPTER_SLUGS, type ProviderAdapter } from "@tollgate/shared"
 import { openaiAdapter } from "./openai.js";
 import { claudeAdapter } from "./claude.js";
 import { geminiAdapter } from "./gemini.js";
+import { azureAdapter } from "./azure.js";
 
 /**
  * The provider registry: slug → adapter. The hot path looks an adapter up here
@@ -29,6 +30,7 @@ export const providers: ProviderRegistry = buildRegistry([
   openaiAdapter,
   claudeAdapter,
   geminiAdapter,
+  azureAdapter,
 ]);
 
 /**

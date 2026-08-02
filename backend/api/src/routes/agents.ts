@@ -29,7 +29,7 @@ interface CreateAgentBody {
  * offers. Keep in sync with the frontend's PROVIDERS options if that list
  * changes.
  */
-const ALLOWED_PROVIDER_SLUGS = new Set(["claude", "chatgpt", "gemini"]);
+const ALLOWED_PROVIDER_SLUGS = new Set(["claude", "chatgpt", "gemini", "azure", "bedrock"]);
 
 function parseCreateBody(body: unknown): CreateAgentBody | null {
   if (typeof body !== "object" || body === null) return null;

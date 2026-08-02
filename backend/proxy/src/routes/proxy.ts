@@ -63,6 +63,25 @@ function extractBearer(header: string | undefined): string | null {
 }
 
 /**
+ * The raw query string from the incoming request ("?alt=sse"), or "" if there
+ * wasn't one.
+ *
+ * Needed because req.params["*"] is the PATH portion of the wildcard only —
+ * Fastify strips the query off it. Forwarding without this silently drops
+ * every query parameter the caller sent, which is not a cosmetic loss:
+ * Gemini's streaming endpoint is selected by ?alt=sse (without it the upstream
+ * answers in a different format than the client asked for), and Azure OpenAI
+ * rejects any request lacking ?api-version= outright. Taken from req.url
+ * rather than reconstructed from a parsed object so parameters reach the
+ * provider byte-identical to how the caller wrote them — re-encoding is a
+ * chance to subtly corrupt a value we have no reason to interpret.
+ */
+function queryString(rawUrl: string): string {
+  const index = rawUrl.indexOf("?");
+  return index === -1 ? "" : rawUrl.slice(index);
+}
+
+/**
  * Records a request the gates refused. Denials used to return early without
  * writing anything, so the audit log only ever contained allowed traffic — the
  * dashboard's activity panel would show nothing at exactly the moments an
@@ -178,29 +197,60 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       //    agent's org so a BYOK org forwards with THEIR provider key (and is
       //    billed for it) — see lib/vault.ts for the full resolution order,
       //    including why an undecryptable org key denies rather than falls back.
-      const upstreamKey = await deps.vault.getUpstreamKey(
+      const credential = await deps.vault.getUpstreamKey(
         agent.orgId,
         adapter.slug,
         agent.upstreamKeyId,
       );
-      if (upstreamKey === null) {
+      if (credential === null) {
         reply.code(502);
         return { error: "upstream_key_unavailable" };
       }
 
-      const url = adapter.buildUpstreamUrl(path);
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-        ...adapter.buildAuthHeaders(upstreamKey),
-      };
       // Let the adapter opt the request into usage reporting before it goes
       // out (OpenAI streams omit usage unless asked) — without this, a streamed
       // request returns nothing meterable and would spend against no budget.
+      //
+      // Serialized BEFORE the request is built, not after, because a signing
+      // provider (AWS SigV4) hashes the exact payload as part of its auth
+      // header — the body has to be final before auth can be computed.
       const outgoingBody =
         req.body === undefined
           ? undefined
           : (adapter.prepareRequestBody?.(req.body) ?? req.body);
       const body = outgoingBody === undefined ? undefined : JSON.stringify(outgoingBody);
+
+      let upstreamRequest;
+      try {
+        upstreamRequest = await adapter.buildUpstreamRequest({
+          path,
+          // The caller's query is handed to the adapter rather than appended
+          // here: a signing provider must sign the exact final URL, so it has
+          // to own where the query lands.
+          query: queryString(req.url),
+          method: "POST",
+          body,
+          credential,
+        });
+      } catch (err) {
+        // A credential that's stored but unusable for this provider (an Azure
+        // key saved without its resource name, say). Distinct from
+        // upstream_key_unavailable — the key exists, it just can't address a
+        // real endpoint — so it gets its own code and the adapter's own
+        // message, which names the missing field.
+        req.log.error({ err, providerSlug: adapter.slug }, "upstream request build failed");
+        reply.code(502);
+        return {
+          error: "upstream_credential_incomplete",
+          message: err instanceof Error ? err.message : "This provider credential is incomplete.",
+        };
+      }
+
+      const { url } = upstreamRequest;
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        ...upstreamRequest.headers,
+      };
 
       // Transient "what's happening now" state for the dashboard sidebar —
       // short TTL, Redis-only, never a Postgres row (see current-prompt.ts).
