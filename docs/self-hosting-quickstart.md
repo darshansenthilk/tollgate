@@ -13,10 +13,14 @@ steps in order.
   `.env.example`, and `setup-selfhost.sh`. Put all three in one folder.
   That's everything you need — no other files, no code.
 - Your **license key** (it's in the same email as this guide).
-- A **GitHub account**. This is just how you'll be allowed to download our
-  software. Free account is fine. If you don't have one, make one at
-  [github.com/join](https://github.com/join) and tell us the username so
-  we can give it access.
+- A **GitHub account** — this is just how you'll be allowed to download our
+  software. **Use one shared account for your whole team, not a personal
+  one** (e.g. `yourcompany-tollgate`, not `jane.smith`) — we grant access
+  per account, so a shared one means anyone on your team can deploy or
+  update this without us needing to add each person individually. Free
+  account is fine. Make one at [github.com/join](https://github.com/join)
+  and send us the username so we can grant it access. Whoever needs to run
+  the commands below can then use that same account's login token.
 
 ## Step 1 — Get a download key
 
