@@ -12,6 +12,7 @@ import {
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { orgUpstreamKeys } from "../db/schema.js";
+import { UUID_RE } from "../lib/dashboard-scope.js";
 import {
   encryptUpstreamKey,
   isVaultConfigured,
@@ -307,6 +308,16 @@ export function registerUpstreamKeyRoutes(app: FastifyInstance): void {
   app.delete<{ Params: { id: string } }>("/v1/upstream-keys/:id", async (req, reply) => {
     const orgId = req.activeOrgId!;
     const { id } = req.params;
+
+    // Shape-screened first: this is a uuid column, so a malformed id reaches
+    // Postgres as a 22P02 cast error and — with no setErrorHandler registered in
+    // the api — surfaces as a 500 with the raw driver message. The last of the
+    // six routes that shared that gap; the other five are covered by findAgent
+    // and the activity route.
+    if (!UUID_RE.test(id)) {
+      reply.code(404);
+      return { error: "upstream_key_not_found" };
+    }
 
     const deleted = await db
       .delete(orgUpstreamKeys)

@@ -62,6 +62,34 @@ export default function AgentsPage() {
       );
       setError(null);
     } catch (err) {
+      // THE GONE-PATH. The active dashboard is resolved once on mount, so a poll
+      // 404 is the only signal this page will ever get that it was deleted.
+      // Without this branch it renders the stale agent table under the dead
+      // dashboard's name, with a red error repainting every 3s, forever — and
+      // every row action in that table still reaches the api.
+      //
+      // Recover by RE-RESOLVING, not by blanking to null. The server has already
+      // re-pointed this user's selection at the org's oldest surviving
+      // dashboard, so asking again lands on that survivor; null comes back only
+      // when the deleted one really was the last, which is exactly when the
+      // "No dashboard yet" gate below is the truthful screen.
+      if (err instanceof ApiError && err.code === "dashboard_not_found") {
+        try {
+          setActiveDashboard(await getActiveDashboard());
+          setAgents(null);
+          // Clear it explicitly: the error renders as a sibling ABOVE the state
+          // branch and is otherwise only cleared by a successful poll, so
+          // "That dashboard no longer exists." would stay frozen over the
+          // survivor's agent table — an error permanently attached to a page
+          // that recovered fine.
+          setError(null);
+        } catch (resolveErr) {
+          setError(
+            resolveErr instanceof ApiError ? resolveErr.message : "Failed to reach the api",
+          );
+        }
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to reach the api");
     }
   }, []);

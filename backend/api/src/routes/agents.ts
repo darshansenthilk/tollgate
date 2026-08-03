@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
   currentMonth,
@@ -13,8 +13,8 @@ import {
   type AgentStatus,
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
-import { agents, policies, orgUpstreamKeys } from "../db/schema.js";
-import { resolveDashboardId } from "../lib/dashboard-scope.js";
+import { agents, dashboards, policies, orgUpstreamKeys } from "../db/schema.js";
+import { resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
 import { hashToken, generateToken } from "../lib/tokens.js";
 
 interface CreateAgentBody {
@@ -198,10 +198,35 @@ function parseFreezeBody(body: unknown): { mode: "soft" | "hard" } | null {
   return { mode };
 }
 
-/** Shared lookup for the policy/freeze/unfreeze/delete/update routes. Scoped to
- *  the caller's org: an id belonging to another org resolves to null (-> 404),
- *  so cross-account isolation is enforced right here rather than in each
- *  handler. status lets PATCH refuse to edit an archived agent. */
+/**
+ * Shared lookup for the policy/freeze/unfreeze/delete/update routes. Scoped to
+ * the caller's org: an id belonging to another org resolves to null (-> 404), so
+ * cross-account isolation is enforced right here rather than in each handler.
+ *
+ * IT ALSO REFUSES GONE AGENTS, and that guard lives here rather than in each
+ * route on purpose: it is what stops the entire family of mutations from
+ * resurrecting an agent the app has already revoked. The one that mattered most
+ * is POST /v1/agents/:id/unfreeze, which sets status='active' AND deletes the
+ * Redis freeze key — i.e. undoes BOTH revocation mechanisms — and would have
+ * handed back a live, spendable token inside a dashboard no screen can reach,
+ * effective on the proxy's very next request. Deleting a dashboard is only
+ * really a revocation if unfreeze can't take it back.
+ *
+ * "Gone" is TWO conditions, and they are different sets — both are needed:
+ *   - the agent's own status is 'archived' — an ordinary DELETE /v1/agents/:id,
+ *     whose dashboard is still perfectly alive;
+ *   - the agent's DASHBOARD is soft-deleted — which can hold an agent that is
+ *     still 'active', because the create-race window below can insert one.
+ * Neither condition implies the other, so checking only one leaves a live token
+ * reachable. The realistic trigger isn't malice: a second tab keeps rendering
+ * the deleted dashboard's agent table, and every row action in it still posts.
+ *
+ * The uuid screen is here for the same why-repeat-it reason. `agents.id` is a
+ * uuid column, so a malformed id reaches Postgres as a 22P02 cast error, and
+ * with no setErrorHandler registered anywhere in the api that surfaces as a 500
+ * carrying the raw driver message. Screening the shape turns all five callers'
+ * malformed ids into the 404 they already document.
+ */
 async function findAgent(
   id: string,
   orgId: string,
@@ -212,10 +237,14 @@ async function findAgent(
   providerSlug: string;
   dashboardId: string;
 } | null> {
+  if (!UUID_RE.test(id)) return null;
+
   const rows = await db
     .select({
       id: agents.id,
       policyId: agents.policyId,
+      // Retained for the response/branching in the routes; the archived case can
+      // no longer reach them, since the where clause below excludes it.
       status: agents.status,
       providerSlug: agents.providerSlug,
       // Needed by PATCH's rename clash check, which is scoped to the agent's own
@@ -223,7 +252,18 @@ async function findAgent(
       dashboardId: agents.dashboardId,
     })
     .from(agents)
-    .where(and(eq(agents.id, id), eq(agents.orgId, orgId)));
+    // The join is the second of the two conditions above — findAgent never
+    // looked at the dashboard before, which is exactly how unfreeze could reach
+    // into a deleted one.
+    .innerJoin(dashboards, eq(dashboards.id, agents.dashboardId))
+    .where(
+      and(
+        eq(agents.id, id),
+        eq(agents.orgId, orgId),
+        ne(agents.status, "archived"),
+        isNull(dashboards.archivedAt),
+      ),
+    );
 
   return rows[0] ?? null;
 }
@@ -309,17 +349,57 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       maxBudgetCents: body.maxBudgetCents,
     });
 
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      dashboardId: scope.dashboardId,
-      name: body.name,
-      providerSlug: body.providerSlug,
-      model: body.model,
-      policyId,
-      tokenHash,
-      upstreamKeyId: body.upstreamKeyId,
-    });
+    // THE INSERT IS CONDITIONAL ON THE DASHBOARD STILL BEING LIVE, decided by
+    // Postgres in one statement, because nothing above it can decide it.
+    //
+    // This route is a five-statement, non-transactional sequence, and
+    // resolveDashboardId ran at statement 1 — the race is in the gap before this
+    // one. Soft delete is what opened that gap: a hard `DELETE FROM dashboards`
+    // would have made these two statements queue and failed one of them, but
+    // `UPDATE dashboards SET archived_at` doesn't touch the primary key, so it
+    // takes FOR NO KEY UPDATE, which does NOT conflict with the FOR KEY SHARE
+    // this insert's FK check takes. The parent row always exists now, so the FK
+    // is reduced to checking something that is always true. Unfixed, a delete
+    // committing here leaves a brand-new ACTIVE agent holding a live token
+    // inside an already-swept dashboard — invisible everywhere, never revoked.
+    //
+    // FOR SHARE is the part that actually closes it, not the WHERE. Under READ
+    // COMMITTED a plain sub-SELECT would read its own snapshot, never block on
+    // the uncommitted UPDATE, and still see archived_at IS NULL. FOR SHARE
+    // conflicts with FOR NO KEY UPDATE, so this waits for the delete to commit
+    // and Postgres then re-evaluates the predicate against the new row version
+    // and matches nothing. Either the agent is created before the sweep (and the
+    // sweep archives it) or it is never created at all.
+    const inserted = await db.execute(sql`
+      with live as materialized (
+        select "id"
+        from "dashboards"
+        where "id" = ${scope.dashboardId}::uuid
+          and "org_id" = ${orgId}
+          and "archived_at" is null
+        for share
+      )
+      insert into "agents" (
+        "id", "org_id", "dashboard_id", "name",
+        "provider_slug", "model", "policy_id", "token_hash", "upstream_key_id"
+      )
+      select
+        ${agentId}::uuid, ${orgId}, live."id", ${body.name},
+        ${body.providerSlug}, ${body.model}::text, ${policyId}::uuid,
+        ${tokenHash}, ${body.upstreamKeyId}::uuid
+      from live
+      returning "id"
+    `);
+
+    if ((inserted.rowCount ?? 0) === 0) {
+      // The dashboard was deleted out from under this request. Drop the policy
+      // row written just above — it is 1:1 with an agent that now doesn't exist,
+      // nothing else references it, and leaving it behind would accumulate
+      // orphans on a path a stale tab can hit repeatedly.
+      await db.delete(policies).where(eq(policies.id, policyId));
+      reply.code(404);
+      return { error: "dashboard_not_found" };
+    }
 
     reply.code(201);
     return {
@@ -417,11 +497,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     async (req, reply) => {
       const orgId = req.activeOrgId!;
       const agent = await findAgent(req.params.id, orgId);
-      // findAgent is org-scoped, so another org's id already reads as null here.
-      // Archived agents are hidden from GET /v1/agents (DELETE archives rather
-      // than hard-deletes), so they must not be editable either — treat them
-      // as gone rather than 200-ing an edit nobody can see.
-      if (agent === null || agent.status === "archived") {
+      // findAgent is org-scoped, so another org's id already reads as null here
+      // — and since it also excludes archived agents and agents in deleted
+      // dashboards, so does everything the UI treats as gone. (The archived
+      // check used to live in this handler; it moved into findAgent so
+      // policy/freeze/unfreeze/delete get it too.)
+      if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
       }

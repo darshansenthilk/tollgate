@@ -138,6 +138,27 @@ export function ActivityLog() {
       setEvents(await listActivity(dashboardId, 100));
       setError(null);
     } catch (err) {
+      // The gone-path, and it needs its own copy: this panel resolves the active
+      // dashboard INDEPENDENTLY (its page is a server component, so there's no
+      // client parent to fetch it), which means fixing /agents does not fix this
+      // one. Left alone it keeps displaying the deleted dashboard's full request
+      // log — agent names, models, per-request costs — indefinitely.
+      //
+      // Re-resolve rather than blank: the server has already moved this user to
+      // the oldest surviving dashboard. See app/agents/page.tsx for the full
+      // reasoning, including why setError(null) is not redundant here.
+      if (err instanceof ApiError && err.code === "dashboard_not_found") {
+        try {
+          setActiveDashboard(await getActiveDashboard());
+          setEvents(null);
+          setError(null);
+        } catch (resolveErr) {
+          setError(
+            resolveErr instanceof ApiError ? resolveErr.message : "Couldn't load activity.",
+          );
+        }
+        return;
+      }
       // A 401 already redirects inside lib/api.ts's request(); anything else
       // shows inline rather than blanking the panel.
       setError(err instanceof ApiError ? err.message : "Couldn't load activity.");

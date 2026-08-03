@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { dashboards } from "../db/schema.js";
 
@@ -38,6 +38,15 @@ export type DashboardScopeResult =
  * else's. Collapsing those three into one answer is what stops this endpoint
  * being used to probe which dashboard ids exist — the same non-leaking
  * convention routes/agents.ts uses for agent ids.
+ *
+ * A SOFT-DELETED dashboard joins that 404 set (archived_at IS NOT NULL). This
+ * one predicate is the sole gate for GET /v1/agents, POST /v1/agents and
+ * GET /v1/activity, so it is what makes a deleted dashboard's agents and
+ * activity unreachable — and `dashboard_not_found` is exactly the signal the
+ * frontend's gone-paths key on. It is NOT sufficient for POST /v1/agents,
+ * though: that route runs this check at statement 1 of several, and a delete
+ * committing in the gap would still let the insert through. See the conditional
+ * INSERT … WHERE EXISTS in routes/agents.ts for the half this can't cover.
  */
 export async function resolveDashboardId(
   raw: unknown,
@@ -55,7 +64,15 @@ export async function resolveDashboardId(
     .from(dashboards)
     // The org check IS the authorization: another org's dashboard resolves to
     // nothing here, so its agents are unreachable no matter what id is sent.
-    .where(and(eq(dashboards.id, raw), eq(dashboards.orgId, orgId)));
+    // The archived_at check is the same idea applied to time rather than
+    // ownership: a deleted dashboard resolves to nothing either.
+    .where(
+      and(
+        eq(dashboards.id, raw),
+        eq(dashboards.orgId, orgId),
+        isNull(dashboards.archivedAt),
+      ),
+    );
 
   if (rows[0] === undefined) return { ok: false, error: "dashboard_not_found" };
   return { ok: true, dashboardId: rows[0].id };

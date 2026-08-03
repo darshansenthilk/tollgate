@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { agents, spendEvents } from "../db/schema.js";
-import { resolveDashboardId } from "../lib/dashboard-scope.js";
+import { agents, dashboards, spendEvents } from "../db/schema.js";
+import { resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
 
 /**
  * The activity feed behind the dashboard's log panel: every request one
@@ -102,10 +102,32 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       const orgId = req.activeOrgId!;
       const limit = parseLimit(req.query.limit);
 
+      // `agents.id` is a uuid column, so a malformed id would otherwise reach
+      // Postgres as a 22P02 cast error and — with no setErrorHandler registered
+      // anywhere in the api — come back as a 500 carrying the raw pg driver
+      // message instead of the 404 this route documents.
+      if (!UUID_RE.test(req.params.id)) {
+        reply.code(404);
+        return { error: "agent_not_found" };
+      }
+
+      // The dashboard join is an access check, not a data change. A deleted
+      // dashboard's request log — agent names, models, per-request costs — stayed
+      // fully readable by agent id without it, since this route has no dashboard
+      // scoping of its own. The spend_events rows themselves are untouched and
+      // stay in Postgres for billing; being reachable through the app is the half
+      // that has to look deleted.
       const owned = await db
         .select({ id: agents.id })
         .from(agents)
-        .where(and(eq(agents.id, req.params.id), eq(agents.orgId, orgId)));
+        .innerJoin(dashboards, eq(dashboards.id, agents.dashboardId))
+        .where(
+          and(
+            eq(agents.id, req.params.id),
+            eq(agents.orgId, orgId),
+            isNull(dashboards.archivedAt),
+          ),
+        );
 
       if (owned.length === 0) {
         reply.code(404);

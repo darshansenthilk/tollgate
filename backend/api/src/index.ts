@@ -71,7 +71,7 @@ await app.register(async (scope) => {
   registerAgentRoutes(scope, redis);
   registerUpstreamKeyRoutes(scope);
   registerActivityRoutes(scope);
-  registerDashboardRoutes(scope);
+  registerDashboardRoutes(scope, redis);
 });
 
 async function main() {
