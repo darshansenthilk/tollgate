@@ -1,5 +1,10 @@
 # Auth layers — implementation summary
 
+> **Note (2026-08-03): root `PLAN.md` no longer exists.** It was retired and deleted; the TOTP/2FA
+> material this file points at was already archived into `docs/COMPLETION.md`'s 2026-07-25 and
+> 2026-07-26 entries and into `docs/AUTH-IMPLEMENTATION.md` before that. Read references to root
+> `PLAN.md` below as historical. The live planner is `docs/PLANS.md`.
+
 **Purpose:** One place that lists every auth layer tollgate has (or is building), why each one exists,
 and — critically — what it actually looks like to the user. This is the user-facing/product summary;
 `docs/AUTH-PLAN.md` has the full option brainstorm and trade-off analysis, and root `PLAN.md` carries

@@ -1,6 +1,7 @@
 /**
- * ONE-TIME rollout script for the Dashboard Expansion reset — see PLAN.md,
- * "The agent wipe (authorized 2026-08-02 — irreversible)". The user authorized
+ * ONE-TIME rollout script for the Dashboard Expansion reset — see
+ * docs/COMPLETION.md's 2026-08-02 entry (this was planned in root PLAN.md,
+ * which was retired 2026-08-03). The user authorized
  * deleting every agent and its spend history across every org: "wipe them for
  * all accounts, like they have never made one in the first place". There is no
  * soft-delete, backup, or undo — the pre-wipe counts logged below are the only

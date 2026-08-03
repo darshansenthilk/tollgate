@@ -6,9 +6,84 @@
 
 ---
 
+## Session summary — 2026-08-03
+
+### Dashboard Panel shows the active dashboard's name, and can rename it inline
+
+**Committed by the user as `9f44926` "Added ability to rename dashboards".** Slice 1 (below) was
+committed separately as `d8779e4` "Added multiple dashboard creation". All feature *code* is committed
+— but **this entry itself, the matching edits to `docs/PLANS.md` and `docs/NEXT_PROMPT.md`, and the
+staged deletions of root `PLAN.md` and root `NEXT_PROMPT.md` (both retired 2026-08-03 — recover with
+`git checkout d8779e4 -- PLAN.md NEXT_PROMPT.md`) are uncommitted**; don't
+`git checkout .`/`stash`/`reset --hard` them away. The other ~84 files `git status` shows are CRLF churn
+(`git diff -w --stat` isolates the real ones).
+
+**Problem:** after slice 1, the Dashboard Panel's agent-table card was still titled the generic
+"All agents" no matter which dashboard was active, and a dashboard's name was fixed at creation —
+root `PLAN.md`'s DE8 had deliberately deferred any rename affordance. The user asked for both: show
+the dashboard's name there, and add a pen button beside it (copying the per-row Edit button and its
+animation) to rename it, capped at the same 50 characters.
+
+**What changed:**
+- `backend/api/src/routes/dashboards.ts` — new **`PATCH /v1/dashboards/:id`** (the fifth route). Reuses
+  the create route's validator, renamed `parseCreateBody` → **`parseNameBody`**, so a single 50-char cap
+  governs both writers; reuses the `UUID_RE` shape guard. Org-scoped `UPDATE … RETURNING`, where the
+  `where` clause *is* the authorization check — zero rows matched reads as 404 `dashboard_not_found`.
+  Body is validated *before* the org lookup so a malformed body can't probe which ids exist.
+- `backend/api/src/db/schema.ts` — `dashboards.name`'s comment updated: the cap now has two enforcers.
+- `frontend/dashboard/lib/api.ts` — `renameDashboard(id, name): Promise<Dashboard>`.
+- `frontend/dashboard/components/rename-dashboard-dialog.tsx` (new) — single name field, `maxLength={50}`
+  plus the live `{n}/50` counter matching the create dialog. **No `DialogDescription`** — the user asked
+  for the subtitle removed, making this the only dialog in the codebase without one (checked: `DialogHeader`
+  is plain `flex flex-col gap-2` with no `has-[…]` selectors keyed on it, and base-ui simply omits
+  `aria-describedby` rather than warning).
+- `frontend/dashboard/components/agent-dashboard.tsx` — two new **optional** props, `dashboardName`
+  (defaults to `"All agents"`) and `renameDashboard`. The pen `Button` and the dialog render *only* when
+  `renameDashboard` is supplied. **This component is shared with the marketing landing page's live demo**
+  (`marketing/live-demo-section.tsx`), which has no dashboard concept — the defaults are what keep that
+  surface byte-identical.
+- `frontend/dashboard/app/agents/page.tsx` — passes `activeDashboard.name` and an inline callback that
+  calls `renameDashboard` then `setActiveDashboard(updated)`. Inline so it closes over the
+  already-narrowed non-null `activeDashboard`; `tsc` accepting `.name` without a guard is the proof that
+  narrowing holds.
+
+**Two real bugs found by an adversarial review pass and fixed (plus two stale comments):**
+- **The pen button would have been clipped out of existence at narrow widths.** `break-words`
+  (`overflow-wrap: break-word`) is *excluded from min-content intrinsic sizing*, so a 50-character name
+  with no spaces never let the title box shrink; the `shrink-0` button was pushed past `Card`'s
+  `overflow-hidden` edge and disappeared with no scrollbar to recover it. Triggered around 27 characters
+  at 375px and ~44 at the ~520px floor this component already documents for itself — i.e. exactly the
+  50-char names the feature allows. Fixed with **`wrap-anywhere`** (which *does* reduce min-content;
+  confirmed a real utility in the installed tailwindcss 4.3.2) plus a **`min-w-0` chain** on the
+  flex/grid ancestors so the shrink can propagate.
+- **Stale-request corruption in the rename dialog.** The dialog stays mounted while closed, nothing
+  cancels the fetch, and base-ui allows Escape/backdrop/X dismissal while a save is in flight — so a
+  settled-but-abandoned request could force-close a *reopened* dialog or paint an old error into it.
+  Fixed with a `submissionId` ref (bumped on close, checked after every await) and by resetting `pending`
+  in the reseed block. Note `edit-agent-dialog.tsx` has the same missing `pending` reset — pre-existing,
+  left alone.
+
+**Verified (2026-08-03):** `@tollgate/api` and `@tollgate/dashboard` both `tsc --noEmit` clean. Live
+`curl` against the running dev server, two accounts: rename 200 and persists; 51 chars → 400
+`dashboard_name_too_long`; exactly 50 → 200; whitespace-only and non-string → 400 `invalid_body`;
+**cross-org rename → 404 with the target's name provably unchanged** (not just the status code — the
+follow-up list confirmed it); malformed and unknown uuid → 404; anonymous → 401; and POST create still
+behaves identically after the shared-validator rename. Server-rendered marketing page: still
+"All agents", zero `aria-label="Rename`, per-row Edit pens and `animate-pen-shake` intact.
+
+**Not verified — needs a human at a browser:** the button's appearance and shake animation, the dialog
+itself, and the wrap behaviour at narrow widths. All of it renders client-side after a fetch, so `curl`
+only ever sees "Loading…". **Worth testing specifically: a long unbroken name (e.g.
+`Platform_Engineering_Team_Q3_2026_Rollout_Plan`) at a phone width** — that is the case the `wrap-anywhere`
+fix addresses, and it was fixed by reasoning about CSS intrinsic sizing, not by observation.
+
+---
+
 ## Session summary — 2026-08-02
 
 ### Dashboard Expansion, slice 1 — create / list / select dashboards + the `/agents` empty-state gate
+
+**Committed by the user as `d8779e4` "Added multiple dashboard creation".**
 
 **Problem:** Tollgate had exactly one implicit dashboard per account. Root `PLAN.md`'s "Next slice"
 (approved for implementation 2026-08-02) called for the Google-Docs-style front half of the feature: a
@@ -44,7 +119,8 @@ builds the selector, not the filter.
   `--yes-wipe-all-agents` flag. `policies` and `org_upstream_keys` left alone.
 
 *Frontend:*
-- `frontend/dashboard/lib/api.ts:277-319` — `Dashboard` type plus `listDashboards`, `createDashboard`,
+- `frontend/dashboard/lib/api.ts` (dashboard block, ~277-331 at HEAD — `9f44926` later inserted
+  `renameDashboard` into the middle of it) — `Dashboard` type plus `listDashboards`, `createDashboard`,
   `getActiveDashboard` (unwraps the envelope to `Dashboard | null`), `selectDashboard`; one new
   `dashboard_not_found` entry in `FRIENDLY_ERROR_MESSAGES`.
 - `components/create-dashboard-tile.tsx`, `create-dashboard-dialog.tsx`, `dashboard-tile.tsx` (new) —
@@ -53,7 +129,12 @@ builds the selector, not the filter.
   (DE9/DE10).
 - `app/dashboards/page.tsx` — the "Coming soon" card replaced by a
   `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` grid (DE4) with the create tile first. The h1/subtitle
-  markup from the earlier scaffold is preserved verbatim.
+  markup was carried over untouched from the scaffold **as it stood in the working tree** — note that
+  scaffold's own header restyle (`max-w-2xl` → `max-w-5xl`, `pl-4 text-left`, h1
+  `font-heading text-2xl font-semibold` → `text-[2.1rem] font-medium`, and the subtitle reworded to
+  "Create a dashboard and view shared ones.") was still *uncommitted* at the time and got committed
+  together with this slice in `d8779e4`. So a `3537398…HEAD` diff shows that restyle too; it is not
+  part of this slice's own change.
 - `app/agents/page.tsx` — `getActiveDashboard()` gates the existing 3s `listAgents` poll.
   `activeDashboard` is `Dashboard | null | undefined`, where `undefined` means "not resolved yet", so a
   page load never flashes the empty state at someone who already has a dashboard.
@@ -84,7 +165,7 @@ exactly 50 / non-string); select moves the active row; **cross-org isolation** (
 404s on A's id, keeps a null active); anonymous → 401; unknown and malformed uuids → 404; and
 **persistence** — a brand-new sign-in session returns the same active dashboard. DB inspection confirms
 exactly one `active_dashboards` row per user after three creates (the upsert works). `/dashboards`
-307s to `/sign-in` signed out and 200s signed in with the placeholder gone and the h1/subtitle intact.
+307s to `/sign-in` signed out and 200s signed in, with the placeholder gone and the header rendering.
 A `react-dom/server` harness against the installed `@base-ui/react` v1.6 confirmed
 `DialogTrigger render={<CreateDashboardTile />}` preserves the tile's `<Plus />` child and adds
 `aria-haspopup="dialog"`.
@@ -94,6 +175,48 @@ hover/focus states, the active ring, the dialog's counter, grid breakpoints, the
 from create → `/agents`). The tiles are client-rendered after a fetch, so `curl` only ever sees
 "Loading…", and no browser-automation tool is installed in this environment. Use
 `http://localhost:3000/dashboards` — **not** the WSL gateway IP, which gets a silent CORS 403.
+
+#### Design decisions behind the above (were DE1–DE13 in root `PLAN.md`)
+
+*(Migrated here 2026-08-03 when `PLAN.md` was retired. These are the rationale for choices already in
+the code — useful when changing them, not work to be done. The design reference was a user-supplied
+image, `tollgate plus.png`, deliberately never copied into the repo: the look was recreated with this
+app's own primitives and theme tokens rather than embedding a raster asset.)*
+
+- **Theme tokens, not the reference's literal black-on-white** — the app is light/dark aware, so a
+  hardcoded black border would break in dark mode. The create tile uses `bg-card` + a
+  `ring-1 ring-foreground/10` border, matching `components/ui/card.tsx`.
+- **`aspect-[2/1]`** — the reference was ≈2.6:1; 2:1 reads as one tile among several rather than a
+  banner strip. Width comes from the grid column, not a fixed pixel value.
+- **Solid border, not dashed** — the reference showed solid, so the more common "dashed = add new"
+  idiom was deliberately *not* substituted.
+- **`grid-cols-1 sm:grid-cols-2 lg:grid-cols-3`** — first-guess breakpoints, meant to be retuned once
+  real tiles exist.
+- **`maxLength={50}` plus a live `{n}/50` counter**, rather than only validating on submit, so the limit
+  is visible before it's hit. The server enforces it independently.
+- **Creation-order tile ordering** (newest last/rightmost), not recency-of-use or alphabetical.
+- **`bg-primary text-primary-foreground` for dashboard tiles** — the most different-reading option from
+  the create tile's `bg-card`, so the two tile *kinds* (an action vs. a specific dashboard) don't get
+  confused; reuses `Button`'s `default` fill rather than inventing a token.
+- **`ring-2 ring-foreground` marks the active tile** — with several tiles on screen, something has to
+  show which one the Dashboard Panel is actually showing.
+- **Creating a dashboard auto-selects it and navigates to `/agents`** — by analogy with Google Docs
+  opening a doc created from a template. This was inferred from the user's "goes straight to Dashboard
+  Panel" (said about *clicking* an existing tile), not stated about creation, and was flagged as such.
+- **No uniqueness constraint on dashboard names within an org** — `agents` does reject duplicates (409),
+  but that wasn't asked for here.
+- **Ownership is `org_id`, selection is per-`user_id`** — the largest call, and an assistant
+  recommendation rather than a user instruction: it matches how `agents`/`policies` already scope, and
+  `lib/auth.ts` describes the Better Auth org plugin as "the seed of the future host/invite/delegate
+  model", i.e. infrastructure already present for the sharing half of this feature.
+- **No auto-provisioned default dashboard — not at sign-up, and no migration for existing accounts.**
+  The user's own answer was *"empty slate — must create a dashboard in Manage Dashboards first"*
+  (2026-08-02), and existing accounts got the global agent wipe above instead of a migration: a clean
+  reset. **Do not "fix" new accounts landing on an empty `/agents` by inserting a `dashboards` row in
+  `backend/api/src/lib/auth.ts`'s sign-up org-provisioning hook** — that would reverse an explicit user
+  decision and make the `/agents` empty-state gate dead code.
+- **Names were read-only after creation** — superseded 2026-08-03 by the rename pen (see the entry
+  above).
 
 ---
 
@@ -184,6 +307,43 @@ login-throttle lockout. **Not verified:** an actual sign-in as this account — 
 real password and a live code from their authenticator app, neither of which this session had or
 should ask for; left for the user to click through themselves now that the `/agents` redirect fix is
 in.
+
+### Landing page: the two stacked navbars merged into one
+
+*(Recovered from root `PLAN.md` on 2026-08-03, when that file was retired. This shipped in commit
+`4175a5e` "Improved landing page nav bar" but had never been written up here — `PLAN.md` was its only
+record, which is exactly why it was migrated rather than deleted.)*
+
+**Problem:** `"/"` rendered **two** navbars stacked. `MainNav` (`components/main-nav.tsx`) mounts
+globally from the root layout on every route not in `NO_NAV_ROUTES`, and `"/"` wasn't in that set — so
+it sat above the marketing page's own `StickyNav` (`components/marketing/sticky-nav.tsx`). Worse, the
+top one showed `Agent Dashboard` / `System status` / `Settings` regardless of session, i.e. dead links
+for signed-out visitors, and offered no sign-in affordance at all.
+
+**What changed:**
+- `components/main-nav.tsx` — `"/"` added to `NO_NAV_ROUTES`, so the landing page never mounts the
+  global nav. (The set has since also gained `/security`.)
+- `components/marketing/sticky-nav.tsx` — kept as the landing page's single nav, since it already
+  carried the sticky/blur/border styling worth preserving. Its `TollgateLogo` SVG was swapped for
+  `MainNav`'s `<img src="/logo.svg">`; the logo+"Tollgate" lockup was wrapped in a link to `"/"` (new
+  behaviour — neither navbar did this before); the "Request access" CTA was removed from the nav
+  entirely, leaving "Sign in" as the sole signed-out action; and the signed-in branch became
+  `Agent Dashboard` / `System status` / `Settings` / `Sign Out`.
+- `components/nav-links.ts` (new) — the shared `{href,label}[]` array, so `main-nav.tsx` and
+  `sticky-nav.tsx` stop maintaining duplicate copies of the same list.
+- `components/marketing/tollgate-logo.tsx` kept — still used by `access-cta-section.tsx`.
+
+**Decisions taken (were D1–D4 in `PLAN.md`):** kept the lowercase "System status" label; gave the three
+signed-in links the plain uppercase nav-link treatment rather than the glass-button CTA look, since they
+are now three peers rather than one highlighted action; landing-page Sign Out refreshes in place instead
+of redirecting, because `"/"` stays valid post-sign-out (unlike `MainNav`'s, which must leave auth-gated
+pages); and the home link uses a plain `<a href="/">` to match that file's existing anchor convention.
+
+**Verified:** `tsc --noEmit` clean; `curl` against the dev server confirmed signed-out `"/"` renders
+exactly one `<nav>` with only "Sign in" on the right and no "Request access", `/sign-in` and `/sign-up`
+render no nav, and `/agents` still 307s to `/sign-in`. **Never verified:** the signed-in branch and the
+sign-out click — `StickyNav` is a client component that server-renders the signed-out branch first, so
+`curl` cannot see the signed-in view, and no browser automation is installed. Still worth a manual look.
 
 ---
 

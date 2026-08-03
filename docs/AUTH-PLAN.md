@@ -1,5 +1,10 @@
 # Layering auth beyond email+password — reference doc
 
+> **Note (2026-08-03): root `PLAN.md` no longer exists.** It was retired and deleted; the TOTP/2FA
+> material this file points at was already archived into `docs/COMPLETION.md`'s 2026-07-25 and
+> 2026-07-26 entries and into `docs/AUTH-IMPLEMENTATION.md` before that. Read references to root
+> `PLAN.md` below as historical. The live planner is `docs/PLANS.md`.
+
 **Purpose:** Standing reference for tollgate's account-security roadmap beyond the current
 email+password + progressive-lockout baseline (see `docs/COMPLETION.md`, "Progressive sign-in
 lockout"). Captures the full option space that was researched, the reasoning, and the recommended

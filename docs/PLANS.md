@@ -2,58 +2,134 @@
 
 **Purpose:** Tracks the next task to work on for this branch. A fresh Claude session (after a context clear) should treat the "Next task" section below as its starting instruction, after reading `docs/COMPLETION.md` for history.
 
+**There are three rolling planning docs, and this is the only one that says what to do next:**
+- **`docs/PLANS.md`** (this file) — live status + the authoritative **"Next task"**. Edited in place.
+- **`docs/COMPLETION.md`** — dated history of what actually shipped; new entries go on top. (The
+  pre-2026-07-25 tail is legacy oldest-first, so find entries by *date*, not position.) Written *after*
+  verification, so it's the most reliable answer to "what exists right now". Also holds the design
+  rationale behind shipped choices.
+- **`docs/NEXT_PROMPT.md`** — the ready-to-paste prompt for resuming after a context clear.
+
+Plus two auth-specific **reference** docs that never carry next tasks: `docs/AUTH-PLAN.md` (option
+brainstorm) and `docs/AUTH-IMPLEMENTATION.md` (what each auth layer does). Both still contain sentences
+calling root `PLAN.md` "the actionable, current plan" — ignore those; that file is gone, and each doc
+now carries a note saying so.
+
+> Root **`PLAN.md` was retired and deleted on 2026-08-03.** It had become a second, confusable
+> completion doc — near-identical name, overlapping content, and its "which one is authoritative"
+> relationship with this file had already flipped twice, once leaving a full implementation plan for
+> *already-shipped* code sitting at the top of the repo where it read as a to-do list. Everything in it
+> was migrated first: the Dashboard Expansion design rationale (the old DE1–DE13) and a previously
+> unrecorded 2026-07-26 landing-page-navbar entry went into `docs/COMPLETION.md`; its still-open threads
+> went into "Other open threads" below. Root `NEXT_PROMPT.md`, a stale duplicate of
+> `docs/NEXT_PROMPT.md` from the auth era, was deleted in the same pass. Recover either with
+> `git checkout d8779e4 -- PLAN.md NEXT_PROMPT.md` if something turns out to have been missed.
+
 ---
 
-## Status as of 2026-08-02 (end of the Dashboard Expansion planning session)
+## Status as of 2026-08-03
 
-Current branch is `Eshaan-feature-permissions` — checked out as a clean copy of `main` before Dashboard
-Expansion was scoped. It's genuinely still content-identical to its own HEAD: the large `git status` diff
-you'll see (~85 files) is CRLF/LF line-ending churn, not real changes — confirmed via `git diff -w`
-returning empty. Nothing has been committed this session. (Everything in this file above the 2026-07-24
-entries — the `Eshaan-2` auth work — shipped and merged into `main` long ago; see `docs/COMPLETION.md`.)
+Current branch is `Eshaan-feature-permissions`. **All the feature CODE is committed** in two commits:
+- `d8779e4` "Added multiple dashboard creation" — slice 1.
+- `9f44926` "Added ability to rename dashboards" — the dashboard name in the panel + the rename pen.
 
-**Dashboard Expansion slice 1 is now IMPLEMENTED and API-verified (2026-08-02) — not committed, and
-not yet checked in a browser.** The create tile, selector tiles, the `dashboards`/`active_dashboards`
-data model, all four API routes, the migration, the authorized agent wipe, and the `/agents`
-empty-state gate all landed this session. Full detail — including the three bugs an adversarial review
-caught and the exact `curl` verification matrix — is in `docs/COMPLETION.md`'s 2026-08-02 entry. Root
-**`PLAN.md`** still holds the feature pitch, the visual specs, DE1–DE13, and what remains explicitly
-out of scope (sharing, permission tiers, scoping agents to a dashboard).
+> ⚠️ **The tree is NOT clean, and that matters.** The three planning docs above carry **uncommitted**
+> 2026-08-03 edits and are the ONLY copy of this handoff, and the deletions of root `PLAN.md` /
+> `NEXT_PROMPT.md` are staged but uncommitted too. `HEAD`'s versions still say "Nothing has been
+> committed this session" and "four API routes". **Do not run `git checkout .`, `git stash`, or
+> `git reset --hard`** — it would destroy the notes you are reading and resurrect the two retired files.
+> The *other* ~84 modified files really are CRLF/LF line-ending churn; `git diff -w --stat` isolates the
+> real ones. Ask the user before discarding anything. (Everything in this file above the 2026-07-24
+> entries — the `Eshaan-2` auth work — shipped and merged into `main` long ago.)
 
-`docs/COMPLETION.md` has the full detail of every already-shipped item. `docs/PLANS.md` (this file) is
-the canonical short-form planner/pointer; root `PLAN.md` is where the actual current feature's detail
-lives while it's in progress — check root `PLAN.md` first, this file second.
+**Dashboard Expansion has two slices shipped and API-verified, neither checked in a browser yet.**
+What exists: the `dashboards`/`active_dashboards` data model + migration `0007_rare_lightspeed.sql`,
+**five** API routes (create / list / active / select / **rename**), the create tile + dialog, the
+dashboard-selector tiles, the `/agents` empty-state gate, the panel's dashboard-name title, and the
+rename pen button + dialog. The authorized agent wipe has been run. Full detail — including the five
+bugs two adversarial review passes caught and the exact `curl` verification matrices — is in
+`docs/COMPLETION.md`'s 2026-08-02 and 2026-08-03 entries. The original feature pitch, the visual specs,
+and the numbered design defaults now live in that same 2026-08-02 entry's "Design decisions" subsection.
 
-**The agent filter feature is cancelled** — documented 2026-07-15, never started, dropped by the user. Do not implement it.
+**The agent filter feature is cancelled** — a *UI filter control on the agents table* (filter by
+Assistant / Status, plus a name search), documented in this file 2026-07-15 and since deleted from it
+by commit `613ae0a`; never started, dropped by the user. Do not implement it. **This is NOT the same
+thing as "scoping agents to a dashboard" in the Next task section below** — that predates dashboards
+entirely and is still a live candidate. If the user says "the filter", they almost certainly mean
+dashboard scoping; ask rather than citing this cancellation at them.
 
 ## Next task
 
-**Waiting on the user's browser check of Dashboard Expansion slice 1 (implemented 2026-08-02).** No new
-feature work is queued. Nothing has been committed.
+**AWAITING THE USER'S INSTRUCTIONS on the Dashboard Expansion main feature. Do not start work — ask
+first.** Two slices are shipped and committed (see Status above). Nothing is queued, and the next
+direction is the user's call, not a default to be inferred from this file.
 
 ### RESUME HERE (do this first, in order)
-1. **Read `docs/COMPLETION.md`'s 2026-08-02 entry** for what shipped, how it was verified, and the three
-   review-caught bugs already fixed. Root `PLAN.md` still holds the visual specs and DE1–DE13.
-2. **Restart the dev servers** if picking this up in a live session — infra (Postgres/Redis) via Docker,
-   `pnpm dev` for the three services (`:8080` proxy, `:4000` api, `:3000` dashboard). If a browser check
-   is needed, use `http://localhost:3000`, **not** a WSL gateway-IP link — the api's CORS/Better-Auth
-   trusted-origin is pinned to `http://localhost:3000` (`DASHBOARD_ORIGIN` in `.env`); a gateway-IP origin
-   gets a silent 403 that surfaces to the user as "Something went wrong" with no useful client-side error
-   (root-caused and fixed once already — don't re-debug it, just use `localhost`).
-3. **Ask the user for the browser result before doing anything else.** Everything still unverified is
-   visual/interaction (tile proportions, hover/focus, the active ring, the `{n}/50` counter, grid
-   breakpoints, create → `/agents` click-through). `curl` can't reach any of it — the tiles render
-   client-side after a fetch, so the server HTML is always just "Loading…". No browser-automation tool is
-   installed, and per the user's standing instruction, **don't install one without asking**.
-4. **Then pick the next slice with the user.** The obvious candidates, all still explicitly out of scope
-   in root `PLAN.md`: the `dashboard_members` table + permission tiers, the share/invite UI, and scoping
-   individual **agents** to a dashboard (the big one — it touches agent creation, the proxy hot path, and
-   existing data; this slice deliberately built the selector, not the filter).
+1. **Read `docs/COMPLETION.md`'s 2026-08-03 and 2026-08-02 entries** — what shipped, how it was verified,
+   and the five review-caught bugs already fixed. The 2026-08-02 entry also carries a "Design decisions"
+   subsection (the old DE1–DE13: why `aspect-[2/1]`, why `bg-primary` tiles, why org-scoped ownership,
+   etc.) — read that before changing any of those choices.
+2. **Ask the user what they want next.** Do not pick a slice unilaterally. The plausible candidates, all
+   still genuinely unbuilt:
+   - **Scoping agents to a dashboard** — the big one, and the most likely intent behind "the main
+     feature". Today every dashboard shows the *same* org-wide agent list; the tiles switch which
+     dashboard is *active* but nothing filters by it. This built the **selector, not the filter**.
+     It would touch `agents` (a `dashboard_id` column), agent creation, the proxy hot path, and existing
+     rows.
+   - **`dashboard_members` + permission tiers** — the "shared with other users at varying permissions"
+     half of the original pitch. Needs the tiers actually defined (viewer/editor/owner? who can invite,
+     remove, delete, change roles?) before any API or UI work.
+   - **Share/invite UI** — depends on the above.
+   - **Org/team boundaries** — never decided: can a dashboard be shared with someone *outside* the
+     owner's organization, or only within it? Blocks the sharing design.
+   - Smaller polish: a rename affordance on the `/dashboards` selector tiles (the pen exists only in the
+     Dashboard Panel), deleting a dashboard, duplicate-name handling (names are non-unique by choice).
+3. **Restart the dev servers** if a live check is needed — infra (Postgres/Redis) via Docker, `pnpm dev`
+   for the three services (`:8080` proxy, `:4000` api, `:3000` dashboard). Note node/pnpm/docker/git-network
+   only run via `powershell.exe` from this WSL shell. For a browser link, give the user
+   `http://localhost:3000`, **not** a WSL gateway-IP link — the api's CORS/Better-Auth trusted origin is
+   pinned to `http://localhost:3000` (`DASHBOARD_ORIGIN` in `.env`); a gateway-IP origin gets a silent 403
+   that surfaces as "Something went wrong" with no useful client-side error (root-caused once already —
+   don't re-debug it). The gateway IP (`ip route | grep default`) is only for this shell's own `curl`.
+4. **The browser check is still outstanding and worth asking about**, though it no longer blocks: every
+   visual/interaction detail is unverified (tile proportions, hover/focus, the active ring, the `{n}/50`
+   counters, grid breakpoints, create → `/agents` click-through, the pen button's shake animation).
+   `curl` cannot reach any of it — these render client-side after a fetch, so server HTML is always just
+   "Loading…". No browser-automation tool is installed, and per the user's standing instruction,
+   **don't install one without asking.** Highest-value single check: **a long unbroken dashboard name at
+   phone width**, which is the `wrap-anywhere` clipping fix that was reasoned about rather than observed.
+
+### Other open threads (inherited from the retired `PLAN.md`, unrelated to Dashboard Expansion)
+These were the "still open" tail of the landing-page-integration effort. None is scheduled; they're
+recorded here so retiring `PLAN.md` didn't drop them.
+- **No designed flow from "read the pitch" → sign up → land in the dashboard**, beyond the nav itself.
+  The access-CTA section's own conversion path is still unscoped.
+- **The 2FA UI has never been checked in a real browser** — opt-in prompt, QR rendering, enrollment and
+  challenge screens, backup-codes modal, Settings. All of it was verified by reading code plus API-level
+  `curl`/DB passes only. See `docs/AUTH-IMPLEMENTATION.md`'s verification note.
+- **Nobody has signed in as the real `eshaan.joshi07@gmail.com` account with a live TOTP code** since the
+  auth merge. Only the user can do this.
+- **The signed-in branch of the merged landing-page nav was never browser-verified** either (it
+  server-renders the signed-out branch first, so `curl` can't see it) — see `docs/COMPLETION.md`'s
+  2026-07-26 navbar entry.
+- **Layer 3 (step-up re-auth on sensitive agent-control actions) remains unplanned** — `docs/AUTH-PLAN.md`
+  §4 has the brainstorm.
+- **Gotcha worth remembering near auth-adjacent code:** when `"/"` stopped being the dashboard, several
+  client-side `router.push("/")` / `router.replace("/")` calls silently sent freshly authenticated users
+  to the marketing page instead of `/agents` (fixed 2026-07-26). Target `/agents` explicitly where "the
+  app" is meant; never assume `"/"` means that.
 
 ### Known issues, deliberately not fixed
+- **Source comments cite a `PLAN.md` that no longer exists.** ~15 files (`lib/auth.ts`,
+  `require-auth.ts`, `login-throttle.ts`, the 2FA components, etc.) reference "PLAN.md §5/§6" for the
+  auth work. Those sections had already been rewritten out of `PLAN.md` long before it was retired on
+  2026-08-03, so the pointers were stale even then. **The auth material they mean now lives in
+  `docs/AUTH-IMPLEMENTATION.md` and `docs/AUTH-PLAN.md`.** Left alone deliberately — rewriting ~15
+  committed source comments is its own change, not a docs-cleanup side effect.
 - **`routes/agents.ts` 500s on a malformed `:id`.** A non-UUID `:id` hits Postgres as a 22P02 cast error,
-  and the api registers no `setErrorHandler`, so Fastify answers 500 with the raw driver message. Six
-  `agents.ts` routes have this. `routes/dashboards.ts` now shape-screens its own `:id` first (see the
+  and the api registers no `setErrorHandler`, so Fastify answers 500 with the raw driver message. Five
+  `agents.ts` routes have this, plus `GET /v1/agents/:id/activity` in `routes/activity.ts` — six in all,
+  so a shared fix must cover both files. `routes/dashboards.ts` now shape-screens its own `:id` first (see the
   `UUID_RE` comment there); the general fix is a shared guard, a params schema, or a global
   `setErrorHandler` — not per-route patches.
 - **`@tollgate/shared` fails `tsc --noEmit`** (`src/license.ts` — missing Node globals plus a real
@@ -63,9 +139,19 @@ feature work is queued. Nothing has been committed.
 
 ### Notes
 - The wipe already ran (2026-08-02) and deleted **nothing** — `agents`, `spend_events`, and `policies`
-  were all already empty across all 10 orgs, including `eshaan.joshi07@gmail.com`'s. PLAN.md's premise
-  that live agents existed did not hold. Don't run it again expecting a different result.
-- The `org_id`-not-`user_id` ownership call (root `PLAN.md`, DE13) was implemented as recommended:
+  were all already empty across all 10 orgs, including `eshaan.joshi07@gmail.com`'s. The plan's premise
+  that live agents existed did not hold. Don't run it again expecting a different result. More generally:
+  **query the DB before trusting a plan's claims about live data** — that check cost nothing and changed
+  what was worth telling the user.
+- **`components/agent-dashboard.tsx` is shared with the marketing landing page's live demo**
+  (`components/marketing/live-demo-section.tsx`), which runs a client-side simulator and has no dashboard
+  concept. Both dashboard-related props (`dashboardName`, `renameDashboard`) are optional for that reason.
+  Any future change to that component has to be checked against the marketing page too — the server-rendered
+  `/` is curl-checkable, so verifying it is cheap.
+- The user commits/merges via their own git client **mid-session**, so re-check `git log` before
+  claiming anything is uncommitted; a "nothing committed yet" note in these docs can go stale within
+  minutes.
+- The `org_id`-not-`user_id` ownership call was implemented as recommended:
   `dashboards.org_id` scopes ownership, `active_dashboards.user_id` scopes selection.
 - Merges into `main` are done manually by the user — never push a feature branch to `main` on their
   behalf, and never commit without being asked.
@@ -281,9 +367,9 @@ Then: React DevTools Profiler on open of each of `CreateAgentDialog` and `AgentP
 ## Candidate next steps (secondary, not committed)
 
 1. **Model-value mismatch in the create-agent dropdown.** It offers `opus`/`sonnet`/`haiku`, but the Claude adapter prices full model IDs like `claude-3-5-sonnet-20241022` (`backend/proxy/src/adapters/claude.ts:14`), so agents created with those values never match a price entry and meter at 0. Pre-existing; surfaced during the 2026-07-23 rebase.
-2. **Orphaned `handleDeleted`** in `frontend/dashboard/app/page.tsx` — dead since the Actions column was removed (it was only passed to the deleted `DeleteAgentButton`). `handleBatchDeleted` is the live one. Typecheck does not flag it. One-line deletion.
+2. ~~**Orphaned `handleDeleted`**~~ — **STALE, do not act on this (verified 2026-08-03).** It named `frontend/dashboard/app/page.tsx`, which no longer exists (deleted in `62064fe` when the dashboard split into `(marketing)/` and `agents/`). `handleDeleted` now lives at `frontend/dashboard/app/agents/page.tsx:108` and is **live** — passed as `onDeleted` to `AgentDashboard`, whose prop is required (`components/agent-dashboard.tsx:121`) and invoked on batch delete. Deleting it would break the build.
 3. **Rename the OpenAI adapter's slug from `openai` to `chatgpt`.** Would make the dashboard's assistant vocabulary and the proxy's adapter slugs identical, removing the need for the `assistantAdapterSlugs` bridge (`backend/proxy/src/adapters/registry.ts`). Riskier: touches the live `/openai/*` route path, `openai.ts`'s `slug`, the `.env` var name (`OPENAI_UPSTREAM_KEY` → `CHATGPT_UPSTREAM_KEY`), `openai-route.test.ts`, and `demo/hammer.sh`/`demo/README.md`.
-4. **`DELETE /v1/agents/:id`** is still a `501` stub (`backend/api/src/routes/stubs.ts`).
+4. ~~**`DELETE /v1/agents/:id`** is still a `501` stub~~ — **STALE, already shipped (verified 2026-08-03).** Implemented in `15a5ea7` and live at `backend/api/src/routes/agents.ts:479` (org-scoped lookup, 404 cross-org, archives rather than hard-deletes, sets the Redis freeze key). `stubs.ts` has no such stub — only `GET /v1/agents/:id` and the `/v1/policies*` ones.
 
 ## How to use this file
 
