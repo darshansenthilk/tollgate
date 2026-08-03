@@ -17,3 +17,6 @@ demo/.demo-agent.json
 .agents/
 .claude/skills/
 skills-lock.json
+
+#Claude documentation for intermediate thinking and context handling
+claude-docs/
