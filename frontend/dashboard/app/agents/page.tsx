@@ -17,6 +17,7 @@ import {
   freezeAgent,
   getActiveDashboard,
   listAgents,
+  renameDashboard,
   unfreezeAgent,
   updateAgent,
   type AgentListItem,
@@ -132,6 +133,12 @@ export default function AgentsPage() {
         <AgentDashboard
           agents={agents}
           actions={ACTIONS}
+          dashboardName={activeDashboard.name}
+          // Inline so it closes over the narrowed (non-null) activeDashboard;
+          // the card title re-renders from this state, so no refetch is needed.
+          renameDashboard={async (name) => {
+            setActiveDashboard(await renameDashboard(activeDashboard.id, name));
+          }}
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

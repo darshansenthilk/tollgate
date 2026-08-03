@@ -309,6 +309,18 @@ export async function getActiveDashboard(): Promise<Dashboard | null> {
 }
 
 /**
+ * Renames a dashboard in place — it keeps its id, so whoever has it selected
+ * stays on it and just sees the new name. Same 50-character cap the create
+ * route enforces.
+ */
+export function renameDashboard(id: string, name: string): Promise<Dashboard> {
+  return request<Dashboard>(`/v1/dashboards/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+/**
  * Switches the caller's active dashboard. Scoped to the active org by the api,
  * so another org's (or a deleted) dashboard comes back as dashboard_not_found.
  */

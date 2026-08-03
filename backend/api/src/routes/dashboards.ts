@@ -15,7 +15,8 @@ import { activeDashboards, dashboards } from "../db/schema.js";
  * activeOrgId, never client input. Same pattern as routes/agents.ts.
  */
 
-/** Wire shape for a dashboard, shared by all four routes. */
+/** Wire shape for a dashboard, shared by all five routes (every one of them
+ *  builds it through toJson below, so a new field can't miss an endpoint). */
 interface DashboardJson {
   id: string;
   name: string;
@@ -28,9 +29,10 @@ type NameParseResult =
   | { ok: true; name: string }
   | { ok: false; error: "invalid_body" | "dashboard_name_too_long" };
 
-/** The dialog's maxLength={50} is a convenience, not a boundary — the cap is
- *  enforced here too, same as every other input this api accepts. */
-function parseCreateBody(body: unknown): NameParseResult {
+/** Shared by POST (create) and PATCH (rename) so one cap governs both — a name
+ *  the create route rejects can't sneak in through a later edit. The dialogs'
+ *  maxLength={50} is a convenience, not a boundary. */
+function parseNameBody(body: unknown): NameParseResult {
   if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
   const rec = body as Record<string, unknown>;
 
@@ -74,7 +76,7 @@ async function setActiveDashboard(userId: string, dashboardId: string): Promise<
 export function registerDashboardRoutes(app: FastifyInstance): void {
   app.post<{ Body: unknown }>("/v1/dashboards", async (req, reply) => {
     const orgId = req.activeOrgId!;
-    const parsed = parseCreateBody(req.body);
+    const parsed = parseNameBody(req.body);
     if (!parsed.ok) {
       reply.code(400);
       return parsed.error === "dashboard_name_too_long"
@@ -132,6 +134,51 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
     // Wrapped in an object because a Fastify handler can't return a bare null.
     return { dashboard: row === undefined ? null : toJson(row) };
   });
+
+  app.patch<{ Params: { id: string }; Body: unknown }>(
+    "/v1/dashboards/:id",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      if (!UUID_RE.test(req.params.id)) {
+        reply.code(404);
+        return { error: "dashboard_not_found" };
+      }
+
+      // Validate before the org lookup so a malformed body can't be used to
+      // probe which dashboard ids exist — a bad name 400s either way.
+      const parsed = parseNameBody(req.body);
+      if (!parsed.ok) {
+        reply.code(400);
+        return parsed.error === "dashboard_name_too_long"
+          ? {
+              error: "dashboard_name_too_long",
+              message: `A dashboard name can be at most ${MAX_NAME_LENGTH} characters.`,
+            }
+          : { error: "invalid_body" };
+      }
+
+      // Org-scoped UPDATE: the where clause is the authorization check, so
+      // another org's id updates zero rows and reads as 404 (see the select
+      // route). Returning the updated row means no follow-up read.
+      const updated = await db
+        .update(dashboards)
+        .set({ name: parsed.name })
+        .where(and(eq(dashboards.id, req.params.id), eq(dashboards.orgId, orgId)))
+        .returning({
+          id: dashboards.id,
+          name: dashboards.name,
+          createdAt: dashboards.createdAt,
+        });
+
+      const dashboard = updated[0];
+      if (dashboard === undefined) {
+        reply.code(404);
+        return { error: "dashboard_not_found" };
+      }
+
+      return toJson(dashboard);
+    },
+  );
 
   app.post<{ Params: { id: string } }>("/v1/dashboards/:id/select", async (req, reply) => {
     const orgId = req.activeOrgId!;

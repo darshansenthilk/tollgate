@@ -234,7 +234,8 @@ export const dashboards = pgTable("dashboards", {
   /** Stamped from the session's active org, never client input — see the module
    *  doc comment. */
   orgId: text("org_id").notNull(),
-  /** Length-capped at 50 by POST /v1/dashboards, not by the column. No
+  /** Length-capped at 50 by the dashboards routes — both writers, POST (create)
+   *  and PATCH (rename), go through one shared validator — not by the column. No
    *  uniqueness constraint within an org (unlike agents.name) — duplicate
    *  dashboard names are allowed for now. */
   name: text("name").notNull(),

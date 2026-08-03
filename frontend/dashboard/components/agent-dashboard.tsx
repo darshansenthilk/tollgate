@@ -33,6 +33,7 @@ import { AgentStatusBadge } from "@/components/agent-status-badge";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { EditAgentDialog } from "@/components/edit-agent-dialog";
 import { AgentIntegrationDialog } from "@/components/agent-integration-dialog";
+import { RenameDashboardDialog } from "@/components/rename-dashboard-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import { AgentAttentionAlerts } from "@/components/agent-attention-alerts";
@@ -122,6 +123,14 @@ interface AgentDashboardProps {
    *  `position: relative` panel); "fixed" (default) for the real dashboard,
    *  pinned to the real viewport. See AgentAttentionAlerts's own prop doc. */
   attentionAlertsPosition?: "fixed" | "absolute";
+  /** Title of the agent table's card — the active dashboard's name on the real
+   *  page. Optional because the marketing demo has no dashboard concept at all;
+   *  it keeps the generic "All agents" wording this defaults to. */
+  dashboardName?: string;
+  /** Renames the dashboard named above. Injected like `actions` rather than
+   *  imported, so this component stays usable without a real api. Omitted by
+   *  the marketing demo, which then renders no edit affordance at all. */
+  renameDashboard?: (name: string) => Promise<void>;
 }
 
 /**
@@ -140,7 +149,10 @@ export function AgentDashboard({
   onUpdated,
   onDeleted,
   attentionAlertsPosition = "fixed",
+  dashboardName = "All agents",
+  renameDashboard,
 }: AgentDashboardProps) {
+  const [renamingDashboard, setRenamingDashboard] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -255,7 +267,7 @@ export function AgentDashboard({
 
       <Card className="relative">
         <CardHeader>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             {/* Neutral surface chip, not a brand-tinted one — coral no longer
                 decorates chrome that isn't the logo, focus rings, or a
                 status/CTA accent. */}
@@ -266,8 +278,35 @@ export function AgentDashboard({
             >
               <Users className="size-4" style={{ color: "var(--muted-foreground)" }} />
             </span>
-            <div>
-              <CardTitle>All agents</CardTitle>
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                {/* wrap-anywhere, not break-words: a 50-character name with no
+                    spaces (Platform_Engineering_Team_…) has a min-content width
+                    wider than the card, and overflow-wrap:break-word is excluded
+                    from min-content sizing — so the title box never shrinks, and
+                    the shrink-0 pen button next to it gets pushed past Card's
+                    overflow-hidden edge and clipped away entirely. anywhere DOES
+                    reduce min-content; the min-w-0 chain above lets that shrink
+                    actually propagate up through the flex/grid ancestors. */}
+                <CardTitle className="min-w-0 wrap-anywhere">{dashboardName}</CardTitle>
+                {/* Same button and pen-shake hover as each row's Edit control
+                    below. Rendered only when a rename action is supplied — the
+                    marketing demo has no dashboard to rename. */}
+                {renameDashboard !== undefined && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={`Rename ${dashboardName}`}
+                    onClick={() => setRenamingDashboard(true)}
+                  >
+                    <Pencil
+                      className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
+                      strokeWidth={1.75}
+                    />
+                  </Button>
+                )}
+              </div>
               <CardDescription className="flex items-center gap-1.5">
                 Polling every 3s
                 <span
@@ -538,6 +577,15 @@ export function AgentDashboard({
           if (!open) setIntegrationAgentId(null);
         }}
       />
+
+      {renameDashboard !== undefined && (
+        <RenameDashboardDialog
+          open={renamingDashboard}
+          currentName={dashboardName}
+          renameDashboard={renameDashboard}
+          onOpenChange={setRenamingDashboard}
+        />
+      )}
     </>
   );
 }
