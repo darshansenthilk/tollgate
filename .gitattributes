@@ -1,0 +1,17 @@
+# Line endings are normalized to LF in the repository and on checkout, on every
+# platform. Without this, a Windows editor rewriting a file's endings shows up
+# as a whole-repo diff of pure CRLF churn with zero content change — 85 files,
+# 18k lines, on 2026-08-03 — which buries real changes and turns every touched
+# file into a merge-conflict magnet.
+#
+# eol=lf rather than the usual `text=auto` alone (which would check out CRLF on
+# Windows) because this repo's 7 shell scripts run inside Linux containers:
+# backend/*/docker-entrypoint.sh and scripts/*.sh would fail with
+# "bad interpreter: /bin/sh^M" if checked out with CRLF.
+* text=auto eol=lf
+
+# Windows-only scripts are the one exception — none exist today, so these are
+# guards for whenever one is added.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
