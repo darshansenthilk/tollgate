@@ -54,8 +54,22 @@
     {
       "idx": 7,
       "version": "7",
-      "when": 1785711175387,
-      "tag": "0007_rare_lightspeed",
+      "when": 1785626858121,
+      "tag": "0007_motionless_red_shift",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785699623211,
+      "tag": "0008_dark_lord_hawal",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785733739888,
+      "tag": "0009_illegal_sue_storm",
       "breakpoints": true
     }
   ]

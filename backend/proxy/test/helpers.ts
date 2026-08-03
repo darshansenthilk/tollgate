@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import type { ProviderAdapter } from "@tollgate/shared";
+import type { ProviderAdapter, UpstreamCredential } from "@tollgate/shared";
 import {
   buildRegistry,
   assistantAdapterSlugs as defaultAssistantAdapterSlugs,
@@ -25,13 +25,21 @@ export const DEFAULT_TEST_ORG_ID = "org-test";
 export class FakeAgentStore implements AgentStore {
   private readonly byHash = new Map<string, AuthedAgent>();
 
-  /** orgId is optional and defaults to DEFAULT_TEST_ORG_ID: it only matters for
-   *  vault (BYOK) scoping, so the many tests that predate it stay unchanged
-   *  while a BYOK test can still pin a specific org. */
-  add(token: string, agent: Omit<AuthedAgent, "orgId"> & { orgId?: string }): void {
+  /** orgId and upstreamKeyId are optional: orgId only matters for vault (BYOK)
+   *  scoping and upstreamKeyId only for multi-key resolution, so the many
+   *  tests that predate either stay unchanged while a BYOK/multi-key test can
+   *  still pin a specific value. */
+  add(
+    token: string,
+    agent: Omit<AuthedAgent, "orgId" | "upstreamKeyId"> & {
+      orgId?: string;
+      upstreamKeyId?: string | null;
+    },
+  ): void {
     this.byHash.set(hashToken(token), {
       ...agent,
       orgId: agent.orgId ?? DEFAULT_TEST_ORG_ID,
+      upstreamKeyId: agent.upstreamKeyId ?? null,
     });
   }
 
@@ -68,31 +76,56 @@ export class FakeSpendLog implements SpendLog {
   }
 }
 
-/** Vault that hands out a fixed key for any (org, slug), recording every lookup
- *  so a test can assert the hot path scoped by the right org. */
+/** Wraps a bare API key in the single-secret credential shape the
+ *  OpenAI/Claude/Gemini adapters expect, so tests that don't care about
+ *  structured credentials stay readable. */
+export function apiKeyCredential(apiKey: string): UpstreamCredential {
+  return { secrets: { apiKey }, config: {} };
+}
+
+/** Vault that hands out a fixed credential for any (org, slug), recording
+ *  every lookup so a test can assert the hot path scoped by the right org.
+ *  Accepts a bare string for the common single-key case. */
 export class FakeVault implements Vault {
-  readonly lookups: { orgId: string; slug: string }[] = [];
+  readonly lookups: { orgId: string; slug: string; keyId: string | null }[] = [];
+  private readonly credential: UpstreamCredential | null;
 
-  constructor(private readonly key: string | null) {}
+  constructor(key: string | UpstreamCredential | null) {
+    this.credential = typeof key === "string" ? apiKeyCredential(key) : key;
+  }
 
-  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
-    this.lookups.push({ orgId, slug });
-    return this.key;
+  async getUpstreamKey(
+    orgId: string,
+    slug: string,
+    keyId: string | null,
+  ): Promise<UpstreamCredential | null> {
+    this.lookups.push({ orgId, slug, keyId });
+    return this.credential;
   }
 }
 
-/** Vault with per-org keys, for exercising BYOK resolution end to end. */
+/** Vault with per-org credentials, for exercising BYOK resolution end to end.
+ *  Ignores keyId deliberately — this fake proves the proxy forwards with
+ *  whatever the vault resolves, not the resolution logic itself (that's
+ *  pgVault's job, covered directly in byok-vault.test.ts). */
 export class FakeOrgVault implements Vault {
   /** Keyed "orgId:slug". */
-  private readonly keys = new Map<string, string>();
+  private readonly keys = new Map<string, UpstreamCredential>();
+  private readonly fallback: UpstreamCredential | null;
 
-  constructor(private readonly fallback: string | null = null) {}
-
-  set(orgId: string, slug: string, key: string): void {
-    this.keys.set(`${orgId}:${slug}`, key);
+  constructor(fallback: string | UpstreamCredential | null = null) {
+    this.fallback = typeof fallback === "string" ? apiKeyCredential(fallback) : fallback;
   }
 
-  async getUpstreamKey(orgId: string, slug: string): Promise<string | null> {
+  set(orgId: string, slug: string, key: string | UpstreamCredential): void {
+    this.keys.set(`${orgId}:${slug}`, typeof key === "string" ? apiKeyCredential(key) : key);
+  }
+
+  async getUpstreamKey(
+    orgId: string,
+    slug: string,
+    _keyId: string | null,
+  ): Promise<UpstreamCredential | null> {
     return this.keys.get(`${orgId}:${slug}`) ?? this.fallback;
   }
 }

@@ -111,6 +111,15 @@ export const agents = pgTable(
      * an exact-match auth lookup key.
      */
     tokenHash: text("token_hash").notNull().unique(),
+    /** Which of the org's stored BYOK keys (org_upstream_keys) this agent's
+     *  traffic bills to. Real FK (unlike org_id) since both tables live in
+     *  this schema — mirrors policyId just above. Null means "no specific
+     *  key chosen": the proxy's vault then goes straight to the deployment's
+     *  env fallback rather than guessing among an org's several stored keys
+     *  for this provider — see backend/proxy/src/lib/vault.ts's doc comment. */
+    upstreamKeyId: uuid("upstream_key_id").references(() => orgUpstreamKeys.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -149,12 +158,28 @@ export const orgUpstreamKeys = pgTable(
      *  and what *_UPSTREAM_KEY env vars are named for — NOT the "chatgpt"
      *  assistant label agents carry. See @tollgate/shared UPSTREAM_PROVIDERS. */
     providerSlug: text("provider_slug").notNull(),
+    /** Org-chosen display name ("Prod", "Jane's personal key") distinguishing
+     *  multiple keys for the same provider — see the unique index below. */
+    label: text("label").notNull().default("Default"),
     /** AES-256-GCM ciphertext + its iv and auth tag, all base64. Split into
      *  columns rather than one packed string so the AEAD parts stay legible
-     *  (and a missing tag is a schema error, not a parse error at decrypt). */
+     *  (and a missing tag is a schema error, not a parse error at decrypt).
+     *
+     *  Holds a JSON object of every SECRET field the provider needs
+     *  ({"accessKeyId":…,"secretAccessKey":…}) — or, for rows written before
+     *  structured credentials, the bare API key string. The proxy's vault
+     *  reads both (see its parseSecrets); there's deliberately no migration
+     *  re-encrypting old rows, because only the running service holds
+     *  VAULT_ENCRYPTION_KEY and SQL therefore can't. */
     encryptedKey: text("encrypted_key").notNull(),
     iv: text("iv").notNull(),
     authTag: text("auth_tag").notNull(),
+    /** NON-secret credential fields, as plain JSON ({"region":"us-east-1"},
+     *  {"resourceName":"my-company"}). Deliberately unencrypted: these are
+     *  hostnames and regions that appear in every request URL anyway, and
+     *  storing them readable lets the dashboard show which resource a key
+     *  points at. Null for providers that need nothing but a key. */
+    config: text("config"),
     /** Non-secret display hint ("sk-…7mQ4") so the dashboard can show which key
      *  is configured without the plaintext ever being recoverable. */
     keyHint: text("key_hint").notNull(),
@@ -162,12 +187,14 @@ export const orgUpstreamKeys = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // One key per (org, provider): saving again replaces the existing row, so
-    // an org can rotate a key without accumulating stale rows the proxy might
-    // pick between non-deterministically.
-    uniqueIndex("org_upstream_keys_org_provider_unique").on(
+    // An org can store several keys per provider now (multi-key BYOK), each
+    // distinguished by label — saving under an existing label replaces that
+    // row (rotate), a new label adds a new row. Agents pick one by id
+    // (agents.upstream_key_id) rather than the proxy guessing among them.
+    uniqueIndex("org_upstream_keys_org_provider_label_unique").on(
       table.orgId,
       table.providerSlug,
+      table.label,
     ),
   ],
 );

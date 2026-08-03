@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ASSISTANT_ADAPTER_SLUGS } from "@tollgate/shared";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,12 @@ import {
   type AgentListItem,
   type UpdateAgentInput,
   type UpdateAgentResponse,
+  type UpstreamKeysResponse,
 } from "@/lib/api";
+
+/** Sentinel Select value for "don't pin a specific key" — see
+ *  create-agent-dialog.tsx's identical constant for why. */
+const DEPLOYMENT_DEFAULT_KEY = "__deployment_default__";
 
 interface EditAgentDialogProps {
   /** null = closed. Like AgentPromptSidebar, this is looked up fresh from the
@@ -35,6 +41,9 @@ interface EditAgentDialogProps {
   /** Injected so the exact same dialog works against the real api
    *  (lib/api.ts's updateAgent) or the marketing page's demo simulator. */
   updateAgent: (id: string, input: UpdateAgentInput) => Promise<UpdateAgentResponse>;
+  /** Optional: omitted on the marketing demo — see AgentDashboardActions's doc
+   *  comment and create-agent-dialog.tsx's identical prop. */
+  listUpstreamKeys?: () => Promise<UpstreamKeysResponse>;
   onOpenChange: (open: boolean) => void;
   onUpdated: (agent: UpdateAgentResponse) => void;
   /** Names of every agent currently listed, including this one's. */
@@ -44,6 +53,7 @@ interface EditAgentDialogProps {
 export function EditAgentDialog({
   agent,
   updateAgent,
+  listUpstreamKeys,
   onOpenChange,
   onUpdated,
   existingNames,
@@ -54,8 +64,27 @@ export function EditAgentDialog({
   const [name, setName] = useState("");
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
+  const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKeysResponse | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (agent === null || listUpstreamKeys === undefined) return;
+    let cancelled = false;
+    void listUpstreamKeys().then((data) => {
+      if (!cancelled) setUpstreamKeys(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent === null, listUpstreamKeys]);
+
+  const keyOptions =
+    editing === null || upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === ASSISTANT_ADAPTER_SLUGS[editing.providerSlug])
+          ?.keys ?? []);
 
   // React's documented "adjusting state when a prop changes" pattern, keyed on
   // the agent's *id* rather than the object. `agent` is re-derived from the 3s
@@ -69,12 +98,14 @@ export function EditAgentDialog({
     setName(agent.name);
     setModel(agent.model);
     setMaxBudgetCents(agent.maxBudgetCents === null ? "" : String(agent.maxBudgetCents));
+    setUpstreamKeyId(agent.upstreamKeyId);
     setError(null);
   }
 
   // An agent created via the api (or before the current model list) can hold a
-  // model that isn't in MODELS_BY_PROVIDER. Append it so the Select still shows
-  // the real current value instead of rendering blank.
+  // model that isn't in MODELS_BY_PROVIDER. The field itself is free text so it
+  // always displays correctly either way; appending keeps the agent's own
+  // current model in the suggestion list after the user starts editing.
   const modelOptions = useMemo(() => {
     const base = modelsForProvider(editing?.providerSlug ?? "");
     const current = editing?.model;
@@ -91,7 +122,8 @@ export function EditAgentDialog({
     editing !== null &&
     (trimmedName !== editing.name ||
       model !== editing.model ||
-      budgetValue !== editing.maxBudgetCents);
+      budgetValue !== editing.maxBudgetCents ||
+      upstreamKeyId !== editing.upstreamKeyId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,6 +156,7 @@ export function EditAgentDialog({
       if (trimmedName !== editing.name) input.name = trimmedName;
       if (model !== editing.model) input.model = model;
       if (budgetValue !== editing.maxBudgetCents) input.maxBudgetCents = budgetValue;
+      if (upstreamKeyId !== editing.upstreamKeyId) input.upstreamKeyId = upstreamKeyId;
 
       const updated = await updateAgent(editing.id, input);
       onUpdated(updated);
@@ -174,22 +207,21 @@ export function EditAgentDialog({
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-agent-model">Model</Label>
-              <Select
-                items={modelOptions}
-                value={model}
-                onValueChange={(value) => setModel(value)}
-              >
-                <SelectTrigger id="edit-agent-model">
-                  <SelectValue placeholder="Select model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Free text with suggestions — see create-agent-dialog.tsx. */}
+              <Input
+                id="edit-agent-model"
+                list="edit-agent-model-options"
+                autoComplete="off"
+                spellCheck={false}
+                value={model ?? ""}
+                onChange={(e) => setModel(e.target.value.trim() === "" ? null : e.target.value)}
+                placeholder="e.g. gpt-4o"
+              />
+              <datalist id="edit-agent-model-options">
+                {modelOptions.map((m) => (
+                  <option key={m.value} value={m.value} />
+                ))}
+              </datalist>
             </div>
           </div>
 
@@ -205,6 +237,34 @@ export function EditAgentDialog({
               placeholder="500 (= $5.00) — leave blank for unlimited"
             />
           </div>
+
+          {keyOptions.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-agent-upstream-key">Upstream key</Label>
+              <Select
+                items={[
+                  { value: DEPLOYMENT_DEFAULT_KEY, label: "Deployment default" },
+                  ...keyOptions.map((k) => ({ value: k.id, label: `${k.label} (${k.keyHint})` })),
+                ]}
+                value={upstreamKeyId ?? DEPLOYMENT_DEFAULT_KEY}
+                onValueChange={(value) =>
+                  setUpstreamKeyId(value === DEPLOYMENT_DEFAULT_KEY ? null : value)
+                }
+              >
+                <SelectTrigger id="edit-agent-upstream-key">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEPLOYMENT_DEFAULT_KEY}>Deployment default</SelectItem>
+                  {keyOptions.map((k) => (
+                    <SelectItem key={k.id} value={k.id}>
+                      {k.label} ({k.keyHint})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {error !== null && (
             <p className="text-sm" style={{ color: "var(--err)" }}>

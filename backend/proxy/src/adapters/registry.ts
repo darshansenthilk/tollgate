@@ -1,6 +1,8 @@
-import type { ProviderAdapter } from "@tollgate/shared";
+import { ASSISTANT_ADAPTER_SLUGS, type ProviderAdapter } from "@tollgate/shared";
 import { openaiAdapter } from "./openai.js";
 import { claudeAdapter } from "./claude.js";
+import { geminiAdapter } from "./gemini.js";
+import { azureAdapter } from "./azure.js";
 
 /**
  * The provider registry: slug → adapter. The hot path looks an adapter up here
@@ -24,7 +26,12 @@ export function buildRegistry(
 }
 
 /** Default registry wired for production. */
-export const providers: ProviderRegistry = buildRegistry([openaiAdapter, claudeAdapter]);
+export const providers: ProviderRegistry = buildRegistry([
+  openaiAdapter,
+  claudeAdapter,
+  geminiAdapter,
+  azureAdapter,
+]);
 
 /**
  * The descriptive assistant label an agent is created with (dashboard's
@@ -38,11 +45,10 @@ export const providers: ProviderRegistry = buildRegistry([openaiAdapter, claudeA
  * the route handler itself — it stays an injected dependency like the
  * registry.
  *
- * Keep in sync with frontend/dashboard/components/create-agent-dialog.tsx's
- * PROVIDERS list and backend/api/src/routes/agents.ts's
- * ALLOWED_PROVIDER_SLUGS.
+ * Sourced from @tollgate/shared's ASSISTANT_ADAPTER_SLUGS — the single source
+ * of truth, also consumed by backend/api/src/routes/agents.ts to validate an
+ * agent's chosen upstream_key_id against its provider.
  */
-export const assistantAdapterSlugs: ReadonlyMap<string, string> = new Map([
-  ["chatgpt", "openai"],
-  ["claude", "claude"],
-]);
+export const assistantAdapterSlugs: ReadonlyMap<string, string> = new Map(
+  Object.entries(ASSISTANT_ADAPTER_SLUGS),
+);

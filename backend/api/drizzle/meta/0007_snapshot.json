@@ -1,55 +1,9 @@
 {
-  "id": "0fbc0216-417d-46f6-ae02-141842d3d706",
+  "id": "ca2038e8-f91f-488f-bac2-344883e58040",
   "prevId": "aa02cf39-28c3-4ba2-8ba0-9ca1597e8874",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.active_dashboards": {
-      "name": "active_dashboards",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "dashboard_id": {
-          "name": "dashboard_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "active_dashboards_dashboard_id_dashboards_id_fk": {
-          "name": "active_dashboards_dashboard_id_dashboards_id_fk",
-          "tableFrom": "active_dashboards",
-          "tableTo": "dashboards",
-          "columnsFrom": [
-            "dashboard_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.agents": {
       "name": "agents",
       "schema": "",
@@ -104,6 +58,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "upstream_key_id": {
+          "name": "upstream_key_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -156,6 +116,19 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "agents_upstream_key_id_org_upstream_keys_id_fk": {
+          "name": "agents_upstream_key_id_org_upstream_keys_id_fk",
+          "tableFrom": "agents",
+          "tableTo": "org_upstream_keys",
+          "columnsFrom": [
+            "upstream_key_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -168,44 +141,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.dashboards": {
-      "name": "dashboards",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "org_id": {
-          "name": "org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -231,6 +166,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Default'"
         },
         "encrypted_key": {
           "name": "encrypted_key",
@@ -272,8 +214,8 @@
         }
       },
       "indexes": {
-        "org_upstream_keys_org_provider_unique": {
-          "name": "org_upstream_keys_org_provider_unique",
+        "org_upstream_keys_org_provider_label_unique": {
+          "name": "org_upstream_keys_org_provider_label_unique",
           "columns": [
             {
               "expression": "org_id",
@@ -283,6 +225,12 @@
             },
             {
               "expression": "provider_slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "label",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

@@ -281,6 +281,17 @@ the workspace link resolves) or vendor shared's compiled output in, not
   bundle `node:crypto` for the browser — moved it to its own
   `@tollgate/shared/license` subpath export that only server-only
   `check-license.ts` files import, never anything client-side.
+- `scripts/setup-selfhost.sh` — the little-to-no-code onboarding path: a
+  guided interactive script that asks a handful of questions (URLs, the
+  license key, optional provider keys) and writes a complete `.env` itself
+  — a customer never opens a text editor. No Node.js dependency (unlike
+  `generate-license-key.mjs`, which only Tollgate staff run) — just bash
+  and `openssl`, both near-universal on anything that can run Docker.
+  Verified with three separate piped-input runs: normal values, all-blank
+  (confirms every default actually applies), and a blank required field
+  (confirms the license-key prompt correctly re-asks instead of silently
+  accepting nothing) — inspected the generated `.env` after each to
+  confirm the right values landed, not just that the script exited 0.
 
 ## What's not built yet
 
@@ -299,10 +310,15 @@ Being upfront about this matters more than sounding finished — see
   bullet originally flagged no longer applies to the live key.
 - No Helm chart / Kubernetes manifests — `docker-compose.selfhost.yml`
   covers single-host Docker deployments only.
-- No public deployment guide — this doc is still internal-only; turning it
-  into real customer-facing docs is its own task, not just a copy-paste,
-  since it should probably be trimmed and given the same honest framing
-  `/security` uses rather than dumped as-is.
+- ~~No public deployment guide~~ — **done**: `docs/self-hosting-quickstart.md`
+  is the actual document to send a customer with their license key —
+  written fresh for that audience (no internal implementation detail,
+  no bug postmortems) rather than trimmed from this file. Covers GHCR
+  registry access (a customer needs a GitHub account granted read access
+  to the three packages, plus a `read:packages`-scoped PAT — that's the
+  real mechanism, not glossed over), the setup script, pulling + starting,
+  and a TLS/networking note for going to production. This file
+  (`SELF_HOSTING.md`) stays internal-only, as stated at the top.
 - No way to revoke an already-issued key short of it hitting its expiry —
   every key is checked purely offline against the embedded public key,
   which is what makes air-gapped deployment possible, but it also means

@@ -17,6 +17,7 @@ import {
   freezeAgent,
   getActiveDashboard,
   listAgents,
+  listUpstreamKeys,
   renameDashboard,
   unfreezeAgent,
   updateAgent,
@@ -28,7 +29,14 @@ import {
 
 const POLL_INTERVAL_MS = 3000;
 
-const ACTIONS = { createAgent, updateAgent, freezeAgent, unfreezeAgent, deleteAgent };
+const ACTIONS = {
+  createAgent,
+  updateAgent,
+  freezeAgent,
+  unfreezeAgent,
+  deleteAgent,
+  listUpstreamKeys,
+};
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentListItem[] | null>(null);

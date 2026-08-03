@@ -10,14 +10,17 @@ import { PROXY_URL } from "@/lib/api";
 const ADAPTER_SLUGS: Record<string, string> = {
   chatgpt: "openai",
   claude: "claude",
+  gemini: "gemini",
+  azure: "azure",
 };
 
 /**
  * The dashboard's Claude model dropdown stores short labels
  * (lib/agent-options.ts's MODELS_BY_PROVIDER), but the real Anthropic API
  * only accepts the exact dated model id — sending "sonnet" literally would
- * fail upstream. Keep in sync with backend/shared/src/index.ts's CLAUDE_PRICES
- * keys, which this must match for cost metering to actually price the call.
+ * fail upstream. These stay dated for that reason; metering still prices them
+ * because findModelPrice strips the date back to the family key that
+ * backend/shared/src/index.ts's CLAUDE_PRICES is keyed by.
  */
 const CLAUDE_UPSTREAM_MODEL_IDS: Record<string, string> = {
   opus: "claude-3-opus-20240229",
@@ -44,6 +47,12 @@ function upstreamModelId(providerSlug: string, model: string): string {
  *   - Anthropic's default baseURL is "https://api.anthropic.com" (no "/v1")
  *     and the SDK's own request path literal is "/v1/messages" — so the
  *     override must NOT add "/v1", or it would double up.
+ *   - Google's genai SDK (google-genai / @google/genai) defaults to
+ *     "https://generativelanguage.googleapis.com" and builds paths like
+ *     "/v1beta/models/{model}:generateContent" itself — same shape as
+ *     Anthropic's, so the override must NOT add anything either. Matches
+ *     backend/proxy/src/adapters/gemini.ts's route
+ *     ("/gemini/v1beta/models/...:generateContent").
  */
 function proxyBaseUrl(providerSlug: string): string | null {
   const adapterSlug = ADAPTER_SLUGS[providerSlug];
@@ -99,6 +108,70 @@ console.log(response.content[0].text);`,
     };
   }
 
+  if (providerSlug === "azure") {
+    // The Azure SDK builds /openai/deployments/{deployment}/... itself and
+    // appends ?api-version=, so azure_endpoint is just Tollgate's /azure root.
+    // `model` here is the DEPLOYMENT name, not a model id — Azure resolves the
+    // real model from the deployment (see agent-options.ts).
+    return {
+      python: `from openai import AzureOpenAI
+
+client = AzureOpenAI(
+    azure_endpoint="${baseUrl}",
+    api_key="${token}",
+    api_version="2024-10-21",
+)
+
+response = client.chat.completions.create(
+    model="${upstreamModel}",  # your Azure deployment name
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(response.choices[0].message.content)`,
+      typescript: `import { AzureOpenAI } from "openai";
+
+const client = new AzureOpenAI({
+  endpoint: "${baseUrl}",
+  apiKey: "${token}",
+  apiVersion: "2024-10-21",
+});
+
+const response = await client.chat.completions.create({
+  model: "${upstreamModel}", // your Azure deployment name
+  messages: [{ role: "user", content: "Hello" }],
+});
+console.log(response.choices[0].message.content);`,
+    };
+  }
+
+  if (providerSlug === "gemini") {
+    return {
+      python: `from google import genai
+
+client = genai.Client(
+    api_key="${token}",
+    http_options={"base_url": "${baseUrl}"},
+)
+
+response = client.models.generate_content(
+    model="${upstreamModel}",
+    contents="Hello",
+)
+print(response.text)`,
+      typescript: `import { GoogleGenAI } from "@google/genai";
+
+const client = new GoogleGenAI({
+  apiKey: "${token}",
+  httpOptions: { baseUrl: "${baseUrl}" },
+});
+
+const response = await client.models.generateContent({
+  model: "${upstreamModel}",
+  contents: "Hello",
+});
+console.log(response.text);`,
+    };
+  }
+
   return {
     python: `from openai import OpenAI
 
@@ -145,6 +218,30 @@ export function buildTestRequest(
       path: `/${adapterSlug}/v1/messages`,
       body: {
         model: upstreamModel,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      },
+    };
+  }
+
+  if (providerSlug === "gemini") {
+    return {
+      // Model is in the URL path, not the body — see gemini.ts's own doc
+      // comment on why (Gemini's request body carries no "model" field).
+      path: `/${adapterSlug}/v1beta/models/${upstreamModel}:generateContent`,
+      body: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: { maxOutputTokens: 1 },
+      },
+    };
+  }
+
+  if (providerSlug === "azure") {
+    return {
+      // Deployment in the path, mandatory api-version in the query — Azure
+      // rejects the request outright without the latter.
+      path: `/${adapterSlug}/openai/deployments/${upstreamModel}/chat/completions?api-version=2024-10-21`,
+      body: {
         max_tokens: 1,
         messages: [{ role: "user", content: "hi" }],
       },

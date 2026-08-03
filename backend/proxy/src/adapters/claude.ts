@@ -1,4 +1,9 @@
-import { CLAUDE_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
+import {
+  CLAUDE_PRICES,
+  findModelPrice,
+  type ProviderAdapter,
+  type ProviderCost,
+} from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
 interface Usage {
@@ -84,19 +89,20 @@ export const claudeAdapter: ProviderAdapter = {
   slug: "claude",
   baseUrl: "https://api.anthropic.com",
 
-  // Anthropic auths via x-api-key (not Authorization: Bearer) and requires an
-  // explicit API version header on every request.
-  buildAuthHeaders: (upstreamKey) => ({
-    "x-api-key": upstreamKey,
-    "anthropic-version": ANTHROPIC_VERSION,
-  }),
-
   // Mirrors Anthropic's real path 1:1 under the provider slug — the proxied
   // path already includes "v1" (e.g. POST /claude/v1/messages), so this must
   // NOT also prepend it, or the upstream URL doubles up ".../v1/v1/...".
-  buildUpstreamUrl: (path) => {
+  // Auth is x-api-key (not Authorization: Bearer), plus an explicit API
+  // version header Anthropic requires on every request.
+  buildUpstreamRequest: ({ path, query, credential }) => {
     const clean = path.replace(/^\/+/, "");
-    return `${claudeAdapter.baseUrl}/${clean}`;
+    return {
+      url: `${claudeAdapter.baseUrl}/${clean}${query}`,
+      headers: {
+        "x-api-key": credential.secrets["apiKey"] ?? "",
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+    };
   },
 
   // No prepareRequestBody: Anthropic reports usage on streamed responses
@@ -118,7 +124,7 @@ export const claudeAdapter: ProviderAdapter = {
 
     // Deliberate lookup: an unknown model shouldn't crash metering, it costs 0
     // and is left for reconciliation rather than guessed at.
-    const price = CLAUDE_PRICES[usage.model];
+    const price = findModelPrice(usage.model, CLAUDE_PRICES);
     if (price === undefined) return { costCents: 0, ...tokenCounts };
 
     const costCents =

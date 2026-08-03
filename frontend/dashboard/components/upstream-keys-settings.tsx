@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { credentialFieldsFor, isOptionalCredentialField } from "@tollgate/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,13 +10,18 @@ import {
   listUpstreamKeys,
   saveUpstreamKey,
   deleteUpstreamKey,
-  type UpstreamKeyStatus,
+  type UpstreamKeyProvider,
 } from "@/lib/api";
 
 /**
- * BYOK settings: the org supplies its own OpenAI/Anthropic keys so its agents'
- * upstream usage bills to the org's provider account instead of Tollgate's
- * shared key.
+ * BYOK settings: the org supplies its own OpenAI/Anthropic/Gemini keys so its
+ * agents' upstream usage bills to the org's provider account instead of
+ * Tollgate's shared key.
+ *
+ * MULTI-KEY: an org can store several keys per provider (e.g. "Prod" and
+ * "Jane's key"), each with its own label. Which key a given agent actually
+ * forwards with is chosen on the agent itself (create/edit-agent-dialog), not
+ * here — this page only manages the org's pool of stored keys.
  *
  * Two things this deliberately never does:
  *  - echo a saved key back (the api doesn't return one; only a "sk-…7mQ4" hint)
@@ -24,45 +30,119 @@ import {
  *    verbatim rather than as a generic error.
  */
 
-type RowState =
+type FormState =
   | { kind: "idle" }
   | { kind: "saving" }
-  | { kind: "error"; message: string }
-  | { kind: "saved"; message: string };
+  | { kind: "error"; message: string };
 
-function statusLabel(provider: UpstreamKeyStatus): {
-  text: string;
-  color: string;
-} {
-  if (provider.isSet) {
-    return { text: `Set · ${provider.keyHint ?? ""}`, color: "var(--ok)" };
-  }
-  // Deliberately doesn't claim whether Tollgate's shared fallback key covers
-  // this provider: only the proxy service holds those keys, so the api can't
-  // know (see the GET route's doc comment). Better to say what IS true than to
-  // assert a guess about another service's config.
-  return { text: "Not set", color: "var(--muted-foreground)" };
-}
+type RemoveState = { kind: "idle" } | { kind: "removing" } | { kind: "error"; message: string };
 
-function ProviderRow({
-  provider,
+function KeyRow({
+  keyId,
+  label,
+  keyHint,
+  config,
   onChanged,
 }: {
-  provider: UpstreamKeyStatus;
+  keyId: string;
+  label: string;
+  keyHint: string;
+  /** Non-secret fields, shown so an org with several Azure resources (or AWS
+   *  regions) can tell its keys apart by more than a label. */
+  config: Record<string, string>;
   onChanged: () => Promise<void>;
 }) {
-  const [value, setValue] = useState("");
-  const [state, setState] = useState<RowState>({ kind: "idle" });
+  const [state, setState] = useState<RemoveState>({ kind: "idle" });
+
+  async function handleRemove() {
+    setState({ kind: "removing" });
+    try {
+      await deleteUpstreamKey(keyId);
+      await onChanged();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof ApiError ? err.message : "Couldn't remove that key.",
+      });
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-medium">{label}</span>
+          <span className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>
+            {keyHint}
+          </span>
+          {Object.entries(config).map(([name, value]) => (
+            <span
+              key={name}
+              className="font-mono text-xs"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              · {value}
+            </span>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleRemove}
+          disabled={state.kind === "removing"}
+        >
+          {state.kind === "removing" ? "Removing…" : "Remove"}
+        </Button>
+      </div>
+      {state.kind === "error" && (
+        <p className="text-sm" style={{ color: "var(--err)" }}>
+          {state.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rendered from the provider's declared credential fields
+ * (@tollgate/shared's UPSTREAM_PROVIDERS) rather than a hardcoded single key
+ * input — that's what lets Azure ask for a resource name and Bedrock for an
+ * access-key pair plus a region without this component knowing either exists.
+ */
+function AddKeyForm({
+  providerSlug,
+  onChanged,
+}: {
+  providerSlug: string;
+  onChanged: () => Promise<void>;
+}) {
+  const fields = credentialFieldsFor(providerSlug);
+  const [label, setLabel] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [state, setState] = useState<FormState>({ kind: "idle" });
+
+  // Every field the provider actually requires must be filled before the
+  // button does anything; sessionToken is the one legitimately-blank case.
+  const complete = fields.every(
+    (f) => isOptionalCredentialField(f) || (values[f.name] ?? "").trim() !== "",
+  );
 
   async function handleSave() {
-    if (value.trim() === "") return;
+    if (!complete) return;
     setState({ kind: "saving" });
     try {
-      const result = await saveUpstreamKey(provider.slug, value.trim());
-      // Clear immediately: the plaintext key should not linger in a form field
-      // once it's stored, and it can never be shown again anyway.
-      setValue("");
-      setState({ kind: "saved", message: `Verified and saved (${result.keyHint}).` });
+      const submitted: Record<string, string> = {};
+      for (const field of fields) {
+        const value = (values[field.name] ?? "").trim();
+        if (value !== "") submitted[field.name] = value;
+      }
+      await saveUpstreamKey(providerSlug, submitted, label.trim() || undefined);
+      // Clear immediately: plaintext secrets should not linger in a form field
+      // once stored, and they can never be shown again anyway.
+      setValues({});
+      setLabel("");
+      setState({ kind: "idle" });
       await onChanged();
     } catch (err) {
       setState({
@@ -74,59 +154,70 @@ function ProviderRow({
     }
   }
 
-  async function handleRemove() {
-    setState({ kind: "saving" });
-    try {
-      await deleteUpstreamKey(provider.slug);
-      setState({ kind: "idle" });
-      await onChanged();
-    } catch (err) {
-      setState({
-        kind: "error",
-        message: err instanceof ApiError ? err.message : "Couldn't remove that key.",
-      });
-    }
-  }
-
-  const status = statusLabel(provider);
   const saving = state.kind === "saving";
+  // Single-secret providers (OpenAI/Claude/Gemini) stay on one compact row;
+  // multi-field ones get a stacked, labelled form so it's clear what goes where.
+  const inline = fields.length === 1;
 
   return (
-    <div className="flex flex-col gap-2 border-t py-4 first:border-t-0 first:pt-0">
-      <div className="flex items-center justify-between gap-3">
-        <Label htmlFor={`upstream-key-${provider.slug}`}>{provider.label}</Label>
-        <span className="font-mono text-xs" style={{ color: status.color }}>
-          {status.text}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-2">
+    <div className="flex flex-col gap-2">
+      <div className={inline ? "flex items-center gap-2" : "flex flex-col gap-3"}>
         <Input
-          id={`upstream-key-${provider.slug}`}
-          // type=password so the key isn't shoulder-surfable while pasting, and
-          // browsers don't offer to remember it as ordinary text.
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
+          className={inline ? "w-32" : undefined}
+          placeholder="Label (optional)"
           disabled={saving}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder={
-            provider.isSet
-              ? "Paste a new key to replace the current one"
-              : provider.slug === "claude"
-                ? "sk-ant-…"
-                : "sk-…"
-          }
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
         />
-        <Button type="button" onClick={handleSave} disabled={saving || value.trim() === ""}>
-          {saving ? "Verifying…" : provider.isSet ? "Replace" : "Save"}
+
+        {fields.map((field) => {
+          const input = (
+            <Input
+              id={`cred-${providerSlug}-${field.name}`}
+              // type=password so a secret isn't shoulder-surfable while
+              // pasting, and browsers don't offer to remember it as ordinary
+              // text. Non-secret config (a region) stays readable so the user
+              // can check what they typed.
+              type={field.secret ? "password" : "text"}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={saving}
+              value={values[field.name] ?? ""}
+              onChange={(e) =>
+                setValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+              }
+              placeholder={field.placeholder}
+            />
+          );
+
+          if (inline) return <span key={field.name} className="flex-1">{input}</span>;
+
+          return (
+            <div key={field.name} className="flex flex-col gap-1">
+              <Label htmlFor={`cred-${providerSlug}-${field.name}`}>
+                {field.label}
+                {isOptionalCredentialField(field) && (
+                  <span style={{ color: "var(--muted-foreground)" }}> (optional)</span>
+                )}
+              </Label>
+              {input}
+              {field.help !== undefined && (
+                <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  {field.help}
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        <Button
+          type="button"
+          className={inline ? undefined : "self-start"}
+          onClick={handleSave}
+          disabled={saving || !complete}
+        >
+          {saving ? "Verifying…" : "Add key"}
         </Button>
-        {provider.isSet && (
-          <Button type="button" variant="outline" onClick={handleRemove} disabled={saving}>
-            Remove
-          </Button>
-        )}
       </div>
 
       {state.kind === "error" && (
@@ -134,18 +225,51 @@ function ProviderRow({
           {state.message}
         </p>
       )}
-      {state.kind === "saved" && (
-        <p className="text-sm" style={{ color: "var(--ok)" }}>
-          {state.message}
-        </p>
+    </div>
+  );
+}
+
+function ProviderSection({
+  provider,
+  onChanged,
+}: {
+  provider: UpstreamKeyProvider;
+  onChanged: () => Promise<void>;
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-t py-4 first:border-t-0 first:pt-0">
+      <div className="flex items-center justify-between gap-3">
+        <Label>{provider.label}</Label>
+        <span className="font-mono text-xs" style={{ color: "var(--muted-foreground)" }}>
+          {provider.keys.length === 0
+            ? "No keys set"
+            : `${provider.keys.length} key${provider.keys.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
+      {provider.keys.length > 0 && (
+        <div className="flex flex-col divide-y">
+          {provider.keys.map((k) => (
+            <KeyRow
+              key={k.id}
+              keyId={k.id}
+              label={k.label}
+              keyHint={k.keyHint}
+              config={k.config}
+              onChanged={onChanged}
+            />
+          ))}
+        </div>
       )}
+
+      <AddKeyForm providerSlug={provider.slug} onChanged={onChanged} />
     </div>
   );
 }
 
 export function UpstreamKeysSettings() {
   const [data, setData] = useState<
-    { vaultConfigured: boolean; providers: UpstreamKeyStatus[] } | null
+    { vaultConfigured: boolean; providers: UpstreamKeyProvider[] } | null
   >(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -193,7 +317,7 @@ export function UpstreamKeysSettings() {
       )}
 
       {data.providers.map((provider) => (
-        <ProviderRow key={provider.slug} provider={provider} onChanged={refresh} />
+        <ProviderSection key={provider.slug} provider={provider} onChanged={refresh} />
       ))}
     </div>
   );

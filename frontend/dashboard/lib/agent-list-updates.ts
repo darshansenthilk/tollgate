@@ -26,6 +26,7 @@ export function applyCreated(
     currentMonthSpendCents: 0,
     currentMonthTokens: 0,
     currentPrompt: null,
+    upstreamKeyId: created.upstreamKeyId,
   };
   return [item, ...prev];
 }
@@ -53,6 +54,7 @@ export function applyUpdated(
           model: updated.model,
           status: updated.status,
           maxBudgetCents: updated.maxBudgetCents,
+          upstreamKeyId: updated.upstreamKeyId,
         }
       : a,
   );

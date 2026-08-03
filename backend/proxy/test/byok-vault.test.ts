@@ -3,7 +3,7 @@ import { createCipheriv, randomBytes } from "node:crypto";
 import { openaiAdapter } from "../src/adapters/openai.js";
 import { pgVault, envVault } from "../src/lib/vault.js";
 import { decryptUpstreamKey } from "../src/lib/upstream-key-crypto.js";
-import { buildHarness, FakeOrgVault, DEFAULT_TEST_ORG_ID } from "./helpers.js";
+import { buildHarness, FakeOrgVault, FakeVault, DEFAULT_TEST_ORG_ID } from "./helpers.js";
 
 const TOKEN = "tg_byok_test_token";
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -27,7 +27,7 @@ function encryptLikeApi(plaintext: string, keyB64: string) {
 }
 
 /** Minimal pg.Pool stand-in: only `query` is ever called by pgVault. */
-function fakePool(rows: Record<string, string>[]) {
+function fakePool(rows: Record<string, string | null>[]) {
   const calls: { sql: string; params: unknown[] }[] = [];
   const pool = {
     query: async (sql: string, params: unknown[]) => {
@@ -64,20 +64,67 @@ describe("BYOK key resolution", () => {
     ).toBe("sk-org-real-key");
   });
 
-  it("uses the org's own stored key when one exists", async () => {
+  it("uses the org's own stored key when the agent is assigned one", async () => {
     const { pool, calls } = fakePool([encryptLikeApi("sk-org-byok", KEY_B64)]);
     const vault = pgVault(pool, { env: { OPENAI_UPSTREAM_KEY: "sk-tollgate-shared" } });
 
-    expect(await vault.getUpstreamKey("org-acme", "openai")).toBe("sk-org-byok");
-    // Scoped by BOTH org and provider — the isolation that makes this safe.
-    expect(calls[0]?.params).toEqual(["org-acme", "openai"]);
+    expect(await vault.getUpstreamKey("org-acme", "openai", "key-1")).toEqual({
+      secrets: { apiKey: "sk-org-byok" },
+      config: {},
+    });
+    // Scoped by id, org, AND provider — the isolation that makes this safe.
+    expect(calls[0]?.params).toEqual(["key-1", "org-acme", "openai"]);
   });
 
-  it("falls back to Tollgate's env key when the org has none (BYOK is opt-in)", async () => {
+  it("reads a multi-secret credential plus its non-secret config", async () => {
+    // Providers that need more than one secret (Bedrock) store an encrypted
+    // JSON object; non-secret config (a region, an Azure resource name) rides
+    // alongside in the clear because it shows up in request URLs anyway.
+    const stored = encryptLikeApi(
+      JSON.stringify({ accessKeyId: "AKIAEXAMPLE", secretAccessKey: "s3cr3t" }),
+      KEY_B64,
+    );
+    const { pool } = fakePool([{ ...stored, config: JSON.stringify({ region: "us-east-1" }) }]);
+    const vault = pgVault(pool);
+
+    expect(await vault.getUpstreamKey("org-acme", "bedrock", "key-1")).toEqual({
+      secrets: { accessKeyId: "AKIAEXAMPLE", secretAccessKey: "s3cr3t" },
+      config: { region: "us-east-1" },
+    });
+  });
+
+  it("still reads a legacy bare-string key written before structured credentials", async () => {
+    // Rows predating structured credentials hold the raw key, not JSON, and
+    // can't be re-encrypted by a SQL migration (only the running service holds
+    // VAULT_ENCRYPTION_KEY) — so the read path has to keep understanding them.
+    const { pool } = fakePool([{ ...encryptLikeApi("sk-legacy-plain", KEY_B64), config: null }]);
+    const vault = pgVault(pool);
+
+    expect(await vault.getUpstreamKey("org-acme", "openai", "key-1")).toEqual({
+      secrets: { apiKey: "sk-legacy-plain" },
+      config: {},
+    });
+  });
+
+  it("falls back to Tollgate's env key when the agent has no key assigned (BYOK is opt-in)", async () => {
+    const { pool, calls } = fakePool([]);
+    const vault = pgVault(pool, { env: { OPENAI_UPSTREAM_KEY: "sk-tollgate-shared" } });
+
+    expect(await vault.getUpstreamKey("org-no-byok", "openai", null)).toEqual({
+      secrets: { apiKey: "sk-tollgate-shared" },
+      config: {},
+    });
+    // Doesn't even guess by querying — a null keyId is resolved locally.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("returns null (no fallback) when the assigned key id doesn't resolve (deleted/reassigned)", async () => {
     const { pool } = fakePool([]);
     const vault = pgVault(pool, { env: { OPENAI_UPSTREAM_KEY: "sk-tollgate-shared" } });
 
-    expect(await vault.getUpstreamKey("org-no-byok", "openai")).toBe("sk-tollgate-shared");
+    // The critical assertion: an agent explicitly pointed at a key must NOT
+    // silently fall back to Tollgate's shared key just because that row is gone.
+    expect(await vault.getUpstreamKey("org-acme", "openai", "key-deleted")).toBeNull();
   });
 
   it("returns null (no fallback) when a stored key can't be decrypted", async () => {
@@ -94,14 +141,15 @@ describe("BYOK key resolution", () => {
 
     // The critical assertion: it must NOT silently bill Tollgate's shared key
     // for an org that explicitly configured their own.
-    expect(await vault.getUpstreamKey("org-acme", "openai")).toBeNull();
+    expect(await vault.getUpstreamKey("org-acme", "openai", "key-1")).toBeNull();
     expect(failures).toEqual([{ orgId: "org-acme", slug: "openai" }]);
   });
 
-  it("envVault ignores org entirely (pre-BYOK behavior)", async () => {
+  it("envVault ignores org and keyId entirely (pre-BYOK behavior)", async () => {
     const vault = envVault({ OPENAI_UPSTREAM_KEY: "sk-env-only" } as NodeJS.ProcessEnv);
-    expect(await vault.getUpstreamKey("org-a", "openai")).toBe("sk-env-only");
-    expect(await vault.getUpstreamKey("org-b", "openai")).toBe("sk-env-only");
+    const expected = { secrets: { apiKey: "sk-env-only" }, config: {} };
+    expect(await vault.getUpstreamKey("org-a", "openai", null)).toEqual(expected);
+    expect(await vault.getUpstreamKey("org-b", "openai", "some-key-id")).toEqual(expected);
   });
 });
 
@@ -153,5 +201,28 @@ describe("BYOK through the proxy hot path", () => {
     expect(res.json()).toEqual({ error: "upstream_key_unavailable" });
     // Nothing left the process — the request was never forwarded upstream.
     expect(h.upstream.calls).toHaveLength(0);
+  });
+
+  it("passes the agent's assigned upstream key id through to the vault", async () => {
+    const vault = new FakeVault("sk-whatever");
+    const h = await buildHarness({ adapters: [openaiAdapter], vault });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 1000,
+      providerSlug: "chatgpt",
+      upstreamKeyId: "key-prod",
+    });
+
+    await h.app.inject({
+      method: "POST",
+      url: "/openai/v1/chat/completions",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { model: "gpt-4o-mini", messages: [] },
+    });
+
+    expect(vault.lookups).toEqual([
+      { orgId: DEFAULT_TEST_ORG_ID, slug: "openai", keyId: "key-prod" },
+    ]);
   });
 });

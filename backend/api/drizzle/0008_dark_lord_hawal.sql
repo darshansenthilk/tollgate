@@ -1,0 +1,1 @@
+ALTER TABLE "org_upstream_keys" ADD COLUMN "config" text;

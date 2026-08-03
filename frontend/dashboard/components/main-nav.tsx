@@ -52,13 +52,12 @@ export function MainNav() {
   return (
     <>
       <nav className="mk-island" aria-label="Primary">
-        <a href="/" className="mk-nav-logo flex shrink-0 items-center gap-2 pr-1">
+        <a href="/" className="mk-nav-logo flex shrink-0 items-center pr-1">
           {/* eslint-disable-next-line @next/next/no-img-element -- tiny fixed-size
-              decorative mark; next/image's overhead isn't worth it here. */}
-          <img src="/logo.svg" alt="" aria-hidden className="size-5 shrink-0 rounded-sm" />
-          <span className="text-[15px] font-medium whitespace-nowrap" style={{ color: "var(--mk-ink)" }}>
-            Tollgate
-          </span>
+              wordmark; next/image's overhead isn't worth it here. The SVG
+              itself spells out "tollgate.", so it's the sole label here —
+              no adjacent text span. */}
+          <img src="/logo.svg" alt="Tollgate" className="h-[13.33px] w-auto shrink-0" />
         </a>
 
         <div className="mk-island-sep" aria-hidden />

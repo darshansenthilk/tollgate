@@ -1,7 +1,13 @@
 node_modules/
 dist/
 .next/
-.env
+# .env* catches the real file plus anything derived from it — e.g. the
+# timestamped backups scripts/setup-selfhost.sh makes before overwriting an
+# existing .env, which contain the same real secrets and aren't safe to
+# commit either. .env.example is the one file that SHOULD be tracked, so
+# it's explicitly un-ignored below.
+.env*
+!.env.example
 *.log
 .DS_Store
 *.tsbuildinfo

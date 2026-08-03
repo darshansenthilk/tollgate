@@ -4,10 +4,12 @@
  * needed them — same reason lib/agent-status.ts exists.
  */
 
-/** The only assistants selectable from the dashboard today. */
+/** The assistants selectable from the dashboard today. */
 export const PROVIDERS = [
   { value: "chatgpt", label: "ChatGPT" },
   { value: "claude", label: "Claude" },
+  { value: "gemini", label: "Gemini" },
+  { value: "azure", label: "Azure OpenAI" },
 ] as const;
 
 export type ProviderSlug = (typeof PROVIDERS)[number]["value"];
@@ -26,6 +28,19 @@ export const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: st
     { value: "opus", label: "Opus" },
     { value: "sonnet", label: "Sonnet" },
     { value: "haiku", label: "Haiku" },
+  ],
+  gemini: [
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  ],
+  // Azure addresses a DEPLOYMENT — the customer's own name for a model they
+  // provisioned — not a model id, and those names are chosen per Azure
+  // resource. There's no fixed list to offer, so these are the common
+  // convention (deployment named after the model) and the field stays free
+  // text: edit-agent-dialog appends whatever value an agent actually holds.
+  azure: [
+    { value: "gpt-4o", label: "gpt-4o (deployment name)" },
+    { value: "gpt-4o-mini", label: "gpt-4o-mini (deployment name)" },
   ],
 };
 

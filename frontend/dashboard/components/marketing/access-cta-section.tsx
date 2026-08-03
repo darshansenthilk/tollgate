@@ -1,7 +1,6 @@
 "use client";
 
 import { ScrollReveal } from "@/components/marketing/scroll-reveal";
-import { TollgateLogo } from "@/components/marketing/tollgate-logo";
 import { ContactForm } from "@/components/marketing/contact-form";
 
 /** Multi-column footer with 14px/500 sans column headings — the reference's
@@ -61,11 +60,12 @@ export function AccessCtaSection() {
               and pulled the whole footer left of centre). */}
           <div className="mx-auto grid max-w-[1080px] grid-cols-1 gap-x-5 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <div className="mb-3 flex items-center justify-center gap-2.5">
-                <TollgateLogo className="size-[19px]" />
-                <span className="text-[15px] font-medium" style={{ color: "var(--mk-ink)" }}>
-                  Tollgate
-                </span>
+              <div className="mb-3 flex items-center justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element -- tiny
+                    fixed-size wordmark; next/image's overhead isn't worth it
+                    here. The SVG itself spells out "tollgate.", so it's the
+                    sole label here — no adjacent text span. */}
+                <img src="/logo.svg" alt="Tollgate" className="h-[19px] w-auto" />
               </div>
               <p className="mx-auto max-w-[34ch] text-[14px] leading-[20px]" style={{ color: "var(--dim)" }}>
                 Kill your agents before they kill your budget.

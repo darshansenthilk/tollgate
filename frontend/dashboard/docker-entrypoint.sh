@@ -27,4 +27,17 @@ find /app/frontend/dashboard -type f -name '*.js' -exec sed -i \
   -e "s#https://tollgate-runtime-placeholder-proxy\.invalid#${NEXT_PUBLIC_PROXY_URL}#g" \
   {} +
 
+# The shell running this script auto-exports HOSTNAME (its own hostname —
+# Docker sets a container's hostname to its short container ID by default),
+# and Next.js's standalone server.js binds to $HOSTNAME if it's set at all
+# — so without this override it silently listens on the container's
+# specific internal IP (e.g. 172.19.0.6) instead of every interface. That
+# makes it unreachable from both the host's port mapping AND even a plain
+# `wget http://127.0.0.1:3000` run from inside the same container — this
+# is exactly what made the HEALTHCHECK below report unhealthy despite the
+# app logging "Ready" with no errors. 0.0.0.0, not "localhost": binding to
+# loopback alone would be equally unreachable through Docker's port
+# forwarding, a different but adjacent trap.
+export HOSTNAME=0.0.0.0
+
 exec node frontend/dashboard/server.js

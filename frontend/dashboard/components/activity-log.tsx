@@ -73,6 +73,24 @@ function ToneBadge({ label, color }: { label: string; color: string }) {
   );
 }
 
+/**
+ * A request that really consumed tokens but metered at zero — i.e. Tollgate
+ * has no price for the model the provider reported serving.
+ *
+ * Worth calling out rather than rendering as "$0.0000": the spend is real and
+ * is being billed by the provider, it just isn't counted against the agent's
+ * budget, so budget enforcement is quietly not protecting that agent. Scoped
+ * to allowed requests because a denial legitimately costs nothing.
+ */
+function isUnpriced(event: ActivityEvent): boolean {
+  return (
+    event.decision === "allowed" &&
+    event.totalTokens !== null &&
+    event.totalTokens > 0 &&
+    (event.costCents === null || event.costCents === 0)
+  );
+}
+
 function DecisionBadge({ event }: { event: ActivityEvent }) {
   if (event.decision === "allowed") {
     // An allowed request can still have failed upstream (a 401 from the
@@ -220,9 +238,24 @@ export function ActivityLog() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <span className="font-mono text-xs tabular-nums">
-                          {formatCost(event.costCents)}
-                        </span>
+                        {isUnpriced(event) ? (
+                          // Real tokens but no cost means Tollgate has no price
+                          // for this model, so this request spent money that
+                          // never counted against the agent's budget. That has
+                          // to be visible — a plain "$0.0000" reads as "this
+                          // was free", which is the opposite of the truth.
+                          <span
+                            className="font-mono text-xs tabular-nums"
+                            style={{ color: "var(--amber)" }}
+                            title={`Tollgate has no price for ${event.model ?? "this model"}, so its spend isn't counted against the budget.`}
+                          >
+                            unpriced
+                          </span>
+                        ) : (
+                          <span className="font-mono text-xs tabular-nums">
+                            {formatCost(event.costCents)}
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
