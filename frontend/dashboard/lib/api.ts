@@ -136,8 +136,12 @@ export class ApiError extends Error {
 const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_provider_slug: "That provider isn't supported.",
   provider_slug_immutable: "An agent's assistant can't be changed after it's created.",
+  dashboard_id_immutable: "An agent can't be moved to a different dashboard.",
   agent_not_found: "That agent no longer exists.",
   dashboard_not_found: "That dashboard no longer exists.",
+  // Only reachable from a client bug — every caller sends the active dashboard's
+  // id — so it reads as "reload" rather than asking the user to supply anything.
+  dashboard_id_required: "Couldn't tell which dashboard this is. Try reloading.",
   agent_has_no_policy: "This agent has no budget policy to update.",
   invalid_body: "That request wasn't valid — check the fields and try again.",
   missing_token: "Paste the agent's token to continue.",
@@ -278,18 +282,43 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
-export function listActivity(limit = 100): Promise<ActivityEvent[]> {
-  return request<ActivityEvent[]>(`/v1/activity?limit=${limit}`);
+/**
+ * Activity for ONE dashboard. `dashboardId` is required by the api — dashboards
+ * are independent, and an org-wide feed would name agents from dashboards the
+ * caller isn't looking at.
+ */
+export function listActivity(dashboardId: string, limit = 100): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>(
+    `/v1/activity?limit=${limit}&dashboardId=${encodeURIComponent(dashboardId)}`,
+  );
 }
 
-export function listAgents(): Promise<AgentListItem[]> {
-  return request<AgentListItem[]>("/v1/agents");
+/** Agents in ONE dashboard. Required, not optional: an omitted id used to mean
+ *  "every agent in the org", which is what made every dashboard show the same
+ *  list. The api rejects the call rather than falling back to that. */
+export function listAgents(dashboardId: string): Promise<AgentListItem[]> {
+  return request<AgentListItem[]>(
+    `/v1/agents?dashboardId=${encodeURIComponent(dashboardId)}`,
+  );
 }
 
-export function createAgent(input: CreateAgentInput): Promise<CreateAgentResponse> {
+/**
+ * Creates an agent inside `dashboardId`.
+ *
+ * The dashboard is a separate argument rather than a field on CreateAgentInput
+ * because that type is also implemented by the marketing page's demo simulator
+ * (via AgentDashboardActions), which has no dashboard concept at all. Keeping it
+ * out of the input shape is what lets the shared AgentDashboard component and the
+ * demo stay untouched by this feature — /agents supplies the id by wrapping this
+ * function instead.
+ */
+export function createAgent(
+  input: CreateAgentInput,
+  dashboardId: string,
+): Promise<CreateAgentResponse> {
   return request<CreateAgentResponse>("/v1/agents", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, dashboardId }),
   });
 }
 

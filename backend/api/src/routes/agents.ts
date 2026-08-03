@@ -14,6 +14,7 @@ import {
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { agents, policies, orgUpstreamKeys } from "../db/schema.js";
+import { resolveDashboardId } from "../lib/dashboard-scope.js";
 import { hashToken, generateToken } from "../lib/tokens.js";
 
 interface CreateAgentBody {
@@ -22,6 +23,10 @@ interface CreateAgentBody {
   maxBudgetCents: number | null;
   model: string | null;
   upstreamKeyId: string | null;
+  /** Which dashboard the agent is created in. Carried as raw `unknown` because
+   *  validating it needs a database round-trip against the caller's org — see
+   *  resolveDashboardId, which the route calls before touching anything else. */
+  dashboardId: unknown;
 }
 
 /**
@@ -71,7 +76,14 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
     return null;
   }
 
-  return { name, providerSlug, maxBudgetCents, model, upstreamKeyId };
+  return {
+    name,
+    providerSlug,
+    maxBudgetCents,
+    model,
+    upstreamKeyId,
+    dashboardId: rec["dashboardId"],
+  };
 }
 
 /**
@@ -115,7 +127,7 @@ interface UpdateAgentBody {
 
 type UpdateParseResult =
   | { ok: true; body: UpdateAgentBody }
-  | { ok: false; error: "invalid_body" | "provider_slug_immutable" };
+  | { ok: false; error: "invalid_body" | "provider_slug_immutable" | "dashboard_id_immutable" };
 
 function parseUpdateBody(body: unknown): UpdateParseResult {
   if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
@@ -126,6 +138,12 @@ function parseUpdateBody(body: unknown): UpdateParseResult {
   // may reach). Editing it would silently repoint a live token at a different
   // vendor, so reject the attempt loudly instead of ignoring the field.
   if ("providerSlug" in rec) return { ok: false, error: "provider_slug_immutable" };
+
+  // Moving an agent between dashboards isn't built. Rejecting the field loudly
+  // beats the alternative this parser would otherwise fall into — ignoring the
+  // unknown key, then 400ing "invalid_body" for an empty patch, which reads like
+  // a malformed request rather than an unsupported one.
+  if ("dashboardId" in rec) return { ok: false, error: "dashboard_id_immutable" };
 
   const out: UpdateAgentBody = {};
 
@@ -192,6 +210,7 @@ async function findAgent(
   policyId: string | null;
   status: AgentStatus;
   providerSlug: string;
+  dashboardId: string;
 } | null> {
   const rows = await db
     .select({
@@ -199,6 +218,9 @@ async function findAgent(
       policyId: agents.policyId,
       status: agents.status,
       providerSlug: agents.providerSlug,
+      // Needed by PATCH's rename clash check, which is scoped to the agent's own
+      // dashboard now that names are unique per dashboard rather than per org.
+      dashboardId: agents.dashboardId,
     })
     .from(agents)
     .where(and(eq(agents.id, id), eq(agents.orgId, orgId)));
@@ -228,6 +250,18 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       };
     }
 
+    // Which dashboard the agent lands in is the caller's explicit choice, not
+    // whichever one happens to be selected server-side. Creating into the wrong
+    // dashboard is a durable mistake — there's no "move agent" affordance, so
+    // fixing it means deleting and recreating — and deriving it from stored
+    // selection state would misfile the agent whenever the two disagree (another
+    // tab, a stale page). Requiring it makes the request say what it means.
+    const scope = await resolveDashboardId(body.dashboardId, orgId);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
     if (
       body.upstreamKeyId !== null &&
       !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, orgId, body.providerSlug))
@@ -236,17 +270,18 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       return { error: "invalid_upstream_key" };
     }
 
-    // Scoped to this org (+ non-archived): a name only needs to be free within
-    // the caller's own org. Archived agents don't count as "taken" — DELETE
-    // /v1/agents/:id archives rather than hard-deletes (see that route). Mirrors
-    // the partial unique index on (org_id, name) in schema.ts.
+    // Scoped to this DASHBOARD (+ non-archived): a name only needs to be free
+    // within the dashboard it's being created in, so two independent dashboards
+    // can each have a "support-bot". Archived agents don't count as "taken" —
+    // DELETE /v1/agents/:id archives rather than hard-deletes (see that route).
+    // Mirrors the partial unique index on (dashboard_id, name) in schema.ts.
     const existing = await db
       .select({ id: agents.id })
       .from(agents)
       .where(
         and(
           eq(agents.name, body.name),
-          eq(agents.orgId, orgId),
+          eq(agents.dashboardId, scope.dashboardId),
           ne(agents.status, "archived"),
         ),
       );
@@ -254,7 +289,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       reply.code(409);
       return {
         error: "agent_name_taken",
-        message: `An agent named "${body.name}" already exists`,
+        message: `An agent named "${body.name}" already exists in this dashboard`,
       };
     }
 
@@ -277,6 +312,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     await db.insert(agents).values({
       id: agentId,
       orgId,
+      dashboardId: scope.dashboardId,
       name: body.name,
       providerSlug: body.providerSlug,
       model: body.model,
@@ -294,14 +330,26 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       status: "active" satisfies AgentStatus,
       maxBudgetCents: body.maxBudgetCents,
       upstreamKeyId: body.upstreamKeyId,
+      dashboardId: scope.dashboardId,
       // Returned once. Only the hash is ever persisted — this response is the
       // only chance the caller has to see the raw token.
       token,
     };
   });
 
-  app.get("/v1/agents", async (req) => {
+  app.get<{ Querystring: { dashboardId?: string } }>("/v1/agents", async (req, reply) => {
     const orgId = req.activeOrgId!;
+
+    // The dashboard is required, not optional-with-an-org-wide-fallback. An
+    // omitted id used to mean "every agent in the org", which is exactly the
+    // behaviour that made all dashboards show the same list — leaving that as a
+    // silent default would keep the bug one forgotten parameter away.
+    const scope = await resolveDashboardId(req.query.dashboardId, orgId);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
     const rows = await db
       .select({
         id: agents.id,
@@ -313,13 +361,25 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         upstreamKeyId: agents.upstreamKeyId,
       })
       .from(agents)
-      // Scoped to the caller's org so one account never sees another's agents.
-      // Archived agents are DELETE /v1/agents/:id's result (an archive, not a
-      // hard row delete — see that route). Excluding them here is what makes
-      // delete actually stick from the dashboard's perspective: without this,
-      // an archived agent would reappear on the very next 3s poll.
+      // Three independent filters, all load-bearing:
+      //   dashboardId — the whole point of this endpoint; dashboards don't share
+      //     agents, so this is what makes them independent of one another.
+      //   orgId — kept even though dashboardId already implies it (the dashboard
+      //     was resolved against this same org). Cross-account isolation should
+      //     not rest on that inference: if the dashboard scoping ever regresses,
+      //     the failure stays inside one account instead of leaking across them.
+      //   status — archived agents are DELETE /v1/agents/:id's result (an
+      //     archive, not a hard row delete). Excluding them is what makes delete
+      //     stick from the dashboard's perspective: without it, an archived agent
+      //     reappears on the very next 3s poll.
       .leftJoin(policies, eq(policies.id, agents.policyId))
-      .where(and(eq(agents.orgId, orgId), ne(agents.status, "archived")));
+      .where(
+        and(
+          eq(agents.dashboardId, scope.dashboardId),
+          eq(agents.orgId, orgId),
+          ne(agents.status, "archived"),
+        ),
+      );
 
     const month = currentMonth(new Date());
 
@@ -369,26 +429,35 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       const parsed = parseUpdateBody(req.body);
       if (!parsed.ok) {
         reply.code(400);
-        return parsed.error === "provider_slug_immutable"
-          ? {
-              error: "provider_slug_immutable",
-              message: "An agent's assistant can't be changed after it's created.",
-            }
-          : { error: "invalid_body" };
+        if (parsed.error === "provider_slug_immutable") {
+          return {
+            error: "provider_slug_immutable",
+            message: "An agent's assistant can't be changed after it's created.",
+          };
+        }
+        if (parsed.error === "dashboard_id_immutable") {
+          return {
+            error: "dashboard_id_immutable",
+            message: "An agent can't be moved to a different dashboard.",
+          };
+        }
+        return { error: "invalid_body" };
       }
       const body = parsed.body;
 
       if (body.name !== undefined) {
-        // Same org + non-archived scoping as POST /v1/agents (and the partial
-        // unique index in db/schema.ts), plus ne(id) so an agent doesn't collide
-        // with its own row when the name is submitted unchanged.
+        // Same dashboard + non-archived scoping as POST /v1/agents (and the
+        // partial unique index in db/schema.ts), plus ne(id) so an agent doesn't
+        // collide with its own row when the name is submitted unchanged. Scoped
+        // to the agent's OWN dashboard — renaming can't move it, so a name in
+        // some other dashboard is none of this check's business.
         const clash = await db
           .select({ id: agents.id })
           .from(agents)
           .where(
             and(
               eq(agents.name, body.name),
-              eq(agents.orgId, orgId),
+              eq(agents.dashboardId, agent.dashboardId),
               ne(agents.status, "archived"),
               ne(agents.id, agent.id),
             ),
@@ -397,7 +466,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           reply.code(409);
           return {
             error: "agent_name_taken",
-            message: `An agent named "${body.name}" already exists`,
+            message: `An agent named "${body.name}" already exists in this dashboard`,
           };
         }
       }

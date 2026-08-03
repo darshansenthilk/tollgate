@@ -3,6 +3,10 @@ import type { FastifyInstance } from "fastify";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { activeDashboards, dashboards } from "../db/schema.js";
+// The shape guard this file used to define locally, now shared with
+// routes/agents.ts and routes/activity.ts — see lib/dashboard-scope.ts for why a
+// malformed uuid has to be screened before it reaches Postgres.
+import { UUID_RE } from "../lib/dashboard-scope.js";
 
 /**
  * Dashboards: the org-owned containers `/dashboards` lists as tiles, plus the
@@ -45,17 +49,6 @@ function parseNameBody(body: unknown): NameParseResult {
 
   return { ok: true, name };
 }
-
-/**
- * `dashboards.id` is a uuid column, so a malformed id reaches Postgres as a
- * cast error (22P02) rather than zero rows — and with no setErrorHandler
- * registered, Fastify would answer 500 with the driver's message instead of the
- * 404 this route promises. Screening the shape first keeps "not a dashboard id"
- * and "not your dashboard" indistinguishable, which is the whole point of 404ing
- * here. routes/agents.ts has the same gap on its own :id routes; worth lifting
- * this into a shared guard (or a params schema) if a third route needs it.
- */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function toJson(row: { id: string; name: string; createdAt: Date }): DashboardJson {
   return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };

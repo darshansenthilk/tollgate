@@ -71,6 +71,13 @@
       "when": 1785733739888,
       "tag": "0009_illegal_sue_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785745678683,
+      "tag": "0010_supreme_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

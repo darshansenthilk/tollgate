@@ -2,15 +2,21 @@ import type { FastifyInstance } from "fastify";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, spendEvents } from "../db/schema.js";
+import { resolveDashboardId } from "../lib/dashboard-scope.js";
 
 /**
- * The activity feed behind the dashboard's log panel: every request an org's
- * agents made, allowed or denied, newest first.
+ * The activity feed behind the dashboard's log panel: every request one
+ * dashboard's agents made, allowed or denied, newest first.
  *
  * Scoped by joining through agents and filtering on the caller's active org —
  * spend_events itself carries no org_id, so the join IS the isolation boundary.
  * Gated by the requireAuth preHandler (index.ts) like every other /v1 route,
  * which is why the `!` on req.activeOrgId is safe.
+ *
+ * The feed is scoped to ONE dashboard for the same reason /v1/agents is: it's
+ * derived from agents, so an org-wide feed would list agents from dashboards the
+ * caller isn't looking at — naming them, and their spend, right there in the
+ * table. Independent dashboards have to mean independent here too.
  */
 
 const DEFAULT_LIMIT = 100;
@@ -24,9 +30,17 @@ function parseLimit(raw: unknown): number {
 }
 
 export function registerActivityRoutes(app: FastifyInstance): void {
-  app.get<{ Querystring: { limit?: string } }>("/v1/activity", async (req) => {
+  app.get<{ Querystring: { limit?: string; dashboardId?: string } }>(
+    "/v1/activity",
+    async (req, reply) => {
     const orgId = req.activeOrgId!;
     const limit = parseLimit(req.query.limit);
+
+    const scope = await resolveDashboardId(req.query.dashboardId, orgId);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
 
     const rows = await db
       .select({
@@ -48,7 +62,9 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       })
       .from(spendEvents)
       .innerJoin(agents, eq(agents.id, spendEvents.agentId))
-      .where(eq(agents.orgId, orgId))
+      // orgId is kept alongside dashboardId for the same defence-in-depth reason
+      // GET /v1/agents keeps it — see that route's comment.
+      .where(and(eq(agents.dashboardId, scope.dashboardId), eq(agents.orgId, orgId)))
       .orderBy(desc(spendEvents.createdAt))
       .limit(limit);
 
@@ -75,7 +91,8 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       latencyMs: row.latencyMs,
       createdAt: row.createdAt.toISOString(),
     }));
-  });
+    },
+  );
 
   /** Same feed narrowed to one agent — powers a per-agent drill-in later; also
    *  keeps the org scoping in one place rather than duplicating the join. */

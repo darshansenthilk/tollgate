@@ -93,9 +93,30 @@ export const agents = pgTable(
   {
     id: uuid("id").primaryKey(),
     orgId: text("org_id").notNull(),
-    /** Unique per org among non-archived agents only — see the partial index
-     *  below. DELETE /v1/agents/:id archives rather than hard-deletes, so a
-     *  deleted agent's old name must be free to reuse. */
+    /**
+     * Which dashboard this agent lives in. Dashboards are independent of one
+     * another: an agent belongs to exactly one, and every read path filters on
+     * this so adding an agent to one dashboard doesn't change any other.
+     *
+     * A real FK (both sides are app-owned tables), deliberately with NO cascade
+     * and no `onDelete` at all — the default NO ACTION means Postgres REFUSES to
+     * delete a dashboard that still has agents. Deleting a dashboard isn't built
+     * yet, and the right policy (archive the agents? refuse? move them?) is that
+     * feature's decision. Blocking is the recoverable default; cascading would
+     * silently destroy live, spendable agent tokens.
+     *
+     * NOT NULL, so an agent can never be orphaned into invisibility: a row this
+     * filter can't match would vanish from every dashboard while its token still
+     * worked at the proxy. Redundant with orgId (a dashboard already carries an
+     * org), which is intentional — org scoping stays the isolation boundary and
+     * is checked independently, so a bug here can't become a cross-account leak.
+     */
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    /** Unique per DASHBOARD among non-archived agents only — see the partial
+     *  index below. DELETE /v1/agents/:id archives rather than hard-deletes, so
+     *  a deleted agent's old name must be free to reuse. */
     name: text("name").notNull(),
     /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
     providerSlug: text("provider_slug").notNull(),
@@ -124,11 +145,17 @@ export const agents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // Partial unique index: a name is unique PER ORG among agents that AREN'T
-    // archived. Scoped by org so two accounts can each have a "checkout-bot";
-    // scoped to non-archived so a soft-deleted agent's name frees up for reuse.
-    uniqueIndex("agents_org_name_unique_when_not_archived")
-      .on(table.orgId, table.name)
+    // Partial unique index: a name is unique PER DASHBOARD among agents that
+    // AREN'T archived. Scoped to non-archived so a soft-deleted agent's name
+    // frees up for reuse.
+    //
+    // This was (org_id, name) until dashboards became independent. Per-dashboard
+    // is the weaker constraint and it's the point of the feature: two dashboards
+    // in the same org can each have a "support-bot" without knowing about each
+    // other. Cross-ORG uniqueness is not lost by weakening it — a dashboard
+    // belongs to exactly one org, so distinct dashboards never span orgs.
+    uniqueIndex("agents_dashboard_name_unique_when_not_archived")
+      .on(table.dashboardId, table.name)
       .where(sql`${table.status} != 'archived'`),
   ],
 );

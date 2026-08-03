@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { AgentStatus } from "@tollgate/shared";
 import { AgentDashboard } from "@/components/agent-dashboard";
@@ -22,6 +22,7 @@ import {
   unfreezeAgent,
   updateAgent,
   type AgentListItem,
+  type CreateAgentInput,
   type CreateAgentResponse,
   type Dashboard,
   type UpdateAgentResponse,
@@ -29,8 +30,9 @@ import {
 
 const POLL_INTERVAL_MS = 3000;
 
-const ACTIONS = {
-  createAgent,
+/** Everything except createAgent, which needs the active dashboard and so is
+ *  bound per-render below. Kept module-level so the object identity is stable. */
+const DASHBOARD_INDEPENDENT_ACTIONS = {
   updateAgent,
   freezeAgent,
   unfreezeAgent,
@@ -47,9 +49,9 @@ export default function AgentsPage() {
   );
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (dashboardId: string) => {
     try {
-      const data = await listAgents();
+      const data = await listAgents(dashboardId);
       // Successive polls are identical most of the time. Swapping in a fresh
       // array every 3s re-renders the whole dashboard for nothing, and when
       // that lands mid-animation (opening the sidebar or the create dialog)
@@ -94,12 +96,40 @@ export default function AgentsPage() {
     };
   }, []);
 
+  const activeDashboardId = activeDashboard?.id ?? null;
+
   useEffect(() => {
-    if (activeDashboard === undefined || activeDashboard === null) return;
-    void refresh();
-    const id = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+    if (activeDashboardId === null) return;
+    // Drop the previous dashboard's agents before fetching this one's. Without
+    // it, switching dashboards renders the old list under the new dashboard's
+    // name for one poll interval — the exact cross-dashboard bleed this feature
+    // exists to remove. null puts the page back on "Loading…" instead.
+    setAgents(null);
+    void refresh(activeDashboardId);
+    const id = setInterval(() => void refresh(activeDashboardId), POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [refresh, activeDashboard]);
+    // Keyed on the id, not the dashboard object: a rename returns a new object
+    // for the same dashboard, and that shouldn't blank the table and refetch.
+  }, [refresh, activeDashboardId]);
+
+  /** createAgent bound to the dashboard on screen, so a new agent lands where
+   *  the user is looking rather than wherever server-side selection state
+   *  happens to point. Memoized on the id so AgentDashboard isn't handed a new
+   *  actions object every render. */
+  const actions = useMemo(
+    () => ({
+      ...DASHBOARD_INDEPENDENT_ACTIONS,
+      createAgent: (input: CreateAgentInput) =>
+        // Unreachable in practice — the create dialog only renders inside the
+        // branch below, which has already narrowed activeDashboard to non-null.
+        // Rejecting beats inventing a placeholder id that the api would reject
+        // anyway with a message about a dashboard the user never chose.
+        activeDashboardId === null
+          ? Promise.reject(new Error("No dashboard is open."))
+          : createAgent(input, activeDashboardId),
+    }),
+    [activeDashboardId],
+  );
 
   function handleCreated(agent: CreateAgentResponse) {
     setAgents((prev) => (prev === null ? prev : applyCreated(prev, agent)));
@@ -140,7 +170,7 @@ export default function AgentsPage() {
       ) : (
         <AgentDashboard
           agents={agents}
-          actions={ACTIONS}
+          actions={actions}
           dashboardName={activeDashboard.name}
           // Inline so it closes over the narrowed (non-null) activeDashboard;
           // the card title re-renders from this state, so no refetch is needed.
