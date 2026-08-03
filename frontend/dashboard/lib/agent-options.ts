@@ -10,6 +10,7 @@ export const PROVIDERS = [
   { value: "claude", label: "Claude" },
   { value: "gemini", label: "Gemini" },
   { value: "azure", label: "Azure OpenAI" },
+  { value: "bedrock", label: "AWS Bedrock" },
 ] as const;
 
 export type ProviderSlug = (typeof PROVIDERS)[number]["value"];
@@ -41,6 +42,21 @@ export const MODELS_BY_PROVIDER: Record<ProviderSlug, { value: string; label: st
   azure: [
     { value: "gpt-4o", label: "gpt-4o (deployment name)" },
     { value: "gpt-4o-mini", label: "gpt-4o-mini (deployment name)" },
+  ],
+  // Bedrock model ids as AWS itself spells them — these are what the field
+  // sends verbatim to the proxy path (see agent-connect.ts) and what a
+  // response's own "model" comes back as, so free-typing any other Bedrock
+  // id (a different provider's model, a new dated release) works exactly the
+  // same as these suggestions do.
+  bedrock: [
+    {
+      value: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      label: "Claude 3.5 Sonnet",
+    },
+    {
+      value: "anthropic.claude-3-5-haiku-20241022-v1:0",
+      label: "Claude 3.5 Haiku",
+    },
   ],
 };
 
