@@ -12,6 +12,7 @@ const ADAPTER_SLUGS: Record<string, string> = {
   claude: "claude",
   gemini: "gemini",
   azure: "azure",
+  bedrock: "bedrock",
 };
 
 /**
@@ -53,6 +54,9 @@ function upstreamModelId(providerSlug: string, model: string): string {
  *     Anthropic's, so the override must NOT add anything either. Matches
  *     backend/proxy/src/adapters/gemini.ts's route
  *     ("/gemini/v1beta/models/...:generateContent").
+ *   - Bedrock has no official SDK base-url override in play here at all —
+ *     the snippet is raw HTTP, so this is simply the root the path in
+ *     buildTestRequest/the snippet's own fetch call is built against.
  */
 function proxyBaseUrl(providerSlug: string): string | null {
   const adapterSlug = ADAPTER_SLUGS[providerSlug];
@@ -140,6 +144,45 @@ const response = await client.chat.completions.create({
   messages: [{ role: "user", content: "Hello" }],
 });
 console.log(response.choices[0].message.content);`,
+    };
+  }
+
+  if (providerSlug === "bedrock") {
+    // Deliberately raw HTTP, not boto3 / the AWS SDK. Every other snippet
+    // here swaps one credential in an existing SDK client, but the AWS SDK's
+    // whole job is signing requests with a real AWS key — which is exactly
+    // what this agent must NEVER hold. Tollgate signs with the org's stored
+    // AWS credential server-side (see backend/proxy/src/adapters/bedrock.ts);
+    // the agent only ever needs its own Tollgate token as a bearer header,
+    // same as every other provider.
+    return {
+      python: `import requests
+
+response = requests.post(
+    "${baseUrl}/model/${upstreamModel}/invoke",
+    headers={"Authorization": "Bearer ${token}"},
+    json={
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}],
+    },
+)
+print(response.json()["content"][0]["text"])`,
+      typescript: `const response = await fetch(
+  "${baseUrl}/model/${upstreamModel}/invoke",
+  {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer ${token}",
+    },
+    body: JSON.stringify({
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "Hello" }],
+    }),
+  },
+);
+const data = await response.json();
+console.log(data.content[0].text);`,
     };
   }
 
@@ -232,6 +275,18 @@ export function buildTestRequest(
       body: {
         contents: [{ role: "user", parts: [{ text: "hi" }] }],
         generationConfig: { maxOutputTokens: 1 },
+      },
+    };
+  }
+
+  if (providerSlug === "bedrock") {
+    return {
+      // anthropic_version is injected server-side (bedrock.ts's
+      // prepareRequestBody) — the caller never has to know Bedrock needs it.
+      path: `/${adapterSlug}/model/${upstreamModel}/invoke`,
+      body: {
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
       },
     };
   }

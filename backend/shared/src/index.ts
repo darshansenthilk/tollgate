@@ -283,6 +283,28 @@ export const AZURE_PRICES: Record<string, ModelPrice> = {
   "gpt-3.5-turbo": { inputCentsPerMTok: 50, outputCentsPerMTok: 150 },
 };
 
+/**
+ * AWS Bedrock's on-demand pricing for Anthropic Claude models — AWS sets
+ * these, and while they've historically tracked Anthropic's own list price,
+ * that's not guaranteed, so this is its own table rather than an alias of
+ * CLAUDE_PRICES (same reasoning as AZURE_PRICES). Provisioned-throughput
+ * commitments bill differently; these are on-demand rates only.
+ *
+ * Keyed on the FAMILY portion of a Bedrock model id, after
+ * bedrock.ts's normalizeBedrockModelId strips the region-inference-profile
+ * prefix ("us.") and the trailing ":N" revision — findModelPrice then peels
+ * the dated suffix and "vN" the same way it does for every other provider.
+ * Verify against AWS's own Bedrock pricing page before relying on these for
+ * real billing, same caveat as every other price table here.
+ */
+export const BEDROCK_PRICES: Record<string, ModelPrice> = {
+  "anthropic.claude-3-5-sonnet": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
+  "anthropic.claude-3-5-haiku": { inputCentsPerMTok: 80, outputCentsPerMTok: 400 },
+  "anthropic.claude-3-opus": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
+  "anthropic.claude-3-sonnet": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
+  "anthropic.claude-3-haiku": { inputCentsPerMTok: 25, outputCentsPerMTok: 125 },
+};
+
 // ---------------------------------------------------------------------------
 // Upstream provider keys (BYOK)
 //
