@@ -91,6 +91,7 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_provider_slug: "That provider isn't supported.",
   provider_slug_immutable: "An agent's assistant can't be changed after it's created.",
   agent_not_found: "That agent no longer exists.",
+  dashboard_not_found: "That dashboard no longer exists.",
   agent_has_no_policy: "This agent has no budget policy to update.",
   invalid_body: "That request wasn't valid — check the fields and try again.",
   missing_token: "Paste the agent's token to continue.",
@@ -270,5 +271,49 @@ export function unfreezeAgent(id: string): Promise<AgentMutationResponse> {
 export function deleteAgent(id: string): Promise<AgentMutationResponse> {
   return request<AgentMutationResponse>(`/v1/agents/${id}`, {
     method: "DELETE",
+  });
+}
+
+/** Exact shape returned by every /v1/dashboards route (backend/api/src/routes/dashboards.ts). */
+export interface Dashboard {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** Every dashboard in the caller's active org, in creation order. */
+export function listDashboards(): Promise<Dashboard[]> {
+  return request<Dashboard[]>("/v1/dashboards");
+}
+
+/**
+ * Creates a dashboard and — server-side — makes it the caller's active one, so
+ * callers can navigate straight to /agents without a follow-up selectDashboard.
+ */
+export function createDashboard(name: string): Promise<Dashboard> {
+  return request<Dashboard>("/v1/dashboards", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+/**
+ * The dashboard this user currently has open, or null if they've never selected
+ * one — the empty-state signal /agents branches on. The api wraps the value in a
+ * `{ dashboard }` envelope because a Fastify handler can't return a bare null
+ * body; unwrap it here so callers only deal with `Dashboard | null`.
+ */
+export async function getActiveDashboard(): Promise<Dashboard | null> {
+  const { dashboard } = await request<{ dashboard: Dashboard | null }>("/v1/dashboards/active");
+  return dashboard;
+}
+
+/**
+ * Switches the caller's active dashboard. Scoped to the active org by the api,
+ * so another org's (or a deleted) dashboard comes back as dashboard_not_found.
+ */
+export function selectDashboard(id: string): Promise<Dashboard> {
+  return request<Dashboard>(`/v1/dashboards/${id}/select`, {
+    method: "POST",
   });
 }

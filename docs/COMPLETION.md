@@ -6,6 +6,97 @@
 
 ---
 
+## Session summary — 2026-08-02
+
+### Dashboard Expansion, slice 1 — create / list / select dashboards + the `/agents` empty-state gate
+
+**Problem:** Tollgate had exactly one implicit dashboard per account. Root `PLAN.md`'s "Next slice"
+(approved for implementation 2026-08-02) called for the Google-Docs-style front half of the feature: a
+real `dashboards` data model, a create-tile + grid on `/dashboards`, selector tiles for existing
+dashboards, and an empty-state gate on `/agents` for accounts that haven't created one. Sharing,
+permission tiers, and scoping *agents* to a dashboard are all deliberately out of scope — this slice
+builds the selector, not the filter.
+
+**What changed:**
+
+*Backend:*
+- `backend/api/src/db/schema.ts:222-254` — new `dashboards` (uuid pk, plain-text non-FK `org_id`,
+  `name`, `created_at`) and `active_dashboards` (plain-text `user_id` pk, `dashboard_id` uuid FK →
+  `dashboards.id` `ON DELETE CASCADE`, `updated_at`). Ownership is org-scoped, selection is per-user
+  (DE13) — once a dashboard is shared with several members, each needs their own open one.
+- `backend/api/drizzle/0007_rare_lightspeed.sql` (+ snapshot/journal) — generated via `db:generate`,
+  applied with `db:migrate`.
+- `backend/api/src/routes/dashboards.ts` (new) — `POST /v1/dashboards` (trim, empty → 400
+  `invalid_body`, >50 chars → 400 `dashboard_name_too_long`, then DE11 auto-select), `GET
+  /v1/dashboards` (org-scoped, `created_at ASC` per DE7), `GET /v1/dashboards/active` (returns a
+  `{ dashboard }` **envelope** — a Fastify handler can't return a bare `null` — resolved by joining
+  `active_dashboards ⋈ dashboards` and requiring *both* `user_id` and `org_id`, so a stale selection
+  can't leak another org's dashboard name), and `POST /v1/dashboards/:id/select` (org-scoped, 404 not
+  403 on a cross-org id).
+- `backend/api/src/index.ts:74` — `registerDashboardRoutes(scope)` inside the existing `requireAuth`
+  block. No middleware change.
+
+*The authorized agent wipe:*
+- `backend/api/src/db/wipe-agents.ts` (new) + a `db:wipe-agents` package script — one-time rollout
+  script, deliberately **not** wired into `runMigrations()`. Logs per-org counts before touching
+  anything, then `DELETE spend_events` → `DELETE agents` (that order: `spend_events.agent_id` FKs to
+  `agents.id`) globally inside one transaction. Refuses to run without the literal
+  `--yes-wipe-all-agents` flag. `policies` and `org_upstream_keys` left alone.
+
+*Frontend:*
+- `frontend/dashboard/lib/api.ts:277-319` — `Dashboard` type plus `listDashboards`, `createDashboard`,
+  `getActiveDashboard` (unwraps the envelope to `Dashboard | null`), `selectDashboard`; one new
+  `dashboard_not_found` entry in `FRIENDLY_ERROR_MESSAGES`.
+- `components/create-dashboard-tile.tsx`, `create-dashboard-dialog.tsx`, `dashboard-tile.tsx` (new) —
+  the `aspect-[2/1]` `bg-card` "+" tile (DE1-DE3), its dialog (`maxLength={50}` + a live `{n}/50`
+  counter, DE6), and the `bg-primary` selector tile with a `ring-2 ring-foreground` active indicator
+  (DE9/DE10).
+- `app/dashboards/page.tsx` — the "Coming soon" card replaced by a
+  `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` grid (DE4) with the create tile first. The h1/subtitle
+  markup from the earlier scaffold is preserved verbatim.
+- `app/agents/page.tsx` — `getActiveDashboard()` gates the existing 3s `listAgents` poll.
+  `activeDashboard` is `Dashboard | null | undefined`, where `undefined` means "not resolved yet", so a
+  page load never flashes the empty state at someone who already has a dashboard.
+
+**Three bugs found by an adversarial review pass and fixed before finishing:**
+- `app/agents/page.tsx` — the original gate left `activeDashboard` as `undefined` when the lookup
+  *failed*, which pinned the page on "Loading…" forever: the poll effect returns early on `undefined`
+  and neither effect could re-run. Before this gate existed, the same transient api blip self-healed on
+  the next 3s tick. Now retries on the poll interval, with cancellation on unmount.
+- `app/dashboards/page.tsx` — a shared `catch` on `Promise.all` discarded a successfully-fetched
+  dashboard list whenever only the *active* lookup failed, rendering an org's real dashboards as an
+  empty grid. Now `Promise.allSettled`, so the two independent calls fail independently.
+- `routes/dashboards.ts` — a non-UUID `:id` reached Postgres as a 22P02 cast error and, with no
+  `setErrorHandler` registered anywhere in the api, surfaced as a 500 carrying the raw driver message
+  instead of the documented 404. Now shape-screened first. **`routes/agents.ts` has the identical gap
+  on its own `:id` routes** — left alone here rather than diverging in one file; worth a shared guard or
+  a params schema if a third route needs it.
+
+**Verified (2026-08-02):** `@tollgate/api` and `@tollgate/dashboard` both `tsc --noEmit` clean.
+(`@tollgate/shared` fails typecheck, but that is pre-existing on this branch — `git diff -w` shows
+`src/license.ts` is content-identical to HEAD.) Migration applied; `dashboards` + `active_dashboards`
+confirmed present. Wipe script run: guard correctly refused the unflagged invocation, then reported
+`0 spend_events, 0 agents` — **the tables were already empty**, so nothing was actually destroyed,
+contrary to PLAN.md's assumption that live agents existed. 19 `curl` checks against the running dev
+server with session-cookie auth, across two freshly signed-up accounts: empty state → create → 201 →
+auto-select; second create appends in `created_at` order; server-side validation (blank / 51 chars /
+exactly 50 / non-string); select moves the active row; **cross-org isolation** (account B sees `[]`,
+404s on A's id, keeps a null active); anonymous → 401; unknown and malformed uuids → 404; and
+**persistence** — a brand-new sign-in session returns the same active dashboard. DB inspection confirms
+exactly one `active_dashboards` row per user after three creates (the upsert works). `/dashboards`
+307s to `/sign-in` signed out and 200s signed in with the placeholder gone and the h1/subtitle intact.
+A `react-dom/server` harness against the installed `@base-ui/react` v1.6 confirmed
+`DialogTrigger render={<CreateDashboardTile />}` preserves the tile's `<Plus />` child and adds
+`aria-haspopup="dialog"`.
+
+**Not verified — needs a human at a browser:** every visual and interaction detail (tile proportions,
+hover/focus states, the active ring, the dialog's counter, grid breakpoints, the actual click-through
+from create → `/agents`). The tiles are client-rendered after a fetch, so `curl` only ever sees
+"Loading…", and no browser-automation tool is installed in this environment. Use
+`http://localhost:3000/dashboards` — **not** the WSL gateway IP, which gets a silent CORS 403.
+
+---
+
 ## Session summary — 2026-07-26
 
 ### TOTP two-factor authentication — mandatory → opt-in

@@ -4,60 +4,71 @@
 
 ---
 
-## Status as of 2026-07-24 (end of the UI session)
+## Status as of 2026-08-02 (end of the Dashboard Expansion planning session)
 
-Current branch is `Eshaan-2` (tracks `origin/Eshaan-2`). Merges into `main` are done manually by the user — never push a feature branch to `main` on their behalf.
+Current branch is `Eshaan-feature-permissions` — checked out as a clean copy of `main` before Dashboard
+Expansion was scoped. It's genuinely still content-identical to its own HEAD: the large `git status` diff
+you'll see (~85 files) is CRLF/LF line-ending churn, not real changes — confirmed via `git diff -w`
+returning empty. Nothing has been committed this session. (Everything in this file above the 2026-07-24
+entries — the `Eshaan-2` auth work — shipped and merged into `main` long ago; see `docs/COMPLETION.md`.)
 
-**Everything is committed and in sync with `origin/main`** at **`77432c6`** ("Redid the UI") — `git rev-list --left-right --count HEAD...origin/main` → `0 0`. The 2026-07-24 UI session landed as four commits: `47c808f` (needs-attention banner removed, selection toolbar with disabled action buttons), `29e3c08` (System status overhaul), `168cf45` (bracket animation + table-header hover fix), `77432c6` (dashboard restyled to the reference mock). Earlier work — the opt-in "Select agents" mode, heading/nav rename, poll re-render fix (Features 4–6), **Edit agent** (Feature 7, `69859c7`) and the **"industrial glass" overhaul** (Feature 8, `4bdfe04`) — is all in `main` too.
+**Dashboard Expansion slice 1 is now IMPLEMENTED and API-verified (2026-08-02) — not committed, and
+not yet checked in a browser.** The create tile, selector tiles, the `dashboards`/`active_dashboards`
+data model, all four API routes, the migration, the authorized agent wipe, and the `/agents`
+empty-state gate all landed this session. Full detail — including the three bugs an adversarial review
+caught and the exact `curl` verification matrix — is in `docs/COMPLETION.md`'s 2026-08-02 entry. Root
+**`PLAN.md`** still holds the feature pitch, the visual specs, DE1–DE13, and what remains explicitly
+out of scope (sharing, permission tiers, scoping agents to a dashboard).
 
-**One small change is still uncommitted:** the "Sort by" select trigger's hover highlight (`components/ui/select.tsx`) plus its `docs/COMPLETION.md` entry. Nothing else is pending.
-
-`docs/COMPLETION.md` has the full detail of every item. The root-level `PLAN.md` holds the (now implemented) plan for the mock restyle, kept only for reference — `docs/PLANS.md` is the canonical planner.
+`docs/COMPLETION.md` has the full detail of every already-shipped item. `docs/PLANS.md` (this file) is
+the canonical short-form planner/pointer; root `PLAN.md` is where the actual current feature's detail
+lives while it's in progress — check root `PLAN.md` first, this file second.
 
 **The agent filter feature is cancelled** — documented 2026-07-15, never started, dropped by the user. Do not implement it.
 
 ## Next task
 
-**Auth — IMPLEMENTATION COMPLETE; finish browser verification, get an eyeball, then commit.**
-The full email+password / per-account org-isolation auth feature was built and BACKEND-verified on
-2026-07-24 (Better Auth on the Fastify api as the authority). See the **Feature 9 (Auth)** entry in
-`docs/COMPLETION.md` for exactly what shipped — every file, the behavior, and the curl results. The
-detailed original plan is preserved below this block for reference (it was fully implemented).
+**Waiting on the user's browser check of Dashboard Expansion slice 1 (implemented 2026-08-02).** No new
+feature work is queued. Nothing has been committed.
 
 ### RESUME HERE (do this first, in order)
-1. **Restart the dev servers.** The api (:4000) was left running detached with the NEW code; the
-   dashboard (:3000) is still running the OLD pre-`better-auth` code (its restart was interrupted)
-   and MUST be restarted to load `better-auth` + `middleware.ts`. Restart both **detached** per the
-   `running-the-dev-server` memory (kill the :3000 process first; **never `next build` while `next
-   dev` runs**). If :4000 is down, `pnpm --filter @tollgate/api dev` — it re-applies both migration
-   sets idempotently on boot. Confirm ports 3000/4000/8080 are all listening.
-2. **Browser smoke test — the one thing curl couldn't do (cross-origin cookie flow).** Visit
-   http://localhost:3000 -> should redirect to `/sign-in`; sign up a NEW email+password -> should
-   land on the dashboard with the email shown top-right; create an agent; **Sign out** -> back to
-   `/sign-in`; hit `/` again -> redirected. Watch the network: `POST :4000/api/auth/sign-up/email`
-   must set a cookie that then rides on `GET :4000/v1/agents`. If the cookie doesn't stick, check
-   the api CORS (`origin:[DASHBOARD_ORIGIN], credentials:true`), no `Secure` on the http cookie, and
-   `credentials:"include"` on the client (both already set — `lib/auth-client.ts` / `lib/api.ts`).
-3. **Ask the user to eyeball** the sign-in/sign-up pages + the nav email/sign-out — a backgrounded
-   tab can't judge visuals or animations (existing users are `usera@`..`userd@example.com`,
-   password `password12345`, from the backend curl test).
-4. **Commit** once verified. Do NOT push to `main` — the user merges manually.
+1. **Read `docs/COMPLETION.md`'s 2026-08-02 entry** for what shipped, how it was verified, and the three
+   review-caught bugs already fixed. Root `PLAN.md` still holds the visual specs and DE1–DE13.
+2. **Restart the dev servers** if picking this up in a live session — infra (Postgres/Redis) via Docker,
+   `pnpm dev` for the three services (`:8080` proxy, `:4000` api, `:3000` dashboard). If a browser check
+   is needed, use `http://localhost:3000`, **not** a WSL gateway-IP link — the api's CORS/Better-Auth
+   trusted-origin is pinned to `http://localhost:3000` (`DASHBOARD_ORIGIN` in `.env`); a gateway-IP origin
+   gets a silent 403 that surfaces to the user as "Something went wrong" with no useful client-side error
+   (root-caused and fixed once already — don't re-debug it, just use `localhost`).
+3. **Ask the user for the browser result before doing anything else.** Everything still unverified is
+   visual/interaction (tile proportions, hover/focus, the active ring, the `{n}/50` counter, grid
+   breakpoints, create → `/agents` click-through). `curl` can't reach any of it — the tiles render
+   client-side after a fetch, so the server HTML is always just "Loading…". No browser-automation tool is
+   installed, and per the user's standing instruction, **don't install one without asking**.
+4. **Then pick the next slice with the user.** The obvious candidates, all still explicitly out of scope
+   in root `PLAN.md`: the `dashboard_members` table + permission tiers, the share/invite UI, and scoping
+   individual **agents** to a dashboard (the big one — it touches agent creation, the proxy hot path, and
+   existing data; this slice deliberately built the selector, not the filter).
 
-### Already verified 2026-07-24 (do NOT redo)
-- `pnpm -r typecheck` clean across all 4 workspaces; `pnpm -r test` 18/18 (proxy).
-- Backend via curl on the running api: anon `GET /v1/agents` -> 401; sign-up provisions a personal
-  org; a second account sees an empty list (NOT the first's agent); cross-account PATCH/DELETE ->
-  404; freeze with NO token (session+org authz) -> 200. All passed.
+### Known issues, deliberately not fixed
+- **`routes/agents.ts` 500s on a malformed `:id`.** A non-UUID `:id` hits Postgres as a 22P02 cast error,
+  and the api registers no `setErrorHandler`, so Fastify answers 500 with the raw driver message. Six
+  `agents.ts` routes have this. `routes/dashboards.ts` now shape-screens its own `:id` first (see the
+  `UUID_RE` comment there); the general fix is a shared guard, a params schema, or a global
+  `setErrorHandler` — not per-route patches.
+- **`@tollgate/shared` fails `tsc --noEmit`** (`src/license.ts` — missing Node globals plus a real
+  `LicenseCheck.payload` narrowing error). Pre-existing on this branch, unrelated to Dashboard Expansion:
+  `git diff -w` shows the file is content-identical to HEAD. `pnpm -r typecheck` therefore aborts before
+  reaching the api/dashboard packages — typecheck those two directly with `pnpm --filter` until it's fixed.
 
-### Notes / small open items
-- **Input validation** was intentionally kept as the existing strict hand-parsers (they own the
-  frontend's error-code contract, e.g. `invalid_body`); Fastify JSON-schema-per-route was NOT added,
-  to avoid regressing those messages. Reasonable future follow-up.
-- Rate limiting can't resolve a client IP locally (Better Auth logs a shared-bucket warning) — set
-  `advanced.ipAddress.*` for prod. Dev is fine.
-- Stale dev agents from before this change still exist (their `org_id` is the retired placeholder) —
-  harmless (invisible to every real org). Wipe for a clean DB if you like (`docker exec` psql was
-  blocked in-session; run it yourself).
+### Notes
+- The wipe already ran (2026-08-02) and deleted **nothing** — `agents`, `spend_events`, and `policies`
+  were all already empty across all 10 orgs, including `eshaan.joshi07@gmail.com`'s. PLAN.md's premise
+  that live agents existed did not hold. Don't run it again expecting a different result.
+- The `org_id`-not-`user_id` ownership call (root `PLAN.md`, DE13) was implemented as recommended:
+  `dashboards.org_id` scopes ownership, `active_dashboards.user_id` scopes selection.
+- Merges into `main` are done manually by the user — never push a feature branch to `main` on their
+  behalf, and never commit without being asked.
 
 ---
 

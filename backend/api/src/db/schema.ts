@@ -218,3 +218,37 @@ export const spendEvents = pgTable("spend_events", {
   upstreamStatus: integer("upstream_status"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Dashboards
+//
+// A dashboard is OWNED by an org (same plain-text, non-FK org_id every app
+// table uses), but WHICH dashboard you're currently looking at is yours alone —
+// once a dashboard is shared with several members, each of them needs to be
+// able to have a different one open at the same time. Hence two tables:
+// ownership on `dashboards`, selection on `active_dashboards`, one row per user.
+// ---------------------------------------------------------------------------
+
+export const dashboards = pgTable("dashboards", {
+  id: uuid("id").primaryKey(),
+  /** Stamped from the session's active org, never client input — see the module
+   *  doc comment. */
+  orgId: text("org_id").notNull(),
+  /** Length-capped at 50 by POST /v1/dashboards, not by the column. No
+   *  uniqueness constraint within an org (unlike agents.name) — duplicate
+   *  dashboard names are allowed for now. */
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const activeDashboards = pgTable("active_dashboards", {
+  /** Better Auth's user id as plain text, deliberately NOT an FK to the
+   *  auth-managed `user` table — same decoupling as org_id above. */
+  userId: text("user_id").primaryKey(),
+  /** A real FK here (both sides are app-owned tables): cascading the delete
+   *  keeps a selection from outliving the dashboard it points at. */
+  dashboardId: uuid("dashboard_id")
+    .notNull()
+    .references(() => dashboards.id, { onDelete: "cascade" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
