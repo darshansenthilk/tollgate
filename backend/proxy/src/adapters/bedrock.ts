@@ -1,4 +1,11 @@
-import { BEDROCK_PRICES, findModelPrice, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
+import {
+  BEDROCK_PRICES,
+  findModelPrice,
+  type ProviderAdapter,
+  type ProviderCost,
+  type ToolCallRef,
+  type ToolDefinition,
+} from "@tollgate/shared";
 import { signAwsRequest } from "../lib/aws-sigv4.js";
 
 /**
@@ -75,6 +82,62 @@ export function normalizeBedrockModelId(modelId: string): string {
   const vendorIndex = modelId.indexOf("anthropic.");
   const withoutProfile = vendorIndex === -1 ? modelId : modelId.slice(vendorIndex);
   return withoutProfile.replace(/:\d+$/, "");
+}
+
+/** Tool names from a response's `content` blocks — field-for-field the same
+ *  shape as Anthropic's own Messages API (see claude.ts's identical
+ *  toolUseNames; duplicated rather than imported, same call as readUsage
+ *  above — no streaming variant needed since this adapter is non-streaming
+ *  only, see the file doc comment). */
+function toolUseNames(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const names: string[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const rec = block as Record<string, unknown>;
+    if (rec["type"] === "tool_use" && typeof rec["name"] === "string") {
+      names.push(rec["name"]);
+    }
+  }
+  return names;
+}
+
+function extractBedrockToolCalls(rawBody: string): ToolCallRef[] {
+  const body = parseJson(rawBody);
+  if (typeof body !== "object" || body === null) return [];
+  return toolUseNames((body as Record<string, unknown>)["content"]).map((name) => ({ name }));
+}
+
+/** Prepend to the top-level `system` field — same shape as Anthropic's own
+ *  Messages API (see claude.ts's injectClaudeSystemPrompt), duplicated for
+ *  the same reason as toolUseNames above. */
+function injectBedrockSystemPrompt(requestBody: unknown, systemPrompt: string): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const existing = rec["system"];
+
+  if (existing === undefined || existing === null) return { ...rec, system: systemPrompt };
+  if (typeof existing === "string") return { ...rec, system: `${systemPrompt}\n\n${existing}` };
+  if (Array.isArray(existing)) {
+    return { ...rec, system: [{ type: "text", text: systemPrompt }, ...existing] };
+  }
+  return rec;
+}
+
+/** Append to the `tools` array — same `{name, description, input_schema}`
+ *  shape as Anthropic's own Messages API (see claude.ts's
+ *  injectClaudeToolDefinitions), duplicated for the same reason as
+ *  toolUseNames/injectBedrockSystemPrompt above. */
+function injectBedrockToolDefinitions(requestBody: unknown, tools: ToolDefinition[]): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const existing = Array.isArray(rec["tools"]) ? rec["tools"] : [];
+  const added = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters,
+  }));
+  return { ...rec, tools: [...existing, ...added] };
 }
 
 const MTOK = 1_000_000;
@@ -154,6 +217,10 @@ export const bedrockAdapter: ProviderAdapter = {
 
     return { costCents, ...tokenCounts };
   },
+
+  extractToolCalls: extractBedrockToolCalls,
+  injectSystemPrompt: injectBedrockSystemPrompt,
+  injectToolDefinitions: injectBedrockToolDefinitions,
 };
 
 /** Injected onto the body the client sends, the same shape prepareRequestBody

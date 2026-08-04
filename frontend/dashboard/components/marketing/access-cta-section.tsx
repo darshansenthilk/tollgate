@@ -16,6 +16,7 @@ const FOOTER_COLUMNS = [
       { href: "/#how", label: "How it works" },
       { href: "/#demo", label: "Live demo" },
       { href: "/security", label: "Security" },
+      { href: "/get-started", label: "Self-host it" },
       { href: "/#contact", label: "Talk to us" },
     ],
   },

@@ -11,11 +11,13 @@ import {
   MICROCENTS_PER_CENT,
 } from "../lib/budget.js";
 import type { SpendLog } from "../lib/spend-log.js";
+import { truncatePrompt } from "../lib/spend-log.js";
 import type { Vault } from "../lib/vault.js";
 import type { FreezeStore } from "../lib/freeze.js";
 import type { TokenUsageStore } from "../lib/token-usage.js";
 import { tokenKey } from "../lib/token-usage.js";
 import type { CurrentPromptStore } from "../lib/current-prompt.js";
+import type { ApprovalStore } from "../lib/tool-approvals.js";
 
 /**
  * Everything the hot path talks to is injected. That's what lets the route stay
@@ -31,6 +33,7 @@ export interface ProxyDeps {
   freeze: FreezeStore;
   tokenUsage: TokenUsageStore;
   currentPrompt: CurrentPromptStore;
+  approvals: ApprovalStore;
   fetchImpl: typeof fetch;
   now: () => Date;
   /**
@@ -113,6 +116,9 @@ function recordDenial(
       completionTokens: null,
       latencyMs: null,
       upstreamStatus: null,
+      // These gates fire before the body is ever assembled, so there is no
+      // forwarded prompt to record — not even a rejected one.
+      prompt: null,
     })
     .catch((err: unknown) => {
       log.error({ err }, "spend_events denial write failed");
@@ -207,6 +213,29 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         return { error: "upstream_key_unavailable" };
       }
 
+      // Inject the agent's configured system prompt before anything else
+      // touches the body, so prepareRequestBody's usage-reporting tweak below
+      // still applies to the final, agent-augmented request rather than the
+      // caller's original one.
+      const withSystemPrompt =
+        req.body !== undefined && agent.systemPrompt !== null && adapter.injectSystemPrompt
+          ? adapter.injectSystemPrompt(req.body, agent.systemPrompt)
+          : req.body;
+
+      // Then the agent's configured tools, minus any also on blockedTools —
+      // advertising a tool the response gate (step 8 below) will always
+      // strip anyway would just hand the model a dead option and confuse it
+      // into trying it. This is a request-time filter, not a stored one:
+      // Policy.toolDefinitions keeps the full list an operator configured,
+      // so unblocking a tool later doesn't require re-entering it.
+      const toolsToInject =
+        agent.toolDefinitions?.filter((t) => !(agent.blockedTools?.includes(t.name) ?? false)) ??
+        [];
+      const withTools =
+        withSystemPrompt !== undefined && toolsToInject.length > 0 && adapter.injectToolDefinitions
+          ? adapter.injectToolDefinitions(withSystemPrompt, toolsToInject)
+          : withSystemPrompt;
+
       // Let the adapter opt the request into usage reporting before it goes
       // out (OpenAI streams omit usage unless asked) — without this, a streamed
       // request returns nothing meterable and would spend against no budget.
@@ -215,9 +244,9 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
       // provider (AWS SigV4) hashes the exact payload as part of its auth
       // header — the body has to be final before auth can be computed.
       const outgoingBody =
-        req.body === undefined
+        withTools === undefined
           ? undefined
-          : (adapter.prepareRequestBody?.(req.body) ?? req.body);
+          : (adapter.prepareRequestBody?.(withTools) ?? withTools);
       const body = outgoingBody === undefined ? undefined : JSON.stringify(outgoingBody);
 
       let upstreamRequest;
@@ -285,7 +314,94 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
         );
       }
 
-      // 8. Settle: write the audit event without blocking the response.
+      // 8. Tool gate: unlike the frozen/budget gates, this runs AFTER the
+      //    upstream call — a tool call only exists once the LLM has answered,
+      //    so there is nothing to check beforehand. The tokens above are
+      //    metered regardless (real money was already spent producing this
+      //    response); what's denied is the agent ever finding out it's
+      //    allowed to act on a blocked tool. adapter.extractToolCalls is
+      //    optional, so a provider that hasn't had extraction wired up yet
+      //    is skipped rather than treated as a violation.
+      if (
+        agent.blockedTools !== null &&
+        agent.blockedTools.length > 0 &&
+        adapter.extractToolCalls !== undefined
+      ) {
+        const blocked = new Set(agent.blockedTools);
+        // EVERY blocked tool in the response needs its own grant, not just the
+        // first one found. One response can carry several tool calls, so
+        // checking only the first would let an operator's approval of
+        // "delete_customer" smuggle an unapproved "send_payment" through
+        // alongside it. De-duplicated so one name repeated in a response
+        // doesn't demand two separate approvals.
+        const blockedCalls = [
+          ...new Set(
+            adapter
+              .extractToolCalls(upstreamText)
+              .map((call) => call.name)
+              .filter((name) => blocked.has(name)),
+          ),
+        ];
+
+        // A standing block is not the end of the conversation: an operator can
+        // approve a call from the dashboard, which arms a single-use grant the
+        // agent's retry then spends. Checked BEFORE denying, so an approved
+        // escalation costs the agent one denied attempt, not a policy edit.
+        //
+        // A grant is spent even when some OTHER tool in the same response goes
+        // on to fail this gate. That's the fail-closed direction: the approval
+        // was genuinely consumed by an attempt, and re-approving is cheap,
+        // whereas peeking without consuming would lose the atomicity that stops
+        // two concurrent calls redeeming one approval.
+        const ungranted: string[] = [];
+        for (const tool of blockedCalls) {
+          if (!(await deps.approvals.consumeGrant(agent.id, tool))) ungranted.push(tool);
+        }
+
+        for (const tool of ungranted) {
+          // Raise the escalation the operator will see. Fire-and-forget like
+          // the audit writes — a queue that's briefly missing a row is better
+          // than a hot path that blocks on it.
+          void deps.approvals
+            .requestApproval({ orgId: agent.orgId, agentId: agent.id, toolName: tool })
+            .catch((err: unknown) => {
+              req.log.error({ err }, "tool_approval_requests write failed");
+            });
+        }
+
+        const deniedTool = ungranted[0];
+
+        if (deniedTool !== undefined) {
+          void deps.spendLog
+            .record({
+              agentId: agent.id,
+              providerId: adapter.slug,
+              endpoint: `/${path}`,
+              method: "POST",
+              estimatedCostCents: estimatedCostCents ?? null,
+              // Real cost, unlike recordDenial's frozen/budget denials — the
+              // call already happened, only the tool call is being withheld.
+              actualCostCents: costCents,
+              decision: "denied_tool",
+              model: model ?? null,
+              promptTokens: promptTokens ?? null,
+              completionTokens: completionTokens ?? null,
+              latencyMs,
+              upstreamStatus: upstream.status,
+              // Unlike the pre-forward denials, this request DID go out — so
+              // the operator reviewing the block can see what was asked.
+              prompt: truncatePrompt(body),
+            })
+            .catch((err: unknown) => {
+              req.log.error({ err }, "spend_events denial write failed");
+            });
+
+          reply.code(403);
+          return { error: "tool_call_blocked", tool: deniedTool };
+        }
+      }
+
+      // 9. Settle: write the audit event without blocking the response.
       void deps.spendLog
         .record({
           agentId: agent.id,
@@ -302,12 +418,13 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
           completionTokens: completionTokens ?? null,
           latencyMs,
           upstreamStatus: upstream.status,
+          prompt: truncatePrompt(body),
         })
         .catch((err: unknown) => {
           req.log.error({ err }, "spend_events write failed");
         });
 
-      // 9. Return the upstream response unchanged.
+      // 10. Return the upstream response unchanged.
       reply.code(upstream.status);
       const contentType = upstream.headers.get("content-type");
       reply.header("content-type", contentType ?? "application/json");

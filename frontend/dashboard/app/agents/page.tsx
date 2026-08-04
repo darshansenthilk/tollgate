@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { AgentStatus } from "@tollgate/shared";
 import { AgentDashboard } from "@/components/agent-dashboard";
+import { ApprovalsPanel } from "@/components/approvals-panel";
+import { SuggestionsPanel } from "@/components/suggestions-panel";
 import {
   applyCreated,
   applyDeleted,
@@ -118,12 +120,23 @@ export default function AgentsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
+    <main className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-12">
       {error !== null && (
-        <p className="mb-4 text-sm" style={{ color: "var(--err)" }}>
+        <p className="text-sm" style={{ color: "var(--err)" }}>
           {error}
         </p>
       )}
+
+      {/* Outside the activeDashboard gate below: an approval is an agent
+          stopped mid-task waiting on a human, and it belongs to the org, not
+          to whichever dashboard happens to be selected. Hiding it behind
+          "create a dashboard first" would strand a blocked agent. */}
+      <ApprovalsPanel />
+
+      {/* Below approvals: a blocked agent is waiting on a human right now,
+          whereas this is money leaking steadily and can wait a minute. Renders
+          nothing at all until there's a finding. */}
+      <SuggestionsPanel />
 
       {activeDashboard === null ? (
         <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>

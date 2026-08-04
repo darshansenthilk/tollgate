@@ -3,6 +3,8 @@ import {
   findModelPrice,
   type ProviderAdapter,
   type ProviderCost,
+  type ToolCallRef,
+  type ToolDefinition,
 } from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
@@ -80,6 +82,107 @@ function readStreamedUsage(raw: string): Usage | null {
   return { model, inputTokens, outputTokens };
 }
 
+/** Tool names from one message-shaped object's `content` blocks — Anthropic
+ *  represents a tool call as a `{type: "tool_use", name, input}` block
+ *  alongside any text blocks, not a separate field. Shared by the
+ *  non-streamed reader and (per block) the streamed one below, since a
+ *  streamed `content_block_start` event's `content_block` is the same shape
+ *  as one entry in a full response's `content` array. */
+function toolUseNames(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const names: string[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const rec = block as Record<string, unknown>;
+    if (rec["type"] === "tool_use" && typeof rec["name"] === "string") {
+      names.push(rec["name"]);
+    }
+  }
+  return names;
+}
+
+/**
+ * Every tool name across a streamed transcript.
+ *
+ * Unlike OpenAI's fragmented tool_calls deltas, Anthropic sends a tool call's
+ * name whole, once, on the `content_block_start` event that introduces it —
+ * later `content_block_delta` events only carry `input`'s partial JSON — so
+ * scanning for that one event type per block is sufficient.
+ */
+function toolCallsFromStream(raw: string): string[] {
+  const names: string[] = [];
+  for (const frame of parseSseDataFrames(raw)) {
+    if (readPath(frame, "type") !== "content_block_start") continue;
+    const block = readPath(frame, "content_block");
+    if (typeof block !== "object" || block === null) continue;
+    names.push(...toolUseNames([block]));
+  }
+  return names;
+}
+
+function toolCallsFromMessage(body: unknown): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  return toolUseNames((body as Record<string, unknown>)["content"]);
+}
+
+/** Extract every tool name a Messages API response asked the caller to
+ *  invoke, streamed or not. */
+function extractClaudeToolCalls(rawBody: string): ToolCallRef[] {
+  const names = looksLikeSse(rawBody)
+    ? toolCallsFromStream(rawBody)
+    : toolCallsFromMessage(parseJson(rawBody));
+  return names.map((name) => ({ name }));
+}
+
+/**
+ * Prepend to the Messages API's top-level `system` field — NOT a `messages`
+ * entry, unlike OpenAI. Anthropic's `system` is either a plain string or an
+ * array of text blocks (the latter used when the caller wants cache_control
+ * on part of it); this preserves whichever shape the caller already sent
+ * rather than collapsing it, and only defaults to a plain string when there
+ * was nothing there yet.
+ */
+export function injectClaudeSystemPrompt(requestBody: unknown, systemPrompt: string): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const existing = rec["system"];
+
+  if (existing === undefined || existing === null) {
+    return { ...rec, system: systemPrompt };
+  }
+  if (typeof existing === "string") {
+    return { ...rec, system: `${systemPrompt}\n\n${existing}` };
+  }
+  if (Array.isArray(existing)) {
+    return { ...rec, system: [{ type: "text", text: systemPrompt }, ...existing] };
+  }
+  // Unrecognized shape — leave it alone rather than guess and risk dropping
+  // whatever the caller's own application put there.
+  return rec;
+}
+
+/**
+ * Append to the Messages API's `tools` array — Anthropic calls the
+ * parameters schema `input_schema`, not `parameters` (contrast OpenAI/
+ * Gemini, which both use `parameters`). Appended, not prepended, for the
+ * same reason as OpenAI's injectOpenAiToolDefinitions: tool order carries no
+ * priority the way message order does.
+ */
+export function injectClaudeToolDefinitions(
+  requestBody: unknown,
+  tools: ToolDefinition[],
+): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const existing = Array.isArray(rec["tools"]) ? rec["tools"] : [];
+  const added = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters,
+  }));
+  return { ...rec, tools: [...existing, ...added] };
+}
+
 const MTOK = 1_000_000;
 
 /** Anthropic API version pinned for the Messages endpoint. */
@@ -133,6 +236,10 @@ export const claudeAdapter: ProviderAdapter = {
 
     return { costCents, ...tokenCounts };
   },
+
+  extractToolCalls: extractClaudeToolCalls,
+  injectSystemPrompt: injectClaudeSystemPrompt,
+  injectToolDefinitions: injectClaudeToolDefinitions,
 };
 
 function parseJson(text: string): unknown {

@@ -4,7 +4,13 @@ import {
   type ProviderAdapter,
   type ProviderCost,
 } from "@tollgate/shared";
-import { parseOpenAiFormatCost, prepareStreamUsage } from "./openai-usage.js";
+import {
+  extractOpenAiFormatToolCalls,
+  injectOpenAiSystemPrompt,
+  injectOpenAiToolDefinitions,
+  parseOpenAiFormatCost,
+  prepareStreamUsage,
+} from "./openai-usage.js";
 
 /**
  * Azure OpenAI.
@@ -78,4 +84,8 @@ export const azureAdapter: ProviderAdapter = {
   prepareRequestBody: prepareStreamUsage,
 
   parseCost: (rawBody): ProviderCost => parseOpenAiFormatCost(rawBody, AZURE_PRICES),
+
+  extractToolCalls: extractOpenAiFormatToolCalls,
+  injectSystemPrompt: injectOpenAiSystemPrompt,
+  injectToolDefinitions: injectOpenAiToolDefinitions,
 };

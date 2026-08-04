@@ -73,3 +73,19 @@ export function providerLabel(slug: string): string {
 export function modelsForProvider(slug: string): { value: string; label: string }[] {
   return MODELS_BY_PROVIDER[slug as ProviderSlug] ?? [];
 }
+
+/** Blocked-tool names are edited as one comma-separated field rather than a
+ *  tag picker (there's no fixed list of tool names to pick from — they're
+ *  whatever the agent's own tool definitions call them) and stored as
+ *  string[] | null server-side. Shared by both agent dialogs. */
+export function parseBlockedTools(input: string): string[] | null {
+  const names = input
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t !== "");
+  return names.length === 0 ? null : names;
+}
+
+export function formatBlockedTools(tools: string[] | null): string {
+  return tools === null ? "" : tools.join(", ");
+}

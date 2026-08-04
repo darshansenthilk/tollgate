@@ -287,4 +287,125 @@ describe("POST /bedrock/* hot path", () => {
     });
     expect(h.upstream.calls).toHaveLength(0);
   });
+
+  it("denies with tool_call_blocked when the response asks for a blocked tool, but still meters the real cost", async () => {
+    const h = await buildHarness({
+      adapters: [bedrockAdapter],
+      vault: new FakeVault(BEDROCK_CREDENTIAL),
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "bedrock",
+      blockedTools: ["delete_customer"],
+    });
+
+    const body = {
+      id: "msg_bdrk_abc",
+      type: "message",
+      role: "assistant",
+      model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      content: [
+        { type: "tool_use", id: "toolu_1", name: "delete_customer", input: {} },
+      ],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 1000, output_tokens: 500 },
+    };
+    h.upstream.setResponder(
+      () =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: MODEL_PATH,
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { max_tokens: 1024, messages: [{ role: "user", content: "delete them" }] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "tool_call_blocked", tool: "delete_customer" });
+    expect(h.spendLog.events[0]).toMatchObject({ decision: "denied_tool" });
+    expect(h.spendLog.events[0]?.actualCostCents).toBeGreaterThan(0);
+  });
+
+  it("injects the agent's configured system prompt as the top-level system field", async () => {
+    const h = await buildHarness({
+      adapters: [bedrockAdapter],
+      vault: new FakeVault(BEDROCK_CREDENTIAL),
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "bedrock",
+      systemPrompt: "You are a helpful support agent for Acme Corp.",
+    });
+    h.upstream.setResponder(
+      () =>
+        new Response(
+          JSON.stringify(response("anthropic.claude-3-5-sonnet-20241022-v2:0", 10, 10)),
+          { status: 200 },
+        ),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: MODEL_PATH,
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { max_tokens: 1024, messages: [{ role: "user", content: "hi" }] },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.system).toBe("You are a helpful support agent for Acme Corp.");
+    // prepareRequestBody's anthropic_version injection still applies on top.
+    expect(sentBody.anthropic_version).toBe("bedrock-2023-05-31");
+  });
+
+  it("appends the agent's configured tools as input_schema, same shape as direct Claude", async () => {
+    const h = await buildHarness({
+      adapters: [bedrockAdapter],
+      vault: new FakeVault(BEDROCK_CREDENTIAL),
+    });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "bedrock",
+      toolDefinitions: [
+        {
+          name: "lookup_order",
+          description: "Look up an order by id.",
+          parameters: { type: "object", properties: { orderId: { type: "string" } } },
+        },
+      ],
+    });
+    h.upstream.setResponder(
+      () =>
+        new Response(
+          JSON.stringify(response("anthropic.claude-3-5-sonnet-20241022-v2:0", 10, 10)),
+          { status: 200 },
+        ),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: MODEL_PATH,
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { max_tokens: 1024, messages: [{ role: "user", content: "hi" }] },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.tools).toEqual([
+      {
+        name: "lookup_order",
+        description: "Look up an order by id.",
+        input_schema: { type: "object", properties: { orderId: { type: "string" } } },
+      },
+    ]);
+  });
 });

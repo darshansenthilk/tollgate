@@ -255,4 +255,113 @@ describe("POST /claude/* hot path", () => {
 
     expect(h.upstream.calls).toHaveLength(0);
   });
+
+  it("denies with tool_call_blocked when the response asks for a blocked tool, but still meters the real cost", async () => {
+    const h = await buildHarness({ adapters: [claudeAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "claude",
+      blockedTools: ["delete_customer"],
+    });
+
+    const body = {
+      id: "msg_abc",
+      type: "message",
+      role: "assistant",
+      model: "claude-3-5-haiku-20241022",
+      content: [
+        { type: "tool_use", id: "toolu_1", name: "delete_customer", input: {} },
+      ],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 1000, output_tokens: 500 },
+    };
+    h.upstream.setResponder(
+      () =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/claude/v1/messages",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { model: "claude-3-5-haiku-20241022", messages: [{ role: "user", content: "delete them" }] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "tool_call_blocked", tool: "delete_customer" });
+
+    // cost = 1000 * 80/1e6 + 500 * 400/1e6 = 0.28 cents — genuinely spent.
+    expect(h.budget.counters.get(KEY)).toBe(Math.round(0.28 * MICROCENTS_PER_CENT));
+    expect(h.spendLog.events[0]).toMatchObject({ decision: "denied_tool", actualCostCents: 0.28 });
+  });
+
+  it("injects the agent's configured system prompt as the top-level system field", async () => {
+    const h = await buildHarness({ adapters: [claudeAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "claude",
+      systemPrompt: "You are a helpful support agent for Acme Corp.",
+    });
+    h.upstream.setResponder(
+      () => new Response(JSON.stringify(message("claude-3-5-haiku-20241022", 10, 10)), { status: 200 }),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: "/claude/v1/messages",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {
+        model: "claude-3-5-haiku-20241022",
+        system: "Also be concise.",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.system).toBe("You are a helpful support agent for Acme Corp.\n\nAlso be concise.");
+    expect(sentBody.messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  it("appends the agent's configured tools as input_schema, Anthropic's name for the parameters field", async () => {
+    const h = await buildHarness({ adapters: [claudeAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "claude",
+      toolDefinitions: [
+        {
+          name: "lookup_order",
+          description: "Look up an order by id.",
+          parameters: { type: "object", properties: { orderId: { type: "string" } } },
+        },
+      ],
+    });
+    h.upstream.setResponder(
+      () => new Response(JSON.stringify(message("claude-3-5-haiku-20241022", 10, 10)), { status: 200 }),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: "/claude/v1/messages",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { model: "claude-3-5-haiku-20241022", messages: [{ role: "user", content: "hi" }] },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.tools).toEqual([
+      {
+        name: "lookup_order",
+        description: "Look up an order by id.",
+        input_schema: { type: "object", properties: { orderId: { type: "string" } } },
+      },
+    ]);
+  });
 });

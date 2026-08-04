@@ -11,6 +11,7 @@ import {
   microCentsToCents,
   ASSISTANT_ADAPTER_SLUGS,
   type AgentStatus,
+  type ToolDefinition,
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { agents, policies, orgUpstreamKeys } from "../db/schema.js";
@@ -22,6 +23,9 @@ interface CreateAgentBody {
   maxBudgetCents: number | null;
   model: string | null;
   upstreamKeyId: string | null;
+  systemPrompt: string | null;
+  blockedTools: string[] | null;
+  toolDefinitions: ToolDefinition[] | null;
 }
 
 /**
@@ -30,6 +34,68 @@ interface CreateAgentBody {
  * changes.
  */
 const ALLOWED_PROVIDER_SLUGS = new Set(["claude", "chatgpt", "gemini", "azure", "bedrock"]);
+
+const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_.-]+$/;
+const TOOL_NAME_MAX = 64;
+const TOOL_DESCRIPTION_MAX = 500;
+/** Bounds one policy row's tool surface — generous for any real agent, but
+ *  caps how much JSON Schema a single request can force into the table. */
+const MAX_TOOL_DEFINITIONS = 20;
+
+/**
+ * `parameters` is only checked for "is this plausibly a JSON Schema object"
+ * (a non-null, non-array object) — Tollgate forwards it verbatim to whichever
+ * provider adapter injects it (see ToolDefinition's doc comment in
+ * @tollgate/shared) and never interprets it itself, so deeper validation here
+ * would just reject shapes a provider would happily accept.
+ */
+function parseToolDefinitions(
+  raw: unknown,
+): { ok: true; value: ToolDefinition[] | null } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  if (!Array.isArray(raw) || raw.length > MAX_TOOL_DEFINITIONS) return { ok: false };
+
+  const seen = new Set<string>();
+  const out: ToolDefinition[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return { ok: false };
+    const t = entry as Record<string, unknown>;
+
+    const name = t["name"];
+    if (
+      typeof name !== "string" ||
+      name.length === 0 ||
+      name.length > TOOL_NAME_MAX ||
+      !TOOL_NAME_PATTERN.test(name) ||
+      seen.has(name)
+    ) {
+      return { ok: false };
+    }
+    seen.add(name);
+
+    const description = t["description"];
+    if (
+      typeof description !== "string" ||
+      description.trim() === "" ||
+      description.length > TOOL_DESCRIPTION_MAX
+    ) {
+      return { ok: false };
+    }
+
+    const parameters = t["parameters"];
+    if (typeof parameters !== "object" || parameters === null || Array.isArray(parameters)) {
+      return { ok: false };
+    }
+
+    out.push({
+      name,
+      description: description.trim(),
+      parameters: parameters as Record<string, unknown>,
+    });
+  }
+
+  return { ok: true, value: out.length === 0 ? null : out };
+}
 
 function parseCreateBody(body: unknown): CreateAgentBody | null {
   if (typeof body !== "object" || body === null) return null;
@@ -40,6 +106,9 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
   const maxBudgetCentsRaw = rec["maxBudgetCents"];
   const modelRaw = rec["model"];
   const upstreamKeyIdRaw = rec["upstreamKeyId"];
+  const systemPromptRaw = rec["systemPrompt"];
+  const blockedToolsRaw = rec["blockedTools"];
+  const toolDefinitionsRaw = rec["toolDefinitions"];
 
   if (typeof name !== "string" || name.trim() === "") return null;
   if (typeof providerSlug !== "string" || providerSlug.trim() === "") return null;
@@ -71,7 +140,44 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
     return null;
   }
 
-  return { name, providerSlug, maxBudgetCents, model, upstreamKeyId };
+  let systemPrompt: string | null;
+  if (systemPromptRaw === undefined || systemPromptRaw === null) {
+    systemPrompt = null;
+  } else if (typeof systemPromptRaw === "string") {
+    // Whitespace-only collapses to "nothing configured" rather than being
+    // stored (and later injected into every request) as a blank line.
+    const trimmed = systemPromptRaw.trim();
+    systemPrompt = trimmed === "" ? null : trimmed;
+  } else {
+    return null;
+  }
+
+  let blockedTools: string[] | null;
+  if (blockedToolsRaw === undefined || blockedToolsRaw === null) {
+    blockedTools = null;
+  } else if (
+    Array.isArray(blockedToolsRaw) &&
+    blockedToolsRaw.every((t) => typeof t === "string" && t.trim() !== "")
+  ) {
+    blockedTools = blockedToolsRaw.length === 0 ? null : blockedToolsRaw.map((t) => t.trim());
+  } else {
+    return null;
+  }
+
+  const toolDefinitionsResult = parseToolDefinitions(toolDefinitionsRaw);
+  if (!toolDefinitionsResult.ok) return null;
+  const toolDefinitions = toolDefinitionsResult.value;
+
+  return {
+    name,
+    providerSlug,
+    maxBudgetCents,
+    model,
+    upstreamKeyId,
+    systemPrompt,
+    blockedTools,
+    toolDefinitions,
+  };
 }
 
 /**
@@ -111,6 +217,9 @@ interface UpdateAgentBody {
   model?: string | null;
   maxBudgetCents?: number | null;
   upstreamKeyId?: string | null;
+  systemPrompt?: string | null;
+  blockedTools?: string[] | null;
+  toolDefinitions?: ToolDefinition[] | null;
 }
 
 type UpdateParseResult =
@@ -154,6 +263,29 @@ function parseUpdateBody(body: unknown): UpdateParseResult {
     if (raw === null) out.upstreamKeyId = null;
     else if (typeof raw === "string" && raw.trim() !== "") out.upstreamKeyId = raw;
     else return { ok: false, error: "invalid_body" };
+  }
+
+  if ("systemPrompt" in rec) {
+    const raw = rec["systemPrompt"];
+    if (raw === null) out.systemPrompt = null;
+    else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      out.systemPrompt = trimmed === "" ? null : trimmed;
+    } else return { ok: false, error: "invalid_body" };
+  }
+
+  if ("blockedTools" in rec) {
+    const raw = rec["blockedTools"];
+    if (raw === null) out.blockedTools = null;
+    else if (Array.isArray(raw) && raw.every((t) => typeof t === "string" && t.trim() !== "")) {
+      out.blockedTools = raw.length === 0 ? null : raw.map((t) => t.trim());
+    } else return { ok: false, error: "invalid_body" };
+  }
+
+  if ("toolDefinitions" in rec) {
+    const result = parseToolDefinitions(rec["toolDefinitions"]);
+    if (!result.ok) return { ok: false, error: "invalid_body" };
+    out.toolDefinitions = result.value;
   }
 
   // An empty patch is a caller mistake, not a no-op success.
@@ -272,6 +404,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       name: `${body.name} policy`,
       budgetCents: body.maxBudgetCents ?? 0,
       maxBudgetCents: body.maxBudgetCents,
+      systemPrompt: body.systemPrompt,
+      blockedTools: body.blockedTools,
+      toolDefinitions: body.toolDefinitions,
     });
 
     await db.insert(agents).values({
@@ -294,6 +429,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       status: "active" satisfies AgentStatus,
       maxBudgetCents: body.maxBudgetCents,
       upstreamKeyId: body.upstreamKeyId,
+      systemPrompt: body.systemPrompt,
+      blockedTools: body.blockedTools,
+      toolDefinitions: body.toolDefinitions,
       // Returned once. Only the hash is ever persisted — this response is the
       // only chance the caller has to see the raw token.
       token,
@@ -311,6 +449,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         status: agents.status,
         maxBudgetCents: policies.maxBudgetCents,
         upstreamKeyId: agents.upstreamKeyId,
+        systemPrompt: policies.systemPrompt,
+        blockedTools: policies.blockedTools,
+        toolDefinitions: policies.toolDefinitions,
       })
       .from(agents)
       // Scoped to the caller's org so one account never sees another's agents.
@@ -340,6 +481,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           status: row.status,
           maxBudgetCents: row.maxBudgetCents,
           upstreamKeyId: row.upstreamKeyId,
+          systemPrompt: row.systemPrompt,
+          blockedTools: row.blockedTools,
+          toolDefinitions: row.toolDefinitions,
           currentMonthSpendCents: microCentsToCents(
             Number.isNaN(spentMicroCents) ? 0 : spentMicroCents,
           ),
@@ -402,7 +546,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         }
       }
 
-      if (body.maxBudgetCents !== undefined && agent.policyId === null) {
+      const editsPolicy =
+        body.maxBudgetCents !== undefined ||
+        body.systemPrompt !== undefined ||
+        body.blockedTools !== undefined ||
+        body.toolDefinitions !== undefined;
+      if (editsPolicy && agent.policyId === null) {
         reply.code(409);
         return { error: "agent_has_no_policy" };
       }
@@ -429,12 +578,24 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           .where(eq(agents.id, agent.id));
       }
 
-      // Budget lives on the agent's dedicated 1:1 policy row, same target
-      // PATCH /v1/agents/:id/policy writes to.
-      if (body.maxBudgetCents !== undefined && agent.policyId !== null) {
+      // Budget/prompt/tool-policy live on the agent's dedicated 1:1 policy
+      // row (maxBudgetCents also reachable via PATCH /v1/agents/:id/policy —
+      // systemPrompt/blockedTools only live here for now).
+      const policyFields: {
+        maxBudgetCents?: number | null;
+        systemPrompt?: string | null;
+        blockedTools?: string[] | null;
+        toolDefinitions?: ToolDefinition[] | null;
+      } = {};
+      if (body.maxBudgetCents !== undefined) policyFields.maxBudgetCents = body.maxBudgetCents;
+      if (body.systemPrompt !== undefined) policyFields.systemPrompt = body.systemPrompt;
+      if (body.blockedTools !== undefined) policyFields.blockedTools = body.blockedTools;
+      if (body.toolDefinitions !== undefined) policyFields.toolDefinitions = body.toolDefinitions;
+
+      if (Object.keys(policyFields).length > 0 && agent.policyId !== null) {
         await db
           .update(policies)
-          .set({ maxBudgetCents: body.maxBudgetCents, updatedAt: new Date() })
+          .set({ ...policyFields, updatedAt: new Date() })
           .where(eq(policies.id, agent.policyId));
       }
 
@@ -450,6 +611,9 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           status: agents.status,
           maxBudgetCents: policies.maxBudgetCents,
           upstreamKeyId: agents.upstreamKeyId,
+          systemPrompt: policies.systemPrompt,
+          blockedTools: policies.blockedTools,
+          toolDefinitions: policies.toolDefinitions,
         })
         .from(agents)
         .leftJoin(policies, eq(policies.id, agents.policyId))

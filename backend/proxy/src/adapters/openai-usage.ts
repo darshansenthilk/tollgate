@@ -1,4 +1,10 @@
-import { findModelPrice, type ModelPrice, type ProviderCost } from "@tollgate/shared";
+import {
+  findModelPrice,
+  type ModelPrice,
+  type ProviderCost,
+  type ToolCallRef,
+  type ToolDefinition,
+} from "@tollgate/shared";
 import { looksLikeSse, parseSseDataFrames, readPath } from "../lib/sse.js";
 
 /**
@@ -138,6 +144,112 @@ export function parseOpenAiFormatCost(
  * `choices` is empty — documented behaviour that the official SDKs already
  * handle. Non-streaming bodies are passed through untouched.
  */
+/** Pull tool_calls' function names out of one message-shaped object — the
+ *  shape is identical for a full response's `message` and a streamed chunk's
+ *  `delta`, so both callers below share this. */
+function toolCallNames(container: unknown): string[] {
+  if (typeof container !== "object" || container === null) return [];
+  const toolCalls = (container as Record<string, unknown>)["tool_calls"];
+  if (!Array.isArray(toolCalls)) return [];
+
+  const names: string[] = [];
+  for (const call of toolCalls) {
+    if (typeof call !== "object" || call === null) continue;
+    const fn = (call as Record<string, unknown>)["function"];
+    if (typeof fn !== "object" || fn === null) continue;
+    const name = (fn as Record<string, unknown>)["name"];
+    if (typeof name === "string") names.push(name);
+  }
+  return names;
+}
+
+/** Every tool name across a non-streamed response's choices (n > 1 requests
+ *  return several, each independently able to call a tool). */
+function toolCallsFromChoices(body: unknown): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  const choices = (body as Record<string, unknown>)["choices"];
+  if (!Array.isArray(choices)) return [];
+
+  const names: string[] = [];
+  for (const choice of choices) {
+    if (typeof choice !== "object" || choice === null) continue;
+    names.push(...toolCallNames((choice as Record<string, unknown>)["message"]));
+  }
+  return names;
+}
+
+/**
+ * Every tool name across a streamed transcript's chunks.
+ *
+ * Unlike usage (one final summary chunk), a tool call's name only appears on
+ * the chunk that introduces it — later chunks for the same call carry nothing
+ * but argument-string deltas — so every frame has to be scanned, not just the
+ * last one.
+ */
+function toolCallsFromStream(raw: string): string[] {
+  const names: string[] = [];
+  for (const frame of parseSseDataFrames(raw)) {
+    if (typeof frame !== "object" || frame === null) continue;
+    const choices = (frame as Record<string, unknown>)["choices"];
+    if (!Array.isArray(choices)) continue;
+    for (const choice of choices) {
+      if (typeof choice !== "object" || choice === null) continue;
+      names.push(...toolCallNames((choice as Record<string, unknown>)["delta"]));
+    }
+  }
+  return names;
+}
+
+/**
+ * Extract every tool/function name an OpenAI-format response asked the
+ * caller to invoke, streamed or not. Shared by the OpenAI and Azure OpenAI
+ * adapters for the same reason parseOpenAiFormatCost is — byte-identical wire
+ * format.
+ */
+export function extractOpenAiFormatToolCalls(rawBody: string): ToolCallRef[] {
+  const names = looksLikeSse(rawBody)
+    ? toolCallsFromStream(rawBody)
+    : toolCallsFromChoices(parseJson(rawBody));
+  return names.map((name) => ({ name }));
+}
+
+/**
+ * Prepend the agent's configured system prompt as a leading role:"system"
+ * message.
+ *
+ * Prepended rather than replacing any system message the caller already
+ * sent, because OpenAI's format allows several system messages and applies
+ * them in order — the agent-level prompt takes effect first without silently
+ * discarding whatever the caller's own application already puts there.
+ */
+export function injectOpenAiSystemPrompt(requestBody: unknown, systemPrompt: string): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const messages = Array.isArray(rec["messages"]) ? rec["messages"] : [];
+  return { ...rec, messages: [{ role: "system", content: systemPrompt }, ...messages] };
+}
+
+/**
+ * Append the agent's configured tools to the client's own `tools` array —
+ * OpenAI's shape is `tools: [{type: "function", function: {name,
+ * description, parameters}}]`. Appended, not prepended like the system
+ * prompt: tool ORDER carries no priority signal the way message order does,
+ * so there's no equivalent reason to put Tollgate's first.
+ */
+export function injectOpenAiToolDefinitions(
+  requestBody: unknown,
+  tools: ToolDefinition[],
+): unknown {
+  if (typeof requestBody !== "object" || requestBody === null) return requestBody;
+  const rec = requestBody as Record<string, unknown>;
+  const existing = Array.isArray(rec["tools"]) ? rec["tools"] : [];
+  const added = tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+  return { ...rec, tools: [...existing, ...added] };
+}
+
 export function prepareStreamUsage(requestBody: unknown): unknown {
   if (typeof requestBody !== "object" || requestBody === null) return requestBody;
   const rec = requestBody as Record<string, unknown>;

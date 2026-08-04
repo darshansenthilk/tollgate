@@ -27,6 +27,9 @@ export function applyCreated(
     currentMonthTokens: 0,
     currentPrompt: null,
     upstreamKeyId: created.upstreamKeyId,
+    systemPrompt: created.systemPrompt,
+    blockedTools: created.blockedTools,
+    toolDefinitions: created.toolDefinitions,
   };
   return [item, ...prev];
 }
@@ -55,6 +58,9 @@ export function applyUpdated(
           status: updated.status,
           maxBudgetCents: updated.maxBudgetCents,
           upstreamKeyId: updated.upstreamKeyId,
+          systemPrompt: updated.systemPrompt,
+          blockedTools: updated.blockedTools,
+          toolDefinitions: updated.toolDefinitions,
         }
       : a,
   );

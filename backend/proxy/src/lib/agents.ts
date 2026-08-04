@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, ToolDefinition } from "@tollgate/shared";
 
 /**
  * What the hot path needs to know about the caller: identity, freeze state, and
@@ -25,6 +25,15 @@ export interface AuthedAgent {
    *  any — null means no specific key chosen, so the vault falls straight
    *  through to the deployment's env key. See lib/vault.ts's doc comment. */
   upstreamKeyId: string | null;
+  /** Tool/function names this agent's policy blocks — see
+   *  Policy.blockedTools's doc comment. null = nothing blocked. */
+  blockedTools: string[] | null;
+  /** Prepended to every outgoing request — see Policy.systemPrompt's doc
+   *  comment. null = nothing injected. */
+  systemPrompt: string | null;
+  /** Tools advertised in every outgoing request — see Policy.toolDefinitions's
+   *  doc comment. null = nothing added. */
+  toolDefinitions: ToolDefinition[] | null;
 }
 
 /** Tokens are never stored in the clear; we look agents up by SHA-256 hash. */
@@ -47,6 +56,9 @@ interface AgentRow {
   max_budget_cents: number | null;
   provider_slug: string;
   upstream_key_id: string | null;
+  blocked_tools: string[] | null;
+  system_prompt: string | null;
+  tool_definitions: ToolDefinition[] | null;
 }
 
 /** Production AgentStore backed by Postgres. */
@@ -54,7 +66,8 @@ export function pgAgentStore(pool: Pool): AgentStore {
   return {
     async findByTokenHash(tokenHash) {
       const result = await pool.query<AgentRow>(
-        `SELECT a.id, a.org_id, a.status, a.provider_slug, a.upstream_key_id, p.max_budget_cents
+        `SELECT a.id, a.org_id, a.status, a.provider_slug, a.upstream_key_id,
+                p.max_budget_cents, p.blocked_tools, p.system_prompt, p.tool_definitions
            FROM agents a
            LEFT JOIN policies p ON p.id = a.policy_id
           WHERE a.token_hash = $1`,
@@ -72,6 +85,9 @@ export function pgAgentStore(pool: Pool): AgentStore {
         maxBudgetCents: row.max_budget_cents,
         providerSlug: row.provider_slug,
         upstreamKeyId: row.upstream_key_id,
+        blockedTools: row.blocked_tools,
+        systemPrompt: row.system_prompt,
+        toolDefinitions: row.tool_definitions,
       };
     },
   };

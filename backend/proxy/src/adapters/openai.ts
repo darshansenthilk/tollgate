@@ -1,5 +1,11 @@
 import { OPENAI_PRICES, type ProviderAdapter, type ProviderCost } from "@tollgate/shared";
-import { parseOpenAiFormatCost, prepareStreamUsage } from "./openai-usage.js";
+import {
+  extractOpenAiFormatToolCalls,
+  injectOpenAiSystemPrompt,
+  injectOpenAiToolDefinitions,
+  parseOpenAiFormatCost,
+  prepareStreamUsage,
+} from "./openai-usage.js";
 
 export const openaiAdapter: ProviderAdapter = {
   slug: "openai",
@@ -21,4 +27,8 @@ export const openaiAdapter: ProviderAdapter = {
   prepareRequestBody: prepareStreamUsage,
 
   parseCost: (rawBody): ProviderCost => parseOpenAiFormatCost(rawBody, OPENAI_PRICES),
+
+  extractToolCalls: extractOpenAiFormatToolCalls,
+  injectSystemPrompt: injectOpenAiSystemPrompt,
+  injectToolDefinitions: injectOpenAiToolDefinitions,
 };

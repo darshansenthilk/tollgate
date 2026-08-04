@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@9.15.9",
   "scripts": {
+    "predev": "pnpm infra:up",
     "dev": "pnpm --parallel --filter @tollgate/proxy --filter @tollgate/api --filter @tollgate/dashboard dev",
     "dev:proxy": "pnpm --filter @tollgate/proxy dev",
     "dev:api": "pnpm --filter @tollgate/api dev",

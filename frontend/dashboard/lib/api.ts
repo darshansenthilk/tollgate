@@ -1,4 +1,4 @@
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, ToolDefinition } from "@tollgate/shared";
 import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -61,6 +61,16 @@ export interface AgentListItem {
    *  any. null means no specific key chosen — the proxy falls straight
    *  through to the deployment's shared key. See backend/proxy/src/lib/vault.ts. */
   upstreamKeyId: string | null;
+  /** Prepended to every request this agent sends — see @tollgate/shared
+   *  Policy.systemPrompt's doc comment. null = nothing injected. */
+  systemPrompt: string | null;
+  /** Tool/function names the proxy blocks from this agent's responses — see
+   *  @tollgate/shared Policy.blockedTools's doc comment. null = nothing blocked. */
+  blockedTools: string[] | null;
+  /** Tools injected into every outgoing request across all providers — see
+   *  @tollgate/shared ToolDefinition's doc comment. null = nothing configured
+   *  (the calling app's own tools, if any, pass through unchanged). */
+  toolDefinitions: ToolDefinition[] | null;
 }
 
 /** Exact shape returned by POST /v1/agents — token is present ONLY here. */
@@ -72,6 +82,9 @@ export interface CreateAgentResponse {
   status: AgentStatus;
   maxBudgetCents: number | null;
   upstreamKeyId: string | null;
+  systemPrompt: string | null;
+  blockedTools: string[] | null;
+  toolDefinitions: ToolDefinition[] | null;
   token: string;
 }
 
@@ -81,6 +94,9 @@ export interface CreateAgentInput {
   maxBudgetCents: number | null;
   model: string | null;
   upstreamKeyId?: string | null;
+  systemPrompt: string | null;
+  blockedTools: string[] | null;
+  toolDefinitions: ToolDefinition[] | null;
 }
 
 /**
@@ -95,6 +111,9 @@ export interface UpdateAgentInput {
   model?: string | null;
   maxBudgetCents?: number | null;
   upstreamKeyId?: string | null;
+  systemPrompt?: string | null;
+  blockedTools?: string[] | null;
+  toolDefinitions?: ToolDefinition[] | null;
 }
 
 /** Exact shape returned by PATCH /v1/agents/:id — a committed agent row, no token. */
@@ -106,6 +125,9 @@ export interface UpdateAgentResponse {
   status: AgentStatus;
   maxBudgetCents: number | null;
   upstreamKeyId: string | null;
+  systemPrompt: string | null;
+  blockedTools: string[] | null;
+  toolDefinitions: ToolDefinition[] | null;
 }
 
 /** Shared shape of POST .../freeze, POST .../unfreeze, PATCH .../policy. */
@@ -143,6 +165,10 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   missing_token: "Paste the agent's token to continue.",
   invalid_token: "That token doesn't match this agent.",
   upstream_key_not_found: "That key no longer exists.",
+  approval_request_not_found: "That request was already handled.",
+  local_llm_unavailable:
+    "The local model isn't responding — check the Ollama service on your deployment.",
+  install_wizard_unavailable: "The install-wizard assistant isn't available right now.",
   invalid_upstream_key: "That key isn't valid for this agent's provider.",
   upstream_credential_incomplete:
     "This provider key is missing something it needs — re-save it in Settings.",
@@ -268,13 +294,27 @@ export interface ActivityEvent {
   assistant: string;
   model: string | null;
   endpoint: string;
-  decision: "allowed" | "denied_budget" | "denied_rate" | "denied_endpoint" | "denied_frozen";
+  decision:
+    | "allowed"
+    | "denied_budget"
+    | "denied_rate"
+    | "denied_endpoint"
+    | "denied_frozen"
+    | "denied_tool"
+    // Operator decisions on a blocked tool call, written by the api rather
+    // than the proxy — see @tollgate/shared SpendDecision.
+    | "approval_granted"
+    | "approval_denied";
   costCents: number | null;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
   upstreamStatus: number | null;
   latencyMs: number | null;
+  /** The request body this event was forwarded with, so a row can be opened to
+   *  see what the agent actually asked. Null when nothing was forwarded (a
+   *  denial caught before the upstream call) and on operator-decision rows. */
+  prompt: string | null;
   createdAt: string;
 }
 
@@ -282,8 +322,111 @@ export function listActivity(limit = 100): Promise<ActivityEvent[]> {
   return request<ActivityEvent[]>(`/v1/activity?limit=${limit}`);
 }
 
+/**
+ * One blocked tool call awaiting a human decision, from GET /v1/approvals —
+ * pending rows only, so this list IS the operator's queue.
+ */
+export interface ApprovalRequest {
+  id: string;
+  agentId: string;
+  agentName: string;
+  toolName: string;
+  status: "pending";
+  createdAt: string;
+}
+
+export interface ApprovalResolution {
+  id: string;
+  status: "approved" | "denied";
+}
+
+export function listApprovals(): Promise<ApprovalRequest[]> {
+  return request<ApprovalRequest[]>("/v1/approvals");
+}
+
+/**
+ * Lets the agent's NEXT attempt at this tool through, once. Deliberately not
+ * a policy edit — the tool stays on the agent's blocklist, so a later call
+ * raises a fresh request. See backend/api/src/routes/approvals.ts.
+ */
+export function approveRequest(id: string): Promise<ApprovalResolution> {
+  return request<ApprovalResolution>(`/v1/approvals/${id}/approve`, { method: "POST" });
+}
+
+/** Closes the queue entry without granting anything. The agent trying again
+ *  re-raises a new request rather than being permanently silenced. */
+export function denyRequest(id: string): Promise<ApprovalResolution> {
+  return request<ApprovalResolution>(`/v1/approvals/${id}/deny`, { method: "POST" });
+}
+
 export function listAgents(): Promise<AgentListItem[]> {
   return request<AgentListItem[]>("/v1/agents");
+}
+
+/**
+ * A drafted agent configuration from the deployment's own local model. Every
+ * field is a SUGGESTION that pre-fills the create form — nothing is created
+ * until the operator reviews it and submits. See backend/api/src/routes/
+ * agent-draft.ts.
+ */
+export interface AgentDraft {
+  name: string | null;
+  systemPrompt: string | null;
+  blockedTools: string[];
+  maxBudgetCents: number | null;
+}
+
+/** Whether a local model is configured AND pulled. False on a deployment that
+ *  never started the optional Ollama service, which is the expected case —
+ *  the dialog hides the wizard rather than offering a failing button. */
+export function isDraftAvailable(): Promise<{ available: boolean }> {
+  return request<{ available: boolean }>("/v1/agents/draft/availability");
+}
+
+/**
+ * A token-waste finding: the static block an agent re-sends on every request.
+ * Advisory only — see backend/api/src/routes/suggestions.ts.
+ */
+export interface PromptSuggestion {
+  agentId: string;
+  agentName: string;
+  sample: string;
+  repeatedTokens: number;
+  /** 0..1 share of sampled requests carrying the block. */
+  frequency: number;
+  position: "prefix" | "suffix";
+  sampledRequests: number;
+  /** Null when the model has no known price — reported as unknown, never as
+   *  zero, since "this costs nothing" would be the wrong conclusion. */
+  wasteCents: number | null;
+}
+
+export function listSuggestions(): Promise<PromptSuggestion[]> {
+  return request<PromptSuggestion[]>("/v1/suggestions");
+}
+
+export function draftAgent(description: string): Promise<AgentDraft> {
+  return request<AgentDraft>("/v1/agents/draft", {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+}
+
+/**
+ * The public marketing site's install-wizard assistant (/get-started) — a
+ * hosted model, unlike draftAgent's local one, since a pre-install visitor
+ * has no Tollgate backend of their own to run a local model against yet. See
+ * backend/api/src/lib/install-wizard-assistant.ts.
+ */
+export function isInstallWizardAvailable(): Promise<{ available: boolean }> {
+  return request<{ available: boolean }>("/v1/install-wizard/availability");
+}
+
+export function askInstallWizard(question: string): Promise<{ answer: string }> {
+  return request<{ answer: string }>("/v1/install-wizard/ask", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
 }
 
 export function createAgent(input: CreateAgentInput): Promise<CreateAgentResponse> {

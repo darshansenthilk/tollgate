@@ -13,8 +13,11 @@ const AUTH_PAGES = new Set(["/sign-in", "/sign-up"]);
 // The marketing page (and its security page — a signed-out prospect is
 // exactly who needs to read it before trusting us with a key) are the
 // routes a signed-out visitor should actually reach — everything else (the
-// real dashboard at /agents, /status) stays behind the gate.
-const PUBLIC_ROUTES = new Set(["/", "/security"]);
+// real dashboard at /agents, /status) stays behind the gate. /get-started is
+// the same case: a prospective self-hoster reading install steps hasn't
+// signed up for anything yet, and shouldn't be bounced to /sign-in to read
+// how to avoid needing an account on Tollgate's own hosted service at all.
+const PUBLIC_ROUTES = new Set(["/", "/security", "/get-started"]);
 
 export function middleware(request: NextRequest) {
   const sessionCookie = getSessionCookie(request);

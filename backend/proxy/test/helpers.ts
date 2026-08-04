@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import type { ProviderAdapter, UpstreamCredential } from "@tollgate/shared";
+import type { ProviderAdapter, ToolDefinition, UpstreamCredential } from "@tollgate/shared";
 import {
   buildRegistry,
   assistantAdapterSlugs as defaultAssistantAdapterSlugs,
@@ -16,6 +16,7 @@ import type { Vault } from "../src/lib/vault.js";
 import type { FreezeStore } from "../src/lib/freeze.js";
 import type { TokenUsageStore } from "../src/lib/token-usage.js";
 import type { CurrentPromptStore } from "../src/lib/current-prompt.js";
+import type { ApprovalStore } from "../src/lib/tool-approvals.js";
 import { registerProxyRoute, type ProxyDeps } from "../src/routes/proxy.js";
 
 /** Org used for agents added without an explicit one. */
@@ -25,21 +26,30 @@ export const DEFAULT_TEST_ORG_ID = "org-test";
 export class FakeAgentStore implements AgentStore {
   private readonly byHash = new Map<string, AuthedAgent>();
 
-  /** orgId and upstreamKeyId are optional: orgId only matters for vault (BYOK)
-   *  scoping and upstreamKeyId only for multi-key resolution, so the many
-   *  tests that predate either stay unchanged while a BYOK/multi-key test can
+  /** orgId, upstreamKeyId, blockedTools, systemPrompt and toolDefinitions are
+   *  all optional and default to their "off" value, so the many tests that
+   *  predate any of them stay unchanged while a test exercising one can
    *  still pin a specific value. */
   add(
     token: string,
-    agent: Omit<AuthedAgent, "orgId" | "upstreamKeyId"> & {
+    agent: Omit<
+      AuthedAgent,
+      "orgId" | "upstreamKeyId" | "blockedTools" | "systemPrompt" | "toolDefinitions"
+    > & {
       orgId?: string;
       upstreamKeyId?: string | null;
+      blockedTools?: string[] | null;
+      systemPrompt?: string | null;
+      toolDefinitions?: ToolDefinition[] | null;
     },
   ): void {
     this.byHash.set(hashToken(token), {
       ...agent,
       orgId: agent.orgId ?? DEFAULT_TEST_ORG_ID,
       upstreamKeyId: agent.upstreamKeyId ?? null,
+      blockedTools: agent.blockedTools ?? null,
+      systemPrompt: agent.systemPrompt ?? null,
+      toolDefinitions: agent.toolDefinitions ?? null,
     });
   }
 
@@ -168,6 +178,35 @@ export class FakeCurrentPromptStore implements CurrentPromptStore {
   }
 }
 
+/** In-memory ApprovalStore. Grants are single-use, mirroring the real store's
+ *  atomic DEL semantics; raised requests are recorded so a test can assert the
+ *  escalation was queued rather than silently dropped. */
+export class FakeApprovalStore implements ApprovalStore {
+  readonly requests: { orgId: string; agentId: string; toolName: string }[] = [];
+  private readonly grants = new Set<string>();
+
+  grant(agentId: string, toolName: string): void {
+    this.grants.add(`${agentId}:${toolName}`);
+  }
+
+  async consumeGrant(agentId: string, toolName: string): Promise<boolean> {
+    return this.grants.delete(`${agentId}:${toolName}`);
+  }
+
+  async requestApproval(args: {
+    orgId: string;
+    agentId: string;
+    toolName: string;
+  }): Promise<void> {
+    // Mirrors the real store's ON CONFLICT DO NOTHING against one pending row
+    // per (agent, tool) — a retry loop must not pile up duplicates.
+    const exists = this.requests.some(
+      (r) => r.agentId === args.agentId && r.toolName === args.toolName,
+    );
+    if (!exists) this.requests.push(args);
+  }
+}
+
 export interface FetchCall {
   url: string;
   init: RequestInit | undefined;
@@ -208,6 +247,7 @@ export interface HarnessOverrides {
   freeze?: FreezeStore;
   tokenUsage?: TokenUsageStore;
   currentPrompt?: CurrentPromptStore;
+  approvals?: ApprovalStore;
   fetchImpl?: typeof fetch;
   now?: () => Date;
   assistantAdapterSlugs?: ReadonlyMap<string, string>;
@@ -222,6 +262,7 @@ export interface Harness {
   freeze: FakeFreezeStore;
   tokenUsage: FakeTokenUsageStore;
   currentPrompt: FakeCurrentPromptStore;
+  approvals: FakeApprovalStore;
   upstream: MockUpstream;
 }
 
@@ -260,6 +301,10 @@ export async function buildHarness(
     overrides.currentPrompt instanceof FakeCurrentPromptStore
       ? overrides.currentPrompt
       : new FakeCurrentPromptStore();
+  const approvals =
+    overrides.approvals instanceof FakeApprovalStore
+      ? overrides.approvals
+      : new FakeApprovalStore();
   const upstream = new MockUpstream();
 
   const deps: ProxyDeps = {
@@ -271,6 +316,7 @@ export async function buildHarness(
     freeze: overrides.freeze ?? freeze,
     tokenUsage: overrides.tokenUsage ?? tokenUsage,
     currentPrompt: overrides.currentPrompt ?? currentPrompt,
+    approvals: overrides.approvals ?? approvals,
     fetchImpl: overrides.fetchImpl ?? upstream.fetchImpl,
     now: overrides.now ?? (() => FIXED_NOW),
     assistantAdapterSlugs: overrides.assistantAdapterSlugs ?? defaultAssistantAdapterSlugs,
@@ -280,5 +326,16 @@ export async function buildHarness(
   registerProxyRoute(app, deps);
   await app.ready();
 
-  return { app, deps, agents, budget, spendLog, freeze, tokenUsage, currentPrompt, upstream };
+  return {
+    app,
+    deps,
+    agents,
+    budget,
+    spendLog,
+    freeze,
+    tokenUsage,
+    currentPrompt,
+    approvals,
+    upstream,
+  };
 }

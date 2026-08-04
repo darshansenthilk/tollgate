@@ -13,6 +13,7 @@ import { pgVault } from "./lib/vault.js";
 import { redisFreezeStore } from "./lib/freeze.js";
 import { redisTokenUsageStore } from "./lib/token-usage.js";
 import { redisCurrentPromptStore } from "./lib/current-prompt.js";
+import { pgApprovalStore } from "./lib/tool-approvals.js";
 import { registerProxyRoute } from "./routes/proxy.js";
 
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
@@ -78,6 +79,9 @@ registerProxyRoute(app, {
   freeze: redisFreezeStore(redis),
   tokenUsage: redisTokenUsageStore(redis),
   currentPrompt: redisCurrentPromptStore(redis),
+  // Grants live in Redis (hot path), the operator-facing request queue in
+  // Postgres — see lib/tool-approvals.ts.
+  approvals: pgApprovalStore(pool, redis),
   fetchImpl: fetch,
   now: () => new Date(),
   assistantAdapterSlugs,

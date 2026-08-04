@@ -7,24 +7,37 @@ import { authClient } from "@/lib/auth-client";
  * The landing page's one nav — main-nav.tsx hides itself on "/" (see its
  * NO_NAV_ROUTES) so this is the only nav rendered here. A floating pill
  * ("Dynamic Island" shape) instead of the previous full-width sticky bar:
- * fixed, centred, clear of both edges, laid out left to right as
- * Name | See it live | Talk to us | Sign in + Sign out (or email + Sign
- * out, once signed in) — same account-cluster shape as main-nav.tsx's.
- * No "Get started" anywhere on the page anymore (nav, hero, or closing
- * section) — Sign in's own solid pill (.mk-btn-primary) is the one real
- * call to action in the bar, and self-serve signup isn't otherwise called
- * out; "Talk to us" now covers what "Dashboard Panel" used to.
+ * fixed, centred, clear of both edges.
  *
- * See it live / Talk to us are plain white text (.mk-nav-link) — no pill.
- * Both are absolute ("/#demo", "/#contact"), not bare hashes — this nav is
- * also rendered on /security (main-nav.tsx's NO_NAV_ROUTES excludes it too),
- * where a bare "#demo" would resolve against /security itself and find
- * nothing instead of returning to the landing page's sections.
+ * Link set DELIBERATELY MIRRORS access-cta-section.tsx's footer "Product"
+ * column (same href/label pairs, same order) rather than its own curated
+ * subset — previously this nav carried only "See it live" / "Talk to us" and
+ * an explicit comment said self-serve signup was intentionally not called
+ * out anywhere on the page. That's been reversed: "Self-host it" (→
+ * /get-started) now has equal billing with the sales-assisted "Talk to us"
+ * path, on purpose, not as an oversight. If the footer's column changes,
+ * update both places — there's no shared constant (yet) because the footer's
+ * item shape (heading + links) doesn't match this flat list, and one file
+ * importing a slice of the other's data for two names felt like more
+ * indirection than the duplication it would save.
+ *
+ * All hrefs are absolute ("/#demo", not "#demo") — this nav is also rendered
+ * on /security and /get-started (main-nav.tsx's NO_NAV_ROUTES excludes all
+ * three), where a bare hash would resolve against whichever page is current
+ * instead of returning to the landing page's sections.
  *
  * "Dashboard Panel" (→ /agents) only appears once signed in — a signed-out
  * visitor has nowhere useful to land there (middleware would just bounce
  * them to /sign-in), so the link stays hidden until `email` is non-null.
  */
+const NAV_LINKS = [
+  { href: "/#how", label: "How it works" },
+  { href: "/#demo", label: "Live demo" },
+  { href: "/security", label: "Security" },
+  { href: "/get-started", label: "Self-host it" },
+  { href: "/#contact", label: "Talk to us" },
+];
+
 const PRIMARY = "mk-btn mk-btn-primary mk-btn-compact whitespace-nowrap";
 const COMPACT = "mk-btn mk-btn-compact whitespace-nowrap";
 
@@ -51,12 +64,11 @@ export function StickyNav() {
 
       <div className="mk-island-sep" aria-hidden />
 
-      <a href="/#demo" className="mk-nav-link">
-        See it live
-      </a>
-      <a href="/#contact" className="mk-nav-link">
-        Talk to us
-      </a>
+      {NAV_LINKS.map((link) => (
+        <a key={link.href} href={link.href} className="mk-nav-link">
+          {link.label}
+        </a>
+      ))}
       {email !== null && (
         <a href="/agents" className="mk-nav-link">
           Dashboard Panel

@@ -9,9 +9,14 @@ const CURRENT_PROMPT_TTL_SECONDS = 120;
 
 /**
  * Transient "what's happening right now" state for the dashboard sidebar.
- * Written by the proxy before forwarding, with a short TTL — never a
- * Postgres row, and never read back by the proxy itself (only the api reads
- * it, the same way it reads the spend/token counters).
+ * Written by the proxy before forwarding, with a short TTL, and never read
+ * back by the proxy itself (only the api reads it, the same way it reads the
+ * spend/token counters).
+ *
+ * This key is still Redis-only — but note that the request body IS separately
+ * persisted per event on spend_events.prompt, for the activity log's
+ * drill-in. So "the prompt never reaches Postgres" is no longer true of the
+ * system as a whole; it's true of this key.
  */
 export interface CurrentPromptStore {
   setCurrentPrompt(agentId: string, prompt: string): Promise<void>;

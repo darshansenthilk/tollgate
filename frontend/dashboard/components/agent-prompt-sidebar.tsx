@@ -27,8 +27,12 @@ export function AgentPromptSidebar({ agent, onOpenChange }: AgentPromptSidebarPr
         <SidebarHeader>
           <SidebarTitle>{agent?.name ?? "Agent"}</SidebarTitle>
           <SidebarDescription>
+            {/* Deliberately no longer claims prompts are never persisted:
+                spend_events.prompt now records each request's body for the
+                activity log. THIS key is still transient — that's the
+                distinction worth drawing, not a blanket promise. */}
             Current prompt — transient, kept in Redis for ~2 minutes by the
-            proxy and never written to Postgres.
+            proxy. Past requests are in the activity log.
           </SidebarDescription>
         </SidebarHeader>
 

@@ -44,6 +44,9 @@ export function registerActivityRoutes(app: FastifyInstance): void {
         completionTokens: spendEvents.completionTokens,
         upstreamStatus: spendEvents.upstreamStatus,
         latencyMs: spendEvents.latencyMs,
+        /** What the agent actually asked — see the column's doc comment in
+         *  db/schema.ts for the retention caveat that comes with storing it. */
+        prompt: spendEvents.prompt,
         createdAt: spendEvents.createdAt,
       })
       .from(spendEvents)
@@ -73,6 +76,7 @@ export function registerActivityRoutes(app: FastifyInstance): void {
           : (row.promptTokens ?? 0) + (row.completionTokens ?? 0),
       upstreamStatus: row.upstreamStatus,
       latencyMs: row.latencyMs,
+      prompt: row.prompt,
       createdAt: row.createdAt.toISOString(),
     }));
   });

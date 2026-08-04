@@ -10,7 +10,11 @@ import { registerStubRoutes } from "./routes/stubs.js";
 import { registerAgentRoutes } from "./routes/agents.js";
 import { registerUpstreamKeyRoutes } from "./routes/upstream-keys.js";
 import { registerActivityRoutes } from "./routes/activity.js";
+import { registerApprovalRoutes } from "./routes/approvals.js";
+import { registerAgentDraftRoutes } from "./routes/agent-draft.js";
+import { registerSuggestionRoutes } from "./routes/suggestions.js";
 import { registerDashboardRoutes } from "./routes/dashboards.js";
+import { registerInstallWizardRoutes } from "./routes/install-wizard.js";
 import { registerAuthRoutes } from "./lib/auth-mount.js";
 import { requireAuth } from "./lib/require-auth.js";
 import { runMigrations } from "./db/migrate.js";
@@ -62,6 +66,11 @@ app.get("/health", async (_req, reply): Promise<HealthReport> => {
 // Better Auth owns /api/auth/* — public, because it IS the auth surface.
 await registerAuthRoutes(app);
 
+// Public and unauthenticated, same as /health above and unlike everything in
+// the requireAuth scope below — a visitor reading the marketing site's
+// install steps hasn't signed up for anything yet. See routes/install-wizard.ts.
+registerInstallWizardRoutes(app);
+
 // The management plane (agent CRUD + policy stubs) is gated: requireAuth 401s
 // anonymous callers and scopes each request to the caller's active org. /health
 // and /api/auth/* stay outside this encapsulated scope, so they're unaffected.
@@ -71,6 +80,15 @@ await app.register(async (scope) => {
   registerAgentRoutes(scope, redis);
   registerUpstreamKeyRoutes(scope);
   registerActivityRoutes(scope);
+  registerApprovalRoutes(scope, redis);
+  // "/v1/agents/draft" coexists with registerAgentRoutes' "/v1/agents/:id"
+  // above: Fastify's radix router prefers a static segment over a parametric
+  // one no matter which was registered first, so "draft" is never swallowed as
+  // an :id. Worth stating because the safety here is the router's, not the
+  // ordering's — moving these calls around cannot break it, but renaming
+  // "draft" to something an id could collide with would.
+  registerAgentDraftRoutes(scope);
+  registerSuggestionRoutes(scope);
   registerDashboardRoutes(scope);
 });
 

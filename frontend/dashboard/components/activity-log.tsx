@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { providerLabel } from "@/lib/agent-options";
+import { ActivityPromptSidebar } from "@/components/activity-prompt-sidebar";
 import { ApiError, listActivity, type ActivityEvent } from "@/lib/api";
 
 /**
@@ -92,6 +93,16 @@ function isUnpriced(event: ActivityEvent): boolean {
 }
 
 function DecisionBadge({ event }: { event: ActivityEvent }) {
+  // Operator decisions, not proxy verdicts — neither an allow nor a denial of
+  // traffic, so they get their own tone rather than borrowing the red/green
+  // that means "a request was blocked / let through".
+  if (event.decision === "approval_granted") {
+    return <ToneBadge label="Approved by operator" color="var(--brand)" />;
+  }
+  if (event.decision === "approval_denied") {
+    return <ToneBadge label="Denied by operator" color="var(--muted-foreground)" />;
+  }
+
   if (event.decision === "allowed") {
     // An allowed request can still have failed upstream (a 401 from the
     // provider, say) — that's Tollgate letting it through, not the call
@@ -111,7 +122,9 @@ function DecisionBadge({ event }: { event: ActivityEvent }) {
         ? "Frozen"
         : event.decision === "denied_rate"
           ? "Rate limited"
-          : "Blocked";
+          : event.decision === "denied_tool"
+            ? "Tool blocked"
+            : "Blocked";
 
   return <ToneBadge label={label} color="var(--err)" />;
 }
@@ -119,6 +132,7 @@ function DecisionBadge({ event }: { event: ActivityEvent }) {
 export function ActivityLog() {
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [promptEventId, setPromptEventId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -197,7 +211,24 @@ export function ActivityLog() {
                 {events.map((event) => {
                   const when = formatWhen(event.createdAt);
                   return (
-                    <TableRow key={event.id}>
+                    <TableRow
+                      key={event.id}
+                      // The whole row opens the prompt, mirroring the agent
+                      // table's row-click on the dashboard panel. Keyboard
+                      // reachable too — a table row isn't focusable by
+                      // default, and this is the only way to read the prompt.
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Show what ${event.agentName} sent`}
+                      className="cursor-pointer"
+                      onClick={() => setPromptEventId(event.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setPromptEventId(event.id);
+                        }
+                      }}
+                    >
                       <TableCell>
                         <div className="flex flex-col leading-tight">
                           <span className="font-mono text-xs">{when.time}</span>
@@ -265,6 +296,16 @@ export function ActivityLog() {
           </div>
         )}
       </CardContent>
+
+      {/* Re-derived from the live (polled) events list rather than snapshotted
+          on click, the same way AgentPromptSidebar reads its agent — so the
+          panel can't drift from what the feed says. */}
+      <ActivityPromptSidebar
+        event={events?.find((e) => e.id === promptEventId) ?? null}
+        onOpenChange={(open) => {
+          if (!open) setPromptEventId(null);
+        }}
+      />
     </Card>
   );
 }

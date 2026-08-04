@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -20,7 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { modelsForProvider, providerLabel } from "@/lib/agent-options";
+import {
+  formatBlockedTools,
+  modelsForProvider,
+  parseBlockedTools,
+  providerLabel,
+} from "@/lib/agent-options";
 import {
   ApiError,
   type AgentListItem,
@@ -28,6 +34,12 @@ import {
   type UpdateAgentResponse,
   type UpstreamKeysResponse,
 } from "@/lib/api";
+import {
+  ToolDefinitionsEditor,
+  parseToolDrafts,
+  toolDefinitionsToDrafts,
+  type ToolDefinitionDraft,
+} from "@/components/tool-definitions-editor";
 
 /** Sentinel Select value for "don't pin a specific key" — see
  *  create-agent-dialog.tsx's identical constant for why. */
@@ -65,6 +77,9 @@ export function EditAgentDialog({
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [blockedTools, setBlockedTools] = useState("");
+  const [toolDrafts, setToolDrafts] = useState<ToolDefinitionDraft[]>([]);
   const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKeysResponse | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +114,9 @@ export function EditAgentDialog({
     setModel(agent.model);
     setMaxBudgetCents(agent.maxBudgetCents === null ? "" : String(agent.maxBudgetCents));
     setUpstreamKeyId(agent.upstreamKeyId);
+    setSystemPrompt(agent.systemPrompt ?? "");
+    setBlockedTools(formatBlockedTools(agent.blockedTools));
+    setToolDrafts(toolDefinitionsToDrafts(agent.toolDefinitions));
     setError(null);
   }
 
@@ -117,13 +135,23 @@ export function EditAgentDialog({
 
   const trimmedName = name.trim();
   const budgetValue = maxBudgetCents.trim() === "" ? null : Number(maxBudgetCents);
+  const systemPromptValue = systemPrompt.trim() === "" ? null : systemPrompt.trim();
+  const blockedToolsValue = parseBlockedTools(blockedTools);
+  const toolsResult = parseToolDrafts(toolDrafts);
 
   const isDirty =
     editing !== null &&
     (trimmedName !== editing.name ||
       model !== editing.model ||
       budgetValue !== editing.maxBudgetCents ||
-      upstreamKeyId !== editing.upstreamKeyId);
+      upstreamKeyId !== editing.upstreamKeyId ||
+      systemPromptValue !== editing.systemPrompt ||
+      JSON.stringify(blockedToolsValue) !== JSON.stringify(editing.blockedTools) ||
+      // An unresolved (invalid JSON) draft counts as dirty too, so Save stays
+      // enabled and the operator gets the validation error from handleSubmit
+      // instead of a silently-disabled button.
+      !toolsResult.ok ||
+      JSON.stringify(toolsResult.value) !== JSON.stringify(editing.toolDefinitions));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -150,6 +178,10 @@ export function EditAgentDialog({
         setError("Max budget must be a non-negative number of cents");
         return;
       }
+      if (!toolsResult.ok) {
+        setError(toolsResult.error);
+        return;
+      }
 
       // Send only what actually changed — an omitted key means "leave alone".
       const input: UpdateAgentInput = {};
@@ -157,6 +189,13 @@ export function EditAgentDialog({
       if (model !== editing.model) input.model = model;
       if (budgetValue !== editing.maxBudgetCents) input.maxBudgetCents = budgetValue;
       if (upstreamKeyId !== editing.upstreamKeyId) input.upstreamKeyId = upstreamKeyId;
+      if (systemPromptValue !== editing.systemPrompt) input.systemPrompt = systemPromptValue;
+      if (JSON.stringify(blockedToolsValue) !== JSON.stringify(editing.blockedTools)) {
+        input.blockedTools = blockedToolsValue;
+      }
+      if (JSON.stringify(toolsResult.value) !== JSON.stringify(editing.toolDefinitions)) {
+        input.toolDefinitions = toolsResult.value;
+      }
 
       const updated = await updateAgent(editing.id, input);
       onUpdated(updated);
@@ -237,6 +276,28 @@ export function EditAgentDialog({
               placeholder="500 (= $5.00) — leave blank for unlimited"
             />
           </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit-agent-system-prompt">System prompt (optional)</Label>
+            <Textarea
+              id="edit-agent-system-prompt"
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="You are a support agent for Acme Corp. Be concise and never discuss pricing."
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit-agent-blocked-tools">Blocked tools (optional)</Label>
+            <Input
+              id="edit-agent-blocked-tools"
+              value={blockedTools}
+              onChange={(e) => setBlockedTools(e.target.value)}
+              placeholder="delete_customer, send_payment"
+            />
+          </div>
+
+          <ToolDefinitionsEditor idPrefix="edit" drafts={toolDrafts} onChange={setToolDrafts} />
 
           {keyOptions.length > 0 && (
             <div className="flex flex-col gap-1.5">

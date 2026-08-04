@@ -7,6 +7,8 @@ import {
   numeric,
   timestamp,
   uniqueIndex,
+  index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -50,6 +52,18 @@ export const spendDecisionEnum = pgEnum("spend_decision", [
   "denied_rate",
   "denied_endpoint",
   "denied_frozen",
+  "denied_tool",
+  // Operator decisions on a blocked tool call, written by the api rather than
+  // the proxy — see @tollgate/shared SpendDecision for why they share this
+  // table with the proxy's own verdicts.
+  "approval_granted",
+  "approval_denied",
+]);
+
+export const toolApprovalStatusEnum = pgEnum("tool_approval_status", [
+  "pending",
+  "approved",
+  "denied",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -77,6 +91,20 @@ export const policies = pgTable("policies", {
   budgetWindow: budgetWindowEnum("budget_window").notNull().default("monthly"),
   rateLimitRpm: integer("rate_limit_rpm"),
   endpointAllowlist: text("endpoint_allowlist").array(),
+  /** Tool/function names the proxy blocks from ever reaching the agent in a
+   *  response — see @tollgate/shared Policy.blockedTools's doc comment. This
+   *  one IS enforced (backend/proxy/src/routes/proxy.ts), unlike
+   *  rate_limit_rpm/endpoint_allowlist above. */
+  blockedTools: text("blocked_tools").array(),
+  /** Prepended to every request this agent sends — see @tollgate/shared
+   *  Policy.systemPrompt's doc comment. */
+  systemPrompt: text("system_prompt"),
+  /** Tools this agent's requests advertise to the model — see @tollgate/shared
+   *  Policy.toolDefinitions's doc comment. Untyped jsonb (not `.$type<>()`)
+   *  to match this file's existing convention of not importing @tollgate/
+   *  shared's types — validation lives in routes/agents.ts, same as every
+   *  other policy field here. */
+  toolDefinitions: jsonb("tool_definitions"),
   failMode: failModeEnum("fail_mode").notNull().default("fail_closed"),
   /** The actual enforcement ceiling the proxy reads (policies.max_budget_cents). */
   maxBudgetCents: integer("max_budget_cents"),
@@ -207,7 +235,9 @@ export const orgUpstreamKeys = pgTable(
 // relies entirely on this table's default now() for it.
 // ---------------------------------------------------------------------------
 
-export const spendEvents = pgTable("spend_events", {
+export const spendEvents = pgTable(
+  "spend_events",
+  {
   id: uuid("id").primaryKey(),
   agentId: uuid("agent_id")
     .notNull()
@@ -243,8 +273,84 @@ export const spendEvents = pgTable("spend_events", {
   idempotencyKey: uuid("idempotency_key").notNull().unique(),
   latencyMs: integer("latency_ms"),
   upstreamStatus: integer("upstream_status"),
+  /**
+   * The request body this event was forwarded with, so the activity log can
+   * show what an agent actually asked for — not just that it asked.
+   *
+   * CONTAINS REAL PROMPT CONTENT, and unlike the Redis current-prompt key
+   * (backend/proxy/src/lib/current-prompt.ts, ~2min TTL) this one PERSISTS.
+   * Whatever an agent sends — customer records, personal data — lands here and
+   * stays until something deletes it. Truncated to a bounded length by the
+   * proxy (see spend-log.ts's PROMPT_MAX_CHARS) so one huge request can't bloat
+   * the table, but truncation is not redaction. A deployment with real user
+   * data in its prompts wants a retention policy on this column.
+   *
+   * Null for denials raised before anything was forwarded, and for the
+   * operator-decision rows the api writes.
+   */
+  prompt: text("prompt"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  },
+  (table) => [
+    // Serves the two per-agent reads (GET /v1/agents/:id/activity and the
+    // suggestions route's per-agent sample) directly: equality on agent_id,
+    // then already-sorted by created_at, so LIMIT stops early instead of
+    // sorting the agent's whole history. Added once this table started
+    // carrying prompt text on every row (see the column's doc comment) —
+    // wider rows make the sequential-scan-plus-sort this replaces cost more
+    // per row, not just more rows.
+    index("spend_events_agent_created_idx").on(table.agentId, table.createdAt.desc()),
+    // Serves GET /v1/activity — the org-wide feed, which has no agent_id
+    // filter of its own (it joins out to agents for the org scope). An
+    // index scan walking created_at backward lets that join stop at LIMIT
+    // rows instead of sorting every event the org's agents ever produced.
+    index("spend_events_created_idx").on(table.createdAt.desc()),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Tool approval requests
+//
+// Raised by the PROXY when its tool gate blocks a call (see
+// backend/proxy/src/routes/proxy.ts), resolved from the dashboard through the
+// api. The two writers are deliberately split: the proxy only ever inserts
+// pending rows and never resolves one, so an agent can't approve itself.
+//
+// Approving does NOT edit policies.blocked_tools — it writes a TTL'd Redis
+// grant (see @tollgate/shared toolGrantKey) that lets the agent's retry
+// through once. The blocklist stays the standing policy; a grant is the
+// temporary exception to it.
+// ---------------------------------------------------------------------------
+
+export const toolApprovalRequests = pgTable(
+  "tool_approval_requests",
+  {
+    id: uuid("id").primaryKey(),
+    /** Same plain-text, non-FK org reference the other app tables use. The
+     *  proxy reads it off the authenticated agent, never from client input. */
+    orgId: text("org_id").notNull(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    /** Tool/function name exactly as the provider named it in the response. */
+    toolName: text("tool_name").notNull(),
+    status: toolApprovalStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Both null while pending; set together when an operator resolves it. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    /** Better Auth user id as plain text, same decoupling as org_id. */
+    resolvedBy: text("resolved_by"),
+  },
+  (table) => [
+    // One pending row per (agent, tool): an agent retrying a blocked call in a
+    // loop must not flood the operator's queue with identical requests. The
+    // proxy's insert is ON CONFLICT DO NOTHING against this index. Partial, so
+    // resolved rows stay as history and a later re-request can open a new one.
+    uniqueIndex("tool_approval_requests_pending_unique")
+      .on(table.agentId, table.toolName)
+      .where(sql`${table.status} = 'pending'`),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Dashboards

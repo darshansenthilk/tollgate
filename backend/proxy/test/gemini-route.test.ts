@@ -193,4 +193,121 @@ describe("POST /gemini/* hot path", () => {
     });
     expect(h.upstream.calls).toHaveLength(0);
   });
+
+  it("denies with tool_call_blocked when the response asks for a blocked tool, but still meters the real cost", async () => {
+    const h = await buildHarness({ adapters: [geminiAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "gemini",
+      blockedTools: ["delete_customer"],
+    });
+
+    const body = {
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [{ functionCall: { name: "delete_customer", args: {} } }],
+          },
+          finishReason: "STOP",
+        },
+      ],
+      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 500, totalTokenCount: 1500 },
+      modelVersion: "gemini-1.5-flash",
+    };
+    h.upstream.setResponder(
+      () =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/gemini/v1beta/models/gemini-1.5-flash:generateContent",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { contents: [{ role: "user", parts: [{ text: "delete them" }] }] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "tool_call_blocked", tool: "delete_customer" });
+    expect(h.spendLog.events[0]).toMatchObject({ decision: "denied_tool" });
+    expect(h.spendLog.events[0]?.actualCostCents).toBeGreaterThan(0);
+  });
+
+  it("injects the agent's configured system prompt into systemInstruction.parts", async () => {
+    const h = await buildHarness({ adapters: [geminiAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "gemini",
+      systemPrompt: "You are a helpful support agent for Acme Corp.",
+    });
+    h.upstream.setResponder(
+      () => new Response(JSON.stringify(response("gemini-1.5-flash", 10, 10)), { status: 200 }),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: "/gemini/v1beta/models/gemini-1.5-flash:generateContent",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {
+        systemInstruction: { parts: [{ text: "Also be concise." }] },
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.systemInstruction).toEqual({
+      parts: [
+        { text: "You are a helpful support agent for Acme Corp." },
+        { text: "Also be concise." },
+      ],
+    });
+    expect(sentBody.contents).toEqual([{ role: "user", parts: [{ text: "hi" }] }]);
+  });
+
+  it("appends the agent's configured tools as a new functionDeclarations entry", async () => {
+    const h = await buildHarness({ adapters: [geminiAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "gemini",
+      toolDefinitions: [
+        {
+          name: "lookup_order",
+          description: "Look up an order by id.",
+          parameters: { type: "object", properties: { orderId: { type: "string" } } },
+        },
+      ],
+    });
+    h.upstream.setResponder(
+      () => new Response(JSON.stringify(response("gemini-1.5-flash", 10, 10)), { status: 200 }),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: "/gemini/v1beta/models/gemini-1.5-flash:generateContent",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { contents: [{ role: "user", parts: [{ text: "hi" }] }] },
+    });
+
+    const sentBody = JSON.parse(h.upstream.calls[0]?.init?.body as string);
+    expect(sentBody.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: "lookup_order",
+            description: "Look up an order by id.",
+            parameters: { type: "object", properties: { orderId: { type: "string" } } },
+          },
+        ],
+      },
+    ]);
+  });
 });

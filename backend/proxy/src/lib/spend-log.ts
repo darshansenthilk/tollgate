@@ -22,6 +22,35 @@ export interface SpendRecord {
   completionTokens: number | null;
   latencyMs: number | null;
   upstreamStatus: number | null;
+  /**
+   * The forwarded request body, so the dashboard's activity log can show what
+   * an agent actually asked for. Null when nothing was forwarded (a denial
+   * caught before the upstream call).
+   *
+   * Unlike the Redis current-prompt key this is PERSISTED — see the column's
+   * doc comment in backend/api/src/db/schema.ts for the retention caveat that
+   * comes with that.
+   */
+  prompt: string | null;
+}
+
+/**
+ * Cap on a stored prompt. A request body has no size limit worth relying on,
+ * and an agent pasting a whole document into every call would otherwise grow
+ * spend_events without bound. Generous enough that a realistic prompt survives
+ * intact; the marker below makes truncation visible rather than silent.
+ */
+const PROMPT_MAX_CHARS = 8_000;
+
+const TRUNCATION_MARKER = "\n\n…[truncated by Tollgate]";
+
+/** Bound a prompt for storage, marking it when anything was dropped so the
+ *  activity log never implies it's showing the whole request when it isn't. */
+export function truncatePrompt(prompt: string | undefined): string | null {
+  if (prompt === undefined) return null;
+  return prompt.length <= PROMPT_MAX_CHARS
+    ? prompt
+    : prompt.slice(0, PROMPT_MAX_CHARS) + TRUNCATION_MARKER;
 }
 
 /** Port for persisting spend events. Injected for testability. */
@@ -40,8 +69,8 @@ export function pgSpendLog(pool: Pool): SpendLog {
            (id, agent_id, provider_id, endpoint, method,
             estimated_cost_cents, actual_cost_cents, decision,
             idempotency_key, latency_ms, upstream_status,
-            model, prompt_tokens, completion_tokens)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            model, prompt_tokens, completion_tokens, prompt)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           randomUUID(),
           event.agentId,
@@ -57,6 +86,7 @@ export function pgSpendLog(pool: Pool): SpendLog {
           event.model,
           event.promptTokens,
           event.completionTokens,
+          event.prompt,
         ],
       );
     },

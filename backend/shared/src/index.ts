@@ -73,6 +73,39 @@ export interface ProviderCost {
 }
 
 /**
+ * A single tool/function call an upstream response asked the caller to
+ * execute. Distinct from Policy.endpointAllowlist, which scopes which
+ * upstream HTTP paths an agent may hit at all — this is about what a specific
+ * chat-completion response, once allowed to happen, asked the agent to DO.
+ */
+export interface ToolCallRef {
+  /** The tool/function name exactly as the provider named it, so it can be
+   *  compared against Policy.blockedTools without per-provider translation. */
+  name: string;
+}
+
+/**
+ * A tool/function an agent is allowed to be told about — the OTHER half of
+ * the tool firewall from ToolCallRef/blockedTools. That pair governs what a
+ * response is allowed to ask for AFTER the fact; this governs what the
+ * request tells the model it CAN ask for in the first place, so the schema
+ * lives once in Tollgate instead of duplicated in the customer's own app.
+ *
+ * `parameters` is JSON Schema describing the tool's arguments — the one part
+ * of a "tools" declaration every provider agrees on (each just nests it
+ * differently: OpenAI/Gemini call it `parameters`, Claude/Bedrock call it
+ * `input_schema`). Left as `Record<string, unknown>` rather than a typed
+ * JSON-Schema shape because Tollgate never interprets it — it's forwarded
+ * verbatim to whichever provider the agent talks to, which is the one thing
+ * actually qualified to validate it.
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
  * The seam the proxy hot path forwards through. The route handler
  * (token auth → budget check → forward → meter → settle) only ever calls these
  * methods on whichever adapter matches the request's provider slug — it never
@@ -148,6 +181,37 @@ export interface ProviderAdapter {
    * nothing is needed.
    */
   prepareRequestBody?: (requestBody: unknown) => unknown;
+  /**
+   * Extract the tool/function names an upstream response asked to invoke, so
+   * the hot path can enforce Policy.blockedTools before the response reaches
+   * the caller. Optional and per-provider (each one's tool-call shape in the
+   * raw response differs — OpenAI's tool_calls[].function.name isn't Claude's
+   * tool_use content blocks). An adapter without this is treated as "nothing
+   * to check" rather than failing closed: an agent talking to a provider that
+   * hasn't had extraction wired up yet shouldn't be blanket-denied for it.
+   */
+  extractToolCalls?: (rawBody: string) => ToolCallRef[];
+  /**
+   * Prepend Policy.systemPrompt to the client's own request body, in whatever
+   * shape this provider expects a system prompt (OpenAI: a leading
+   * role:"system" message; Claude/Bedrock: a top-level `system` field —
+   * they're not interchangeable). Optional and per-provider for the same
+   * reason extractToolCalls is: an agent on a provider without this wired up
+   * yet simply sends its request unmodified rather than erroring.
+   */
+  injectSystemPrompt?: (requestBody: unknown, systemPrompt: string) => unknown;
+  /**
+   * Add Policy.toolDefinitions to the client's own request body, in whatever
+   * shape this provider expects a tools declaration (OpenAI:
+   * tools[].function.{name,description,parameters}; Claude/Bedrock:
+   * tools[].{name,description,input_schema}; Gemini:
+   * tools[].functionDeclarations[]). MERGES with any tools the caller's own
+   * request already carries rather than replacing them — same reasoning as
+   * injectSystemPrompt not overwriting a caller-supplied system message.
+   * Optional and per-provider for the same reason extractToolCalls/
+   * injectSystemPrompt are.
+   */
+  injectToolDefinitions?: (requestBody: unknown, tools: ToolDefinition[]) => unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -601,6 +665,25 @@ export interface Policy {
   rateLimitRpm: number | null;
   /** Upstream endpoint allowlist (proxy-emulated scoping); null = all. */
   endpointAllowlist: string[] | null;
+  /** Tool/function names an agent's LLM is never allowed to be told it can
+   *  call — enforced on the RESPONSE, after the upstream call, since that's
+   *  the only place a tool call exists (see ProviderAdapter.extractToolCalls).
+   *  null = nothing blocked. Denylist rather than allowlist so adopting this
+   *  doesn't require enumerating every tool an agent already uses. */
+  blockedTools: string[] | null;
+  /** Prepended to every request this agent sends, so the agent's behavior is
+   *  configured once in Tollgate rather than duplicated in every caller's own
+   *  code — see ProviderAdapter.injectSystemPrompt. null = nothing injected;
+   *  the caller's own request goes through exactly as sent. */
+  systemPrompt: string | null;
+  /** Tools this agent's requests advertise to the model, injected the same
+   *  way systemPrompt is — see ProviderAdapter.injectToolDefinitions. null =
+   *  nothing added; the caller's own tools (if any) go through unchanged.
+   *  Any entry whose name is also in blockedTools is skipped at injection
+   *  time rather than stored filtered here — see proxy.ts's gate — since
+   *  advertising a tool the agent can never actually use would just be
+   *  confusing the model with a dead option. */
+  toolDefinitions: ToolDefinition[] | null;
   failMode: FailMode;
   /** Ceiling-on-ceiling: max budget a sub-admin may set under this policy. */
   maxBudgetCents: number | null;
@@ -612,12 +695,25 @@ export interface Policy {
 // SpendEvent
 // ---------------------------------------------------------------------------
 
+/**
+ * Why a spend_events row exists. Mostly the proxy's verdict on one forwarded
+ * request — but the last two are an OPERATOR's decision on a blocked tool
+ * call, written by the api rather than the proxy.
+ *
+ * They share this table (and therefore the dashboard's activity log) on
+ * purpose: "the agent was blocked from deleting a customer" and "Dana let it
+ * through once" are the same story, and splitting them across two feeds would
+ * mean an auditor reading the log couldn't see who authorized what.
+ */
 export type SpendDecision =
   | "allowed"
   | "denied_budget"
   | "denied_rate"
   | "denied_endpoint"
-  | "denied_frozen";
+  | "denied_frozen"
+  | "denied_tool"
+  | "approval_granted"
+  | "approval_denied";
 
 /** One governed request — the immutable audit-log unit. */
 export interface SpendEvent {
@@ -708,6 +804,47 @@ export function currentPromptKey(agentId: string): string {
  */
 export function freezeKey(agentId: string): string {
   return `frozen:${agentId}`;
+}
+
+/**
+ * Redis key for a one-off human approval of a tool the agent's policy
+ * otherwise blocks: set with a TTL when an operator approves a pending
+ * request, checked by the proxy's tool gate before it denies.
+ *
+ * Deliberately TTL'd rather than permanent, and deliberately NOT a mutation
+ * of Policy.blockedTools: approving one escalation should let the agent's
+ * retry through, not silently un-block that tool forever. The blocklist stays
+ * the standing policy; this is the temporary exception to it.
+ */
+export function toolGrantKey(agentId: string, toolName: string): string {
+  return `toolgrant:${agentId}:${toolName}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tool approval requests
+// ---------------------------------------------------------------------------
+
+/** Lifecycle of one escalation raised by the proxy's tool gate. */
+export type ToolApprovalStatus = "pending" | "approved" | "denied";
+
+/**
+ * A blocked tool call an operator can approve or reject. Raised by the proxy
+ * (which never resolves one) and resolved from the dashboard through the api
+ * — the two halves of the escalation path that turns a hard tool denial into
+ * a human decision.
+ */
+export interface ToolApprovalRequest {
+  id: string;
+  orgId: string;
+  agentId: string;
+  /** Tool/function name exactly as the provider named it. */
+  toolName: string;
+  status: ToolApprovalStatus;
+  createdAt: string;
+  /** Null while pending. */
+  resolvedAt: string | null;
+  /** User id of whoever approved/denied it; null while pending. */
+  resolvedBy: string | null;
 }
 
 // ---------------------------------------------------------------------------

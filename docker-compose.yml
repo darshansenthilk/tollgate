@@ -32,6 +32,83 @@ services:
       timeout: 3s
       retries: 10
 
+  # Local model behind the agent-draft wizard (backend/api/src/lib/local-llm.ts).
+  #
+  # OPT-IN via a compose profile: `docker compose --profile local-llm up -d`.
+  # Off by default because the image plus a model is multiple GB, and the
+  # wizard is a convenience — every deployment that skips this keeps working,
+  # with the dashboard simply not offering the feature (the api's availability
+  # probe answers false and the dialog hides it).
+  #
+  # After first start, pull the model the api is configured for:
+  #   docker compose exec ollama ollama pull llama3.2
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgContext (polygres.com) — a separate Postgres a CUSTOMER'S AGENTS retrieve
+  # from, so an agent can fetch the 200 tokens it needs instead of inlining a
+  # whole catalog/schema/policy doc into every request (see the "Token
+  # savings" panel — this is the fix for exactly what it finds).
+  #
+  # DELIBERATELY A SEPARATE DATABASE, not the `postgres` service above.
+  # pgContext ships as its own Postgres image (currently PG17-based) with the
+  # extension pre-built in — swapping Tollgate's own `postgres:16-alpine` for
+  # it would force a dump/restore of every deployment's accounts, agents and
+  # activity log just to get a feature agents opt into. This way it's a
+  # sibling service on its own port/volume: zero risk to Tollgate's own data,
+  # and trivially removable if unused.
+  #
+  # Tollgate itself never queries this — it's infrastructure FOR the agents
+  # Tollgate proxies, the same way an org's own Postgres or Pinecone would be.
+  # The one place Tollgate touches it at all is governance: name whatever tool
+  # an agent uses to call it (e.g. "pgcontext_search") in that agent's
+  # blockedTools if you want the firewall built earlier to gate it.
+  #
+  # OPT-IN via a compose profile: `docker compose --profile polygres up -d`.
+  # The extension is already active on first start (this image ships with it
+  # pre-created) — verified by connecting and checking pg_extension.
+  #
+  # Two things that will trip up whoever queries this next, both confirmed by
+  # hand against a real container, not assumed from the docs:
+  #   1. The pgcontext schema is NOT on search_path ("$user", public only), so
+  #      bare operators like `<=>` resolve to nothing. Use
+  #      `embedding OPERATOR(pgcontext.<=>) '[...]'::pgcontext.vector`, or add
+  #      `SET search_path = pgcontext, public;` per session.
+  #   2. pgcontext.create_collection() registers metadata that OUTLIVES
+  #      `DROP TABLE` on the source table — a second create_collection() call
+  #      for the same name then fails with "collection already exists" even
+  #      though the table is gone. Call `pgcontext.drop_collection(name)`
+  #      before dropping the table, not after.
+  pgcontext:
+    image: ghcr.io/evokoa/pgcontext:pg17-v0.2.0
+    profiles: ["polygres"]
+    environment:
+      POSTGRES_USER: polygres
+      POSTGRES_PASSWORD: polygres
+      POSTGRES_DB: polygres
+    ports:
+      # Not 5432 — Tollgate's own postgres already owns that on the host.
+      - "5433:5432"
+    volumes:
+      - pgcontext-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polygres -d polygres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   redis-data:
   postgres-data:
+  ollama-data:
+  pgcontext-data:

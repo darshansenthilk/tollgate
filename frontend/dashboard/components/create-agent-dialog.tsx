@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -24,6 +25,8 @@ import {
 } from "@/components/ui/select";
 import {
   ApiError,
+  draftAgent,
+  isDraftAvailable,
   type CreateAgentInput,
   type CreateAgentResponse,
   type UpstreamKeysResponse,
@@ -31,9 +34,15 @@ import {
 import {
   MODELS_BY_PROVIDER,
   PROVIDERS,
+  parseBlockedTools,
   type ProviderSlug,
 } from "@/lib/agent-options";
 import { ConnectAgentSnippet } from "@/components/connect-agent-snippet";
+import {
+  ToolDefinitionsEditor,
+  parseToolDrafts,
+  type ToolDefinitionDraft,
+} from "@/components/tool-definitions-editor";
 
 /** Sentinel Select value for "don't pin a specific key" — Select's `value`
  *  being null shows the placeholder rather than a selectable "cleared" state,
@@ -72,6 +81,17 @@ export function CreateAgentDialog({
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [blockedTools, setBlockedTools] = useState("");
+  const [toolDrafts, setToolDrafts] = useState<ToolDefinitionDraft[]>([]);
+  const [description, setDescription] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  /** Whether the blocked-tools field was filled by the model rather than
+   *  typed. Drives the caution note below — see where it's rendered. */
+  const [draftedTools, setDraftedTools] = useState(false);
+  /** undefined until the probe lands, so the wizard doesn't flash in and then
+   *  disappear on a deployment that has no local model. */
+  const [draftAvailable, setDraftAvailable] = useState<boolean | undefined>(undefined);
   const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKeysResponse | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +99,26 @@ export function CreateAgentDialog({
   const [copied, setCopied] = useState(false);
 
   const modelOptions = providerSlug === null ? [] : MODELS_BY_PROVIDER[providerSlug];
+
+  // Probed once per open, alongside the keys fetch below and for the same
+  // reason. Skipped on the marketing demo (no listUpstreamKeys => no real api
+  // to ask), which also keeps the wizard out of the demo simulator.
+  useEffect(() => {
+    if (!open || listUpstreamKeys === undefined) return;
+    let cancelled = false;
+    void isDraftAvailable()
+      .then((res) => {
+        if (!cancelled) setDraftAvailable(res.available);
+      })
+      .catch(() => {
+        // An unreachable probe is indistinguishable from "no model" as far as
+        // the operator is concerned — hide the wizard either way.
+        if (!cancelled) setDraftAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, listUpstreamKeys]);
 
   // Fetched once per open rather than on mount — a page that renders the
   // dialog behind a trigger shouldn't hit the api before the user asks for it.
@@ -111,6 +151,10 @@ export function CreateAgentDialog({
       setModel(null);
       setMaxBudgetCents("");
       setUpstreamKeyId(null);
+      setSystemPrompt("");
+      setBlockedTools("");
+      setToolDrafts([]);
+      setDescription("");
       setError(null);
       setCreated(null);
       setCopied(false);
@@ -143,12 +187,20 @@ export function CreateAgentDialog({
         setError("Max budget must be a non-negative number of cents");
         return;
       }
+      const toolsResult = parseToolDrafts(toolDrafts);
+      if (!toolsResult.ok) {
+        setError(toolsResult.error);
+        return;
+      }
       const agent = await createAgent({
         name: trimmedName,
         providerSlug,
         maxBudgetCents: budget,
         model,
         upstreamKeyId,
+        systemPrompt: systemPrompt.trim() === "" ? null : systemPrompt.trim(),
+        blockedTools: parseBlockedTools(blockedTools),
+        toolDefinitions: toolsResult.value,
       });
       setCreated(agent);
       onCreated(agent);
@@ -159,6 +211,57 @@ export function CreateAgentDialog({
       setError(err instanceof ApiError ? err.message : "Request failed");
     } finally {
       setPending(false);
+    }
+  }
+
+  /**
+   * Fills the form from the local model's draft. Deliberately only fills
+   * fields the operator hasn't already typed into — a draft is a starting
+   * point, and silently overwriting something they wrote would be the one
+   * behaviour that makes the button untrustworthy. Nothing is created here;
+   * they still review and submit.
+   */
+  async function handleDraft() {
+    if (description.trim() === "") {
+      setError("Describe what the agent should do first");
+      return;
+    }
+    setDrafting(true);
+    setError(null);
+    setDraftedTools(false);
+    try {
+      const draft = await draftAgent(description.trim());
+
+      // A small model that returns unparseable JSON yields an all-empty draft
+      // (see parseDraft — it degrades rather than throwing). Observed in
+      // testing when the model was still loading. Without this the button
+      // just appears to do nothing, which reads as a broken feature rather
+      // than a retryable one.
+      const empty =
+        draft.name === null &&
+        draft.systemPrompt === null &&
+        draft.blockedTools.length === 0 &&
+        draft.maxBudgetCents === null;
+      if (empty) {
+        setError("The local model didn't return a usable draft — try again, or rephrase.");
+        return;
+      }
+
+      if (draft.name !== null && name.trim() === "") setName(draft.name);
+      if (draft.systemPrompt !== null && systemPrompt.trim() === "") {
+        setSystemPrompt(draft.systemPrompt);
+      }
+      if (draft.blockedTools.length > 0 && blockedTools.trim() === "") {
+        setBlockedTools(draft.blockedTools.join(", "));
+        setDraftedTools(true);
+      }
+      if (draft.maxBudgetCents !== null && maxBudgetCents.trim() === "") {
+        setMaxBudgetCents(String(draft.maxBudgetCents));
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reach the local model");
+    } finally {
+      setDrafting(false);
     }
   }
 
@@ -200,6 +303,38 @@ export function CreateAgentDialog({
                 Issues a new Tollgate token scoped to this agent.
               </DialogDescription>
             </DialogHeader>
+
+            {draftAvailable === true && (
+              <div
+                className="flex flex-col gap-1.5 rounded-lg border p-3"
+                style={{ borderColor: "var(--line)", background: "var(--panel)" }}
+              >
+                <Label htmlFor="agent-description">Describe it, and we&apos;ll draft it</Label>
+                <Textarea
+                  id="agent-description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="A support bot that handles refunds under $100 but must never delete customer records or send payments."
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={drafting}
+                    onClick={() => void handleDraft()}
+                  >
+                    {drafting ? "Drafting…" : "Draft with local AI"}
+                  </Button>
+                  {/* Says where the model runs, because "AI will read this" is
+                      exactly the moment an operator wants to know whether
+                      their description just left the building. It didn't. */}
+                  <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    Runs on your own deployment — nothing is sent to a provider.
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="agent-name">Name</Label>
@@ -274,6 +409,55 @@ export function CreateAgentDialog({
                 placeholder="500 (= $5.00) — leave blank for unlimited"
               />
             </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-system-prompt">System prompt (optional)</Label>
+              {/* Prepended to every request this agent sends — see
+                  backend/proxy/src/adapters/openai-usage.ts's
+                  injectOpenAiSystemPrompt. Defines the agent's behavior once,
+                  centrally, instead of every calling app repeating it. */}
+              <Textarea
+                id="agent-system-prompt"
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="You are a support agent for Acme Corp. Be concise and never discuss pricing."
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-blocked-tools">Blocked tools (optional)</Label>
+              {/* Comma-separated tool/function names — see
+                  backend/proxy/src/routes/proxy.ts's tool gate (step 8). */}
+              <Input
+                id="agent-blocked-tools"
+                value={blockedTools}
+                onChange={(e) => {
+                  setBlockedTools(e.target.value);
+                  setDraftedTools(false);
+                }}
+                placeholder="delete_customer, send_payment"
+              />
+              {draftedTools && (
+                // The single most important caveat in this whole wizard. A
+                // model reading "must never delete customer records" invents a
+                // plausible NAME for that tool — in testing, "deleteCustomerRecord".
+                // The gate matches on exact names, so if the agent's real tool
+                // is "delete_customer" this blocklist blocks nothing while
+                // looking like it does. Silence here would be the dangerous
+                // kind of convenience.
+                <p className="text-xs" style={{ color: "var(--amber)" }}>
+                  Guessed from your description — check these against the tool
+                  names your agent actually calls. Blocking only works on an
+                  exact match.
+                </p>
+              )}
+            </div>
+
+            <ToolDefinitionsEditor
+              idPrefix="create"
+              drafts={toolDrafts}
+              onChange={setToolDrafts}
+            />
 
             {keyOptions.length > 0 && (
               <div className="flex flex-col gap-1.5">

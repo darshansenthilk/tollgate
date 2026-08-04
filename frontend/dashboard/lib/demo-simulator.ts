@@ -85,6 +85,9 @@ function seedAgents(): AgentListItem[] {
       currentMonthTokens: 0,
       currentPrompt: null,
       upstreamKeyId: null,
+      systemPrompt: null,
+      blockedTools: null,
+      toolDefinitions: null,
     },
     {
       id: "demo-research-agent",
@@ -97,6 +100,9 @@ function seedAgents(): AgentListItem[] {
       currentMonthTokens: 18_420,
       currentPrompt: null,
       upstreamKeyId: null,
+      systemPrompt: null,
+      blockedTools: null,
+      toolDefinitions: null,
     },
     {
       id: "demo-data-scraper",
@@ -109,6 +115,9 @@ function seedAgents(): AgentListItem[] {
       currentMonthTokens: 52_310,
       currentPrompt: null,
       upstreamKeyId: null,
+      systemPrompt: null,
+      blockedTools: null,
+      toolDefinitions: null,
     },
     {
       id: "demo-nightly-backfill",
@@ -121,6 +130,9 @@ function seedAgents(): AgentListItem[] {
       currentMonthTokens: 0,
       currentPrompt: null,
       upstreamKeyId: null,
+      systemPrompt: null,
+      blockedTools: null,
+      toolDefinitions: null,
     },
   ];
 }
@@ -218,6 +230,9 @@ export function useAgentSimulator(): AgentSimulator {
       status: "active",
       maxBudgetCents: input.maxBudgetCents,
       upstreamKeyId: input.upstreamKeyId ?? null,
+      systemPrompt: input.systemPrompt,
+      blockedTools: input.blockedTools,
+      toolDefinitions: input.toolDefinitions,
       token: `tg_demo_${Math.random().toString(36).slice(2, 10)}`,
     };
     setAgents((prev) => applyCreated(prev, response));
@@ -239,6 +254,12 @@ export function useAgentSimulator(): AgentSimulator {
         input.maxBudgetCents !== undefined ? input.maxBudgetCents : current.maxBudgetCents,
       upstreamKeyId:
         input.upstreamKeyId !== undefined ? input.upstreamKeyId : current.upstreamKeyId,
+      systemPrompt:
+        input.systemPrompt !== undefined ? input.systemPrompt : current.systemPrompt,
+      blockedTools:
+        input.blockedTools !== undefined ? input.blockedTools : current.blockedTools,
+      toolDefinitions:
+        input.toolDefinitions !== undefined ? input.toolDefinitions : current.toolDefinitions,
     };
     setAgents((prev) => applyUpdated(prev, updated));
     return updated;
