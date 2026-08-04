@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { ScrollText } from "lucide-react";
 import {
   Card,
@@ -20,11 +21,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { providerLabel } from "@/lib/agent-options";
 import { ActivityPromptSidebar } from "@/components/activity-prompt-sidebar";
-import { ApiError, listActivity, type ActivityEvent } from "@/lib/api";
+import {
+  ApiError,
+  getActiveDashboard,
+  listActivity,
+  type ActivityEvent,
+  type Dashboard,
+} from "@/lib/api";
 
 /**
- * Chronological log of every request an org's agents made — allowed and denied
- * alike. Denials matter most here: a frozen agent still hammering its token, or
+ * Chronological log of every request the open dashboard's agents made — allowed
+ * and denied alike. Scoped to one dashboard, like the agent table it mirrors. Denials matter most here: a frozen agent still hammering its token, or
  * one grinding against an exhausted budget, is exactly what an operator wants
  * to see, and until the proxy started recording them this panel would have
  * shown only the traffic that succeeded.
@@ -131,25 +138,90 @@ function DecisionBadge({ event }: { event: ActivityEvent }) {
 
 export function ActivityLog() {
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
+  // undefined until the first lookup lands, so the panel doesn't flash the
+  // "create a dashboard" state at someone who already has one. Same three-state
+  // convention as app/agents/page.tsx.
+  const [activeDashboard, setActiveDashboard] = useState<Dashboard | null | undefined>(
+    undefined,
+  );
   const [error, setError] = useState<string | null>(null);
   const [promptEventId, setPromptEventId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (dashboardId: string) => {
     try {
-      setEvents(await listActivity(100));
+      setEvents(await listActivity(dashboardId, 100));
       setError(null);
     } catch (err) {
+      // The gone-path, and it needs its own copy: this panel resolves the active
+      // dashboard INDEPENDENTLY (its page is a server component, so there's no
+      // client parent to fetch it), which means fixing /agents does not fix this
+      // one. Left alone it keeps displaying the deleted dashboard's full request
+      // log — agent names, models, per-request costs — indefinitely.
+      //
+      // Re-resolve rather than blank: the server has already moved this user to
+      // the oldest surviving dashboard. See app/agents/page.tsx for the full
+      // reasoning, including why setError(null) is not redundant here.
+      if (err instanceof ApiError && err.code === "dashboard_not_found") {
+        try {
+          setActiveDashboard(await getActiveDashboard());
+          setEvents(null);
+          setError(null);
+        } catch (resolveErr) {
+          setError(
+            resolveErr instanceof ApiError ? resolveErr.message : "Couldn't load activity.",
+          );
+        }
+        return;
+      }
       // A 401 already redirects inside lib/api.ts's request(); anything else
       // shows inline rather than blanking the panel.
       setError(err instanceof ApiError ? err.message : "Couldn't load activity.");
     }
   }, []);
 
+  // The feed is per-dashboard now, so this panel has to know which one is open.
+  // It resolves that itself rather than taking it as a prop: /activity is a
+  // server component rendering this single client child (the App Router shape
+  // this codebase requires), so there's no client-side parent to fetch it.
   useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => void refresh(), POLL_MS);
+    let cancelled = false;
+    let retryId: ReturnType<typeof setTimeout> | undefined;
+
+    async function lookUpActiveDashboard(): Promise<void> {
+      try {
+        const active = await getActiveDashboard();
+        if (cancelled) return;
+        setActiveDashboard(active);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        // Don't fall back to "no dashboard" — a failed lookup isn't proof of
+        // one. Retry on the poll interval so a transient api blip self-heals
+        // instead of pinning the panel on "Loading…" forever (the same trap
+        // app/agents/page.tsx documents).
+        setError(err instanceof ApiError ? err.message : "Couldn't load activity.");
+        retryId = setTimeout(() => void lookUpActiveDashboard(), POLL_MS);
+      }
+    }
+
+    void lookUpActiveDashboard();
+    return () => {
+      cancelled = true;
+      if (retryId !== undefined) clearTimeout(retryId);
+    };
+  }, []);
+
+  const activeDashboardId = activeDashboard?.id ?? null;
+
+  useEffect(() => {
+    if (activeDashboardId === null) return;
+    // Clear first, so switching dashboards can't show the previous one's
+    // requests under the new one — see the same guard in app/agents/page.tsx.
+    setEvents(null);
+    void refresh(activeDashboardId);
+    const id = window.setInterval(() => void refresh(activeDashboardId), POLL_MS);
     return () => window.clearInterval(id);
-  }, [refresh]);
+  }, [refresh, activeDashboardId]);
 
   return (
     <Card className="relative">
@@ -184,7 +256,15 @@ export function ActivityLog() {
           </p>
         )}
 
-        {events === null ? (
+        {activeDashboard === null ? (
+          <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+            No dashboard yet. Create one in{" "}
+            <Link href="/dashboards" className="text-brand hover:underline">
+              Manage Dashboards
+            </Link>{" "}
+            to start recording activity.
+          </p>
+        ) : activeDashboard === undefined || events === null ? (
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
             Loading…
           </p>

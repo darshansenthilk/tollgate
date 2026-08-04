@@ -158,8 +158,12 @@ export class ApiError extends Error {
 const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_provider_slug: "That provider isn't supported.",
   provider_slug_immutable: "An agent's assistant can't be changed after it's created.",
+  dashboard_id_immutable: "An agent can't be moved to a different dashboard.",
   agent_not_found: "That agent no longer exists.",
   dashboard_not_found: "That dashboard no longer exists.",
+  // Only reachable from a client bug — every caller sends the active dashboard's
+  // id — so it reads as "reload" rather than asking the user to supply anything.
+  dashboard_id_required: "Couldn't tell which dashboard this is. Try reloading.",
   agent_has_no_policy: "This agent has no budget policy to update.",
   invalid_body: "That request wasn't valid — check the fields and try again.",
   missing_token: "Paste the agent's token to continue.",
@@ -318,8 +322,15 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
-export function listActivity(limit = 100): Promise<ActivityEvent[]> {
-  return request<ActivityEvent[]>(`/v1/activity?limit=${limit}`);
+/**
+ * Activity for ONE dashboard. `dashboardId` is required by the api — dashboards
+ * are independent, and an org-wide feed would name agents from dashboards the
+ * caller isn't looking at.
+ */
+export function listActivity(dashboardId: string, limit = 100): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>(
+    `/v1/activity?limit=${limit}&dashboardId=${encodeURIComponent(dashboardId)}`,
+  );
 }
 
 /**
@@ -357,10 +368,6 @@ export function approveRequest(id: string): Promise<ApprovalResolution> {
  *  re-raises a new request rather than being permanently silenced. */
 export function denyRequest(id: string): Promise<ApprovalResolution> {
   return request<ApprovalResolution>(`/v1/approvals/${id}/deny`, { method: "POST" });
-}
-
-export function listAgents(): Promise<AgentListItem[]> {
-  return request<AgentListItem[]>("/v1/agents");
 }
 
 /**
@@ -429,10 +436,32 @@ export function askInstallWizard(question: string): Promise<{ answer: string }> 
   });
 }
 
-export function createAgent(input: CreateAgentInput): Promise<CreateAgentResponse> {
+/** Agents in ONE dashboard. Required, not optional: an omitted id used to mean
+ *  "every agent in the org", which is what made every dashboard show the same
+ *  list. The api rejects the call rather than falling back to that. */
+export function listAgents(dashboardId: string): Promise<AgentListItem[]> {
+  return request<AgentListItem[]>(
+    `/v1/agents?dashboardId=${encodeURIComponent(dashboardId)}`,
+  );
+}
+
+/**
+ * Creates an agent inside `dashboardId`.
+ *
+ * The dashboard is a separate argument rather than a field on CreateAgentInput
+ * because that type is also implemented by the marketing page's demo simulator
+ * (via AgentDashboardActions), which has no dashboard concept at all. Keeping it
+ * out of the input shape is what lets the shared AgentDashboard component and the
+ * demo stay untouched by this feature — /agents supplies the id by wrapping this
+ * function instead.
+ */
+export function createAgent(
+  input: CreateAgentInput,
+  dashboardId: string,
+): Promise<CreateAgentResponse> {
   return request<CreateAgentResponse>("/v1/agents", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, dashboardId }),
   });
 }
 
@@ -499,9 +528,27 @@ export interface Dashboard {
   createdAt: string;
 }
 
+/**
+ * What GET /v1/dashboards adds on top of Dashboard. Only the list route carries
+ * the counts — the api keeps them off the shared shape rather than widening
+ * every dashboard response — and the delete confirmation can't be built without
+ * them: the alternative is one listAgents() per tile, an N+1 against a
+ * 300 req/min limit with 3s polls already running.
+ */
+export interface DashboardListItem extends Dashboard {
+  /** Non-archived agents (active + pending + soft_frozen + hard_frozen). What
+   *  the confirmation shows, and `0` is what skips the confirmation entirely.
+   *  It does NOT mean the dashboard is empty in the database — agents deleted
+   *  one by one leave archived rows behind that this count excludes. */
+  agentCount: number;
+  /** The subset that can still spend. Non-zero is what escalates the copy from
+   *  "this dashboard has N agents" to "deleting revokes their tokens". */
+  liveAgentCount: number;
+}
+
 /** Every dashboard in the caller's active org, in creation order. */
-export function listDashboards(): Promise<Dashboard[]> {
-  return request<Dashboard[]>("/v1/dashboards");
+export function listDashboards(): Promise<DashboardListItem[]> {
+  return request<DashboardListItem[]>("/v1/dashboards");
 }
 
 /**
@@ -545,5 +592,38 @@ export function renameDashboard(id: string, name: string): Promise<Dashboard> {
 export function selectDashboard(id: string): Promise<Dashboard> {
   return request<Dashboard>(`/v1/dashboards/${id}/select`, {
     method: "POST",
+  });
+}
+
+/** What DELETE /v1/dashboards/:id answers with. Not a 204: request() always
+ *  calls res.json(), so an empty body would throw a SyntaxError *after* a
+ *  delete that already committed and paint "Request failed" over a success. */
+export interface DeleteDashboardResponse {
+  id: string;
+  name: string;
+  /** How many agents the delete just revoked — the ones that were still live
+   *  in it, not the ones already archived. */
+  archivedAgentCount: number;
+  /** The caller's selection AFTER the delete: the org's oldest surviving
+   *  dashboard if they had the deleted one open, whatever they already had open
+   *  if not, and null only when nothing survives. Returned so the grid can move
+   *  the active ring without a follow-up fetch. */
+  activeDashboard: Dashboard | null;
+}
+
+/**
+ * Deletes a dashboard and revokes every agent token inside it.
+ *
+ * Soft-deletes server-side (spend_events and their FK chain have to survive for
+ * billing) but nothing in the app can reach it afterwards — the id 404s from
+ * every route, including the dashboard's own agents. Body-less: the
+ * type-the-name step in the confirmation is a UI speed bump and is deliberately
+ * not sent, since dashboard names aren't unique and so prove nothing about
+ * which row was meant. A repeat delete answers 404, which callers should read
+ * as "already gone" rather than as a failure.
+ */
+export function deleteDashboard(id: string): Promise<DeleteDashboardResponse> {
+  return request<DeleteDashboardResponse>(`/v1/dashboards/${id}`, {
+    method: "DELETE",
   });
 }

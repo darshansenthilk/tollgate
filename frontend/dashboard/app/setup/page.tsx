@@ -14,9 +14,13 @@ import {
   API_URL,
   PROXY_URL,
   createAgent,
+  getActiveDashboard,
   listAgents,
   listUpstreamKeys,
   type AgentListItem,
+  type CreateAgentInput,
+  type CreateAgentResponse,
+  type Dashboard,
   type UpstreamKeysResponse,
 } from "@/lib/api";
 
@@ -81,10 +85,14 @@ export default function SetupPage() {
   const [health, setHealth] = useState<HealthProbe[] | null>(null);
   const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKeysResponse | null>(null);
   const [agents, setAgents] = useState<AgentListItem[] | null>(null);
+  // undefined until the lookup lands, null once it's confirmed there isn't
+  // one yet — same three-state convention as app/agents/page.tsx, since step
+  // 3 needs a dashboard to create the agent into.
+  const [activeDashboard, setActiveDashboard] = useState<Dashboard | null | undefined>(undefined);
 
-  const refreshAgents = useCallback(async () => {
+  const refreshAgents = useCallback(async (dashboardId: string) => {
     try {
-      setAgents(await listAgents());
+      setAgents(await listAgents(dashboardId));
     } catch {
       // Non-fatal for this page — the step just shows "checking…" rather
       // than blocking the other two, which don't depend on it.
@@ -99,8 +107,28 @@ export default function SetupPage() {
     void listUpstreamKeys()
       .then(setUpstreamKeys)
       .catch(() => undefined);
-    void refreshAgents();
-  }, [refreshAgents]);
+    void getActiveDashboard()
+      .then(setActiveDashboard)
+      .catch(() => setActiveDashboard(null));
+  }, []);
+
+  const activeDashboardId = activeDashboard?.id ?? null;
+
+  useEffect(() => {
+    if (activeDashboardId === null) return;
+    void refreshAgents(activeDashboardId);
+  }, [refreshAgents, activeDashboardId]);
+
+  /** createAgent bound to the resolved dashboard — CreateAgentDialog only
+   *  renders once activeDashboardId is confirmed non-null (see below), so the
+   *  rejection path is unreachable in practice, same as agents/page.tsx. */
+  const boundCreateAgent = useCallback(
+    (input: CreateAgentInput): Promise<CreateAgentResponse> =>
+      activeDashboardId === null
+        ? Promise.reject(new Error("No dashboard is open."))
+        : createAgent(input, activeDashboardId),
+    [activeDashboardId],
+  );
 
   const healthy = health !== null && health.every((h) => h.state === "up");
   const hasKey =
@@ -204,7 +232,15 @@ export default function SetupPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {agents === null ? (
+          {activeDashboard === null ? (
+            <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+              No dashboard yet. Create one in{" "}
+              <a href="/dashboards" className="text-brand hover:underline">
+                Manage Dashboards
+              </a>{" "}
+              first, then come back here.
+            </p>
+          ) : activeDashboard === undefined || agents === null ? (
             <p className="text-sm text-muted-foreground">Checking…</p>
           ) : hasAgent ? (
             <p className="text-sm">
@@ -216,10 +252,10 @@ export default function SetupPage() {
           ) : (
             <div className="flex items-center gap-3">
               <CreateAgentDialog
-                createAgent={createAgent}
+                createAgent={boundCreateAgent}
                 listUpstreamKeys={listUpstreamKeys}
-                existingNames={agents === null ? [] : (agents as AgentListItem[]).map((a) => a.name)}
-                onCreated={() => void refreshAgents()}
+                existingNames={agents.map((a) => a.name)}
+                onCreated={() => void refreshAgents(activeDashboard.id)}
               />
               <p className="text-sm text-muted-foreground">No agents yet.</p>
             </div>

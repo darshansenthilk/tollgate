@@ -1,6 +1,6 @@
 {
-  "id": "fdafbcff-96c0-4e00-b804-269f18f1bd18",
-  "prevId": "39a6acd6-b346-4e28-95aa-f1d3b883e03f",
+  "id": "831f885c-d726-4a69-9e4d-dd067df0b358",
+  "prevId": "4c58ef50-99b7-4e9a-9dd0-bbcf405d244c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -66,6 +66,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "dashboard_id": {
+          "name": "dashboard_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -126,11 +132,11 @@
         }
       },
       "indexes": {
-        "agents_org_name_unique_when_not_archived": {
-          "name": "agents_org_name_unique_when_not_archived",
+        "agents_dashboard_name_unique_when_not_archived": {
+          "name": "agents_dashboard_name_unique_when_not_archived",
           "columns": [
             {
-              "expression": "org_id",
+              "expression": "dashboard_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -150,6 +156,19 @@
         }
       },
       "foreignKeys": {
+        "agents_dashboard_id_dashboards_id_fk": {
+          "name": "agents_dashboard_id_dashboards_id_fk",
+          "tableFrom": "agents",
+          "tableTo": "dashboards",
+          "columnsFrom": [
+            "dashboard_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "agents_policy_id_policies_id_fk": {
           "name": "agents_policy_id_policies_id_fk",
           "tableFrom": "agents",
@@ -219,6 +238,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -396,6 +421,12 @@
         "system_prompt": {
           "name": "system_prompt",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tool_definitions": {
+          "name": "tool_definitions",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

@@ -89,7 +89,7 @@ await app.register(async (scope) => {
   // "draft" to something an id could collide with would.
   registerAgentDraftRoutes(scope);
   registerSuggestionRoutes(scope);
-  registerDashboardRoutes(scope);
+  registerDashboardRoutes(scope, redis);
 });
 
 async function main() {

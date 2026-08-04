@@ -1,2 +1,0 @@
-CREATE INDEX "spend_events_agent_created_idx" ON "spend_events" USING btree ("agent_id","created_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "spend_events_created_idx" ON "spend_events" USING btree ("created_at" DESC NULLS LAST);

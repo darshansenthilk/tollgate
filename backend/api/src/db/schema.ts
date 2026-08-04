@@ -121,9 +121,45 @@ export const agents = pgTable(
   {
     id: uuid("id").primaryKey(),
     orgId: text("org_id").notNull(),
-    /** Unique per org among non-archived agents only — see the partial index
-     *  below. DELETE /v1/agents/:id archives rather than hard-deletes, so a
-     *  deleted agent's old name must be free to reuse. */
+    /**
+     * Which dashboard this agent lives in. Dashboards are independent of one
+     * another: an agent belongs to exactly one, and every read path filters on
+     * this so adding an agent to one dashboard doesn't change any other.
+     *
+     * A real FK (both sides are app-owned tables), deliberately with NO cascade
+     * and no `onDelete` at all — the default NO ACTION means Postgres REFUSES to
+     * hard-delete a dashboard that still has agents. Cascading would silently
+     * destroy live, spendable agent tokens; blocking is the recoverable default.
+     *
+     * DELETING A DASHBOARD IS NOW BUILT, and it picked the policy this comment
+     * used to leave open: DELETE /v1/dashboards/:id SOFT-deletes the dashboard
+     * (dashboards.archived_at) and ARCHIVES every agent in it, revoking their
+     * tokens in both mechanisms (status='archived' + the Redis freeze key). Soft
+     * rather than hard because this FK — plus spend_events.agent_id — means a
+     * real DELETE would have to destroy billing history to succeed.
+     *
+     * The cost of that choice, and the reason routes/agents.ts guards what it
+     * guards: A SOFT DELETE FORFEITS THIS FK'S PROTECTION. `UPDATE dashboards
+     * SET archived_at` doesn't touch the primary key, so it takes FOR NO KEY
+     * UPDATE, which does NOT conflict with the FOR KEY SHARE a child insert's FK
+     * check takes — both statements simply succeed. The parent row always
+     * exists, so the FK is reduced to checking something that is now always
+     * true. Every protection this FK used to give has to be rebuilt in the
+     * application: see findAgent's dashboard join (routes/agents.ts) and POST
+     * /v1/agents' conditional INSERT … WHERE EXISTS.
+     *
+     * NOT NULL, so an agent can never be orphaned into invisibility: a row this
+     * filter can't match would vanish from every dashboard while its token still
+     * worked at the proxy. Redundant with orgId (a dashboard already carries an
+     * org), which is intentional — org scoping stays the isolation boundary and
+     * is checked independently, so a bug here can't become a cross-account leak.
+     */
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    /** Unique per DASHBOARD among non-archived agents only — see the partial
+     *  index below. DELETE /v1/agents/:id archives rather than hard-deletes, so
+     *  a deleted agent's old name must be free to reuse. */
     name: text("name").notNull(),
     /** Descriptive only — see @tollgate/shared Agent.providerSlug doc comment. */
     providerSlug: text("provider_slug").notNull(),
@@ -152,11 +188,17 @@ export const agents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // Partial unique index: a name is unique PER ORG among agents that AREN'T
-    // archived. Scoped by org so two accounts can each have a "checkout-bot";
-    // scoped to non-archived so a soft-deleted agent's name frees up for reuse.
-    uniqueIndex("agents_org_name_unique_when_not_archived")
-      .on(table.orgId, table.name)
+    // Partial unique index: a name is unique PER DASHBOARD among agents that
+    // AREN'T archived. Scoped to non-archived so a soft-deleted agent's name
+    // frees up for reuse.
+    //
+    // This was (org_id, name) until dashboards became independent. Per-dashboard
+    // is the weaker constraint and it's the point of the feature: two dashboards
+    // in the same org can each have a "support-bot" without knowing about each
+    // other. Cross-ORG uniqueness is not lost by weakening it — a dashboard
+    // belongs to exactly one org, so distinct dashboards never span orgs.
+    uniqueIndex("agents_dashboard_name_unique_when_not_archived")
+      .on(table.dashboardId, table.name)
       .where(sql`${table.status} != 'archived'`),
   ],
 );
@@ -373,6 +415,24 @@ export const dashboards = pgTable("dashboards", {
    *  dashboard names are allowed for now. */
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Soft delete. Null means live; a timestamp means DELETE /v1/dashboards/:id
+   * swept it and every route must behave as though the row is gone.
+   *
+   * Soft rather than hard because it isn't a choice: agents.dashboard_id is NOT
+   * NULL with no ON DELETE action, so Postgres refuses to delete a dashboard
+   * owning any agent row (archived ones included), and spend_events.agent_id
+   * blocks hard-deleting those agents in turn. A hard delete would mean
+   * destroying billing history. The rule the whole feature is built to keep is
+   * "a soft delete for billing history, but it looks like an actual deletion to
+   * the user" — so nothing above this table may read, write, or resurrect an
+   * archived dashboard or its agents.
+   *
+   * Nullable and never enforced by the column, so a manual
+   * `UPDATE dashboards SET archived_at = NULL` un-deletes one. There is
+   * deliberately no UI for that.
+   */
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
 });
 
 export const activeDashboards = pgTable("active_dashboards", {
@@ -380,7 +440,15 @@ export const activeDashboards = pgTable("active_dashboards", {
    *  auth-managed `user` table — same decoupling as org_id above. */
   userId: text("user_id").primaryKey(),
   /** A real FK here (both sides are app-owned tables): cascading the delete
-   *  keeps a selection from outliving the dashboard it points at. */
+   *  keeps a selection from outliving the dashboard it points at.
+   *
+   *  THE CASCADE DOES NOT FIRE FOR A SOFT DELETE. `dashboards.archived_at` is an
+   *  UPDATE, not a DELETE, so a swept dashboard leaves every selection row
+   *  pointing at it. DELETE /v1/dashboards/:id therefore resolves these rows
+   *  itself — re-pointing every user holding the deleted dashboard at the org's
+   *  oldest survivor, and only deleting the rows when nothing survives. Every
+   *  read of this table also has to filter on `dashboards.archived_at IS NULL`,
+   *  or the app keeps acting like the dead dashboard is open. */
   dashboardId: uuid("dashboard_id")
     .notNull()
     .references(() => dashboards.id, { onDelete: "cascade" }),
