@@ -1,4 +1,4 @@
-import type { AgentStatus, DashboardMemberRole } from "@tollgate/shared";
+import type { AgentStatus, DashboardMemberRole, DashboardPermissionAction } from "@tollgate/shared";
 import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -153,6 +153,9 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   dashboard_member_user_not_found: "No Tollgate account found with that email.",
   dashboard_member_is_host: "You cannot add your own account to a dashboard.",
   dashboard_member_not_found: "That person no longer has access to this dashboard.",
+  dashboard_host_required: "Only this dashboard's host can do that.",
+  invalid_dashboard_member_role: "That's not a role this dashboard recognizes.",
+  dashboard_permission_denied: "Your role on this dashboard doesn't allow that.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -588,4 +591,50 @@ export function removeDashboardMember(
  *  PLAN.md's D1. */
 export function listSharedDashboards(): Promise<DashboardListItem[]> {
   return request<DashboardListItem[]>("/v1/dashboards/shared");
+}
+
+/** What GET/PATCH /v1/dashboards/:id/permissions/:role answer with — every
+ *  gated action's current on/off state for that role on that dashboard. */
+export interface DashboardRolePermissions {
+  role: DashboardMemberRole;
+  permissions: Record<DashboardPermissionAction, boolean>;
+}
+
+/** Host-only: the role-permission delegation popup's data source. */
+export function getDashboardRolePermissions(
+  dashboardId: string,
+  role: DashboardMemberRole,
+): Promise<DashboardRolePermissions> {
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`);
+}
+
+/**
+ * Host-only: flips one or more of a role's action toggles in a single call.
+ * Only the changed keys need to be sent — the api leaves any action not
+ * present in `permissions` untouched. Returns the full resulting toggle set,
+ * same shape as getDashboardRolePermissions, so the popup can just replace
+ * its local state with the response.
+ */
+export function setDashboardRolePermissions(
+  dashboardId: string,
+  role: DashboardMemberRole,
+  permissions: Partial<Record<DashboardPermissionAction, boolean>>,
+): Promise<DashboardRolePermissions> {
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`, {
+    method: "PATCH",
+    body: JSON.stringify({ permissions }),
+  });
+}
+
+/**
+ * The caller's OWN standing on this dashboard — unlike
+ * getDashboardRolePermissions above, not host-only: anyone who can reach the
+ * dashboard can ask what they personally may do on it. Lets the dashboard
+ * hide/disable actions a restricted Observer's role doesn't currently allow,
+ * rather than only relying on the 403 from actually trying.
+ */
+export function getMyDashboardPermissions(
+  dashboardId: string,
+): Promise<{ permissions: Record<DashboardPermissionAction, boolean> }> {
+  return request(`/v1/dashboards/${dashboardId}/my-permissions`);
 }

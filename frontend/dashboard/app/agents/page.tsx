@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, DashboardPermissionAction } from "@tollgate/shared";
 import { AgentDashboard } from "@/components/agent-dashboard";
 import {
   applyCreated,
@@ -17,11 +17,14 @@ import {
   deleteAgent,
   freezeAgent,
   getActiveDashboard,
+  getDashboardRolePermissions,
+  getMyDashboardPermissions,
   listAgents,
   listDashboardMembers,
   listUpstreamKeys,
   removeDashboardMember,
   renameDashboard,
+  setDashboardRolePermissions,
   unfreezeAgent,
   updateAgent,
   updateDashboardMemberRole,
@@ -52,6 +55,12 @@ export default function AgentsPage() {
     undefined,
   );
   const [error, setError] = useState<string | null>(null);
+  // undefined (not yet fetched) reads as "unrestricted" below, same fail-open
+  // stance AgentDashboard's own `myPermissions` doc comment explains — the api
+  // is the actual security boundary, this is only ever a UI nicety.
+  const [myPermissions, setMyPermissions] = useState<
+    Record<DashboardPermissionAction, boolean> | undefined
+  >(undefined);
 
   const refresh = useCallback(async (dashboardId: string) => {
     try {
@@ -144,6 +153,30 @@ export default function AgentsPage() {
     // for the same dashboard, and that shouldn't blank the table and refetch.
   }, [refresh, activeDashboardId]);
 
+  useEffect(() => {
+    if (activeDashboardId === null) {
+      setMyPermissions(undefined);
+      return;
+    }
+    // One fetch per dashboard selection, not polled like agents above — a
+    // host toggling permissions live while a restricted viewer's tab is open
+    // is a rare edge the 3s agent poll doesn't need to cover for this UI-only
+    // nicety (the api enforces the current state regardless of what this
+    // shows).
+    let cancelled = false;
+    void getMyDashboardPermissions(activeDashboardId)
+      .then((res) => {
+        if (!cancelled) setMyPermissions(res.permissions);
+      })
+      .catch(() => {
+        // Leave it undefined (fail-open) on error — see the state's own doc
+        // comment for why that's the safe default here.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDashboardId]);
+
   /** createAgent bound to the dashboard on screen, so a new agent lands where
    *  the user is looking rather than wherever server-side selection state
    *  happens to point. Memoized on the id so AgentDashboard isn't handed a new
@@ -225,6 +258,15 @@ export default function AgentsPage() {
           removeDashboardMember={(userId) =>
             removeDashboardMember(activeDashboard.id, userId).then(() => undefined)
           }
+          // Same inline-closure-over-the-narrowed-dashboard pattern as
+          // renameDashboard/listDashboardMembers above.
+          getDashboardRolePermissions={(role) =>
+            getDashboardRolePermissions(activeDashboard.id, role)
+          }
+          setDashboardRolePermissions={(role, permissions) =>
+            setDashboardRolePermissions(activeDashboard.id, role, permissions)
+          }
+          myPermissions={myPermissions}
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

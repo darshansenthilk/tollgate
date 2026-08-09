@@ -647,6 +647,34 @@ export const DASHBOARD_MEMBER_ROLE_RANK: Record<DashboardMemberRole, number> = {
   admin: 4,
 };
 
+/**
+ * The 6 dashboard actions a host can delegate to a role, one on/off toggle
+ * each (PLAN.md's "role-permission delegation"). Deliberately NOT exhaustive
+ * over every mutation the api exposes — removing a member, deleting/renaming
+ * the dashboard, and delegating permissions itself stay host-only and are
+ * never shown as a toggle (see PLAN.md's "Action inventory" for why each one
+ * was left out).
+ */
+export type DashboardPermissionAction =
+  | "createAgent"
+  | "updateAgent"
+  | "freezeAgent"
+  | "unfreezeAgent"
+  | "deleteAgent"
+  | "addDashboardMember";
+
+/** Exhaustive over DashboardPermissionAction, in the toggle list's display
+ *  order — both the api's request validation and the popup's rendering walk
+ *  this array rather than each keeping its own hand-typed copy. */
+export const DASHBOARD_PERMISSION_ACTIONS: readonly DashboardPermissionAction[] = [
+  "createAgent",
+  "updateAgent",
+  "freezeAgent",
+  "unfreezeAgent",
+  "deleteAgent",
+  "addDashboardMember",
+];
+
 /** One governed request — the immutable audit-log unit. */
 export interface SpendEvent {
   id: string;

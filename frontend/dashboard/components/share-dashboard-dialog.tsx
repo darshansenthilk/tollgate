@@ -73,6 +73,15 @@ interface ShareDashboardDialogProps {
    * rather than one that would 403 on every click.
    */
   removeDashboardMember?: (userId: string) => Promise<void>;
+  /**
+   * The viewer's own standing on inviting new members (AgentDashboard's
+   * myPermissions) — default true so the host (and every caller that hasn't
+   * wired myPermissions through) keeps today's behaviour. A restricted
+   * Observer sees the member list but not the add-by-email form; the api
+   * enforces this regardless, this only avoids a 403 after a submit that was
+   * never going to work.
+   */
+  canAddMember?: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -83,6 +92,7 @@ export function ShareDashboardDialog({
   addDashboardMember,
   updateDashboardMemberRole,
   removeDashboardMember,
+  canAddMember = true,
   onOpenChange,
 }: ShareDashboardDialogProps) {
   // Whichever row's email matches the viewer's own gets the "(You)" tag below
@@ -320,27 +330,29 @@ export function ShareDashboardDialog({
           )}
         </div>
 
-        <form onSubmit={handleAdd} className="flex flex-col gap-2">
-          <Label htmlFor="share-dashboard-email">Add someone by email</Label>
-          <div className="flex gap-2">
-            <Input
-              id="share-dashboard-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="teammate@example.com"
-              className="min-w-0 flex-1"
-            />
-            <Button type="submit" disabled={adding || email.trim() === ""}>
-              {adding ? "Adding…" : "Add"}
-            </Button>
-          </div>
-          {addError !== null && (
-            <p className="text-sm" style={{ color: "var(--err)" }}>
-              {addError}
-            </p>
-          )}
-        </form>
+        {canAddMember && (
+          <form onSubmit={handleAdd} className="flex flex-col gap-2">
+            <Label htmlFor="share-dashboard-email">Add someone by email</Label>
+            <div className="flex gap-2">
+              <Input
+                id="share-dashboard-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="teammate@example.com"
+                className="min-w-0 flex-1"
+              />
+              <Button type="submit" disabled={adding || email.trim() === ""}>
+                {adding ? "Adding…" : "Add"}
+              </Button>
+            </div>
+            {addError !== null && (
+              <p className="text-sm" style={{ color: "var(--err)" }}>
+                {addError}
+              </p>
+            )}
+          </form>
+        )}
       </DialogContent>
 
       {/* A React CHILD of the outer Dialog (not a portalled grandchild, and

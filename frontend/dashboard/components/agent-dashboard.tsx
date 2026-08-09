@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { Bot, Pencil, Plug, Users } from "lucide-react";
-import type { AgentStatus, DashboardMemberRole } from "@tollgate/shared";
+import { Bot, HardHat, Pencil, Plug, Users } from "lucide-react";
+import type { AgentStatus, DashboardMemberRole, DashboardPermissionAction } from "@tollgate/shared";
 import {
   Card,
   CardAction,
@@ -36,6 +36,7 @@ import { EditAgentDialog } from "@/components/edit-agent-dialog";
 import { AgentIntegrationDialog } from "@/components/agent-integration-dialog";
 import { RenameDashboardDialog } from "@/components/rename-dashboard-dialog";
 import { ShareDashboardDialog } from "@/components/share-dashboard-dialog";
+import { SharePermissionsDialog } from "@/components/share-permissions-dialog";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { AgentPromptSidebar } from "@/components/agent-prompt-sidebar";
 import { AgentAttentionAlerts } from "@/components/agent-attention-alerts";
@@ -49,6 +50,7 @@ import type {
   CreateAgentResponse,
   DashboardMember,
   DashboardMembersResponse,
+  DashboardRolePermissions,
   UpdateAgentInput,
   UpdateAgentResponse,
   UpdateDashboardMemberRoleResponse,
@@ -165,6 +167,28 @@ interface AgentDashboardProps {
   /** Host-only member removal — same optional/paired-with-sharing gating as
    *  updateDashboardMemberRole above. Undefined for the marketing demo. */
   removeDashboardMember?: (userId: string) => Promise<void>;
+  /**
+   * The role-permission delegation popup (the HardHat button). Both optional
+   * and both required together, same gating style as the sharing props above
+   * — undefined for the marketing demo, which has no dashboard to delegate
+   * permissions on.
+   */
+  getDashboardRolePermissions?: (role: DashboardMemberRole) => Promise<DashboardRolePermissions>;
+  setDashboardRolePermissions?: (
+    role: DashboardMemberRole,
+    permissions: Partial<Record<DashboardPermissionAction, boolean>>,
+  ) => Promise<DashboardRolePermissions>;
+  /**
+   * The viewer's OWN standing on the 6 gated actions (GET .../my-permissions),
+   * so restricted actions can be hidden/disabled instead of only failing with
+   * a 403 after the click — PLAN.md's frontend work. Undefined (not just an
+   * all-false object) means "not known yet, or not applicable" — the
+   * marketing demo never supplies it, and the real page hasn't necessarily
+   * resolved it on first paint — and is treated as fully permitted rather
+   * than fully restricted: the api is the actual enforcement boundary, so
+   * fail-open here is a UI nicety, not a security decision.
+   */
+  myPermissions?: Record<DashboardPermissionAction, boolean>;
 }
 
 /**
@@ -189,9 +213,21 @@ export function AgentDashboard({
   addDashboardMember,
   updateDashboardMemberRole,
   removeDashboardMember,
+  getDashboardRolePermissions,
+  setDashboardRolePermissions,
+  myPermissions,
 }: AgentDashboardProps) {
   const [renamingDashboard, setRenamingDashboard] = useState(false);
   const [sharingDashboard, setSharingDashboard] = useState(false);
+  const [managingPermissions, setManagingPermissions] = useState(false);
+  // Fail-open per myPermissions' own doc comment — an absent flag (undefined
+  // object, or a key that hasn't loaded) reads as "allowed".
+  const canCreateAgent = myPermissions?.createAgent ?? true;
+  const canUpdateAgent = myPermissions?.updateAgent ?? true;
+  const canFreezeAgent = myPermissions?.freezeAgent ?? true;
+  const canUnfreezeAgent = myPermissions?.unfreezeAgent ?? true;
+  const canDeleteAgent = myPermissions?.deleteAgent ?? true;
+  const canAddDashboardMember = myPermissions?.addDashboardMember ?? true;
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -279,12 +315,17 @@ export function AgentDashboard({
             between, the header row was still tight enough for the two
             buttons to crowd the title rather than breaking cleanly. */}
         <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center">
-          <CreateAgentDialog
-            createAgent={actions.createAgent}
-            listUpstreamKeys={actions.listUpstreamKeys}
-            onCreated={onCreated}
-            existingNames={agents.map((a) => a.name)}
-          />
+          {/* Hidden rather than disabled — canCreateAgent's own doc comment
+              (myPermissions) explains why a restricted Observer's create
+              affordance disappears instead of 403ing on click. */}
+          {canCreateAgent && (
+            <CreateAgentDialog
+              createAgent={actions.createAgent}
+              listUpstreamKeys={actions.listUpstreamKeys}
+              onCreated={onCreated}
+              existingNames={agents.map((a) => a.name)}
+            />
+          )}
           <Button
             type="button"
             variant={selectionMode ? "outline" : "amberOutline"}
@@ -350,20 +391,40 @@ export function AgentDashboard({
           </div>
           {/* CardAction pins to CardHeader's top-right corner (its own
               has-data-[slot=card-action] grid rule) — the same slot the
-              decorative chip used to occupy on the left, now a real button.
-              Rendered only when both share actions are supplied, same gating
-              style as the rename button above. */}
-          {listDashboardMembers !== undefined && addDashboardMember !== undefined && (
+              decorative chip used to occupy on the left, now a pair of real
+              buttons. CardAction wraps a single child, so the flex wrapper
+              below holds both — same pattern as the title+rename-pencil pair
+              above. Each button is rendered only when its own actions are
+              supplied, so either can be present without the other. */}
+          {((getDashboardRolePermissions !== undefined &&
+            setDashboardRolePermissions !== undefined) ||
+            (listDashboardMembers !== undefined && addDashboardMember !== undefined)) && (
             <CardAction>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-lg"
-                aria-label={`Manage who has access to ${dashboardName}`}
-                onClick={() => setSharingDashboard(true)}
-              >
-                <Users className="size-4" style={{ color: "var(--muted-foreground)" }} />
-              </Button>
+              <div className="flex items-center gap-2">
+                {getDashboardRolePermissions !== undefined &&
+                  setDashboardRolePermissions !== undefined && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-lg"
+                      aria-label={`Manage role permissions for ${dashboardName}`}
+                      onClick={() => setManagingPermissions(true)}
+                    >
+                      <HardHat className="size-4" style={{ color: "var(--muted-foreground)" }} />
+                    </Button>
+                  )}
+                {listDashboardMembers !== undefined && addDashboardMember !== undefined && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-lg"
+                    aria-label={`Manage who has access to ${dashboardName}`}
+                    onClick={() => setSharingDashboard(true)}
+                  >
+                    <Users className="size-4" style={{ color: "var(--muted-foreground)" }} />
+                  </Button>
+                )}
+              </div>
             </CardAction>
           )}
         </CardHeader>
@@ -398,6 +459,9 @@ export function AgentDashboard({
               freezeAgent={actions.freezeAgent}
               unfreezeAgent={actions.unfreezeAgent}
               deleteAgent={actions.deleteAgent}
+              canFreeze={canFreezeAgent}
+              canUnfreeze={canUnfreezeAgent}
+              canDelete={canDeleteAgent}
               onDeleted={handleBatchDeleted}
               onStatusChange={onStatusChange}
               onCompleted={exitSelectionMode}
@@ -568,18 +632,20 @@ export function AgentDashboard({
                             >
                               <Plug className="size-3.5" strokeWidth={1.75} />
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon-sm"
-                              aria-label={`Edit ${agent.name}`}
-                              onClick={() => setEditingAgentId(agent.id)}
-                            >
-                              <Pencil
-                                className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
-                                strokeWidth={1.75}
-                              />
-                            </Button>
+                            {canUpdateAgent && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon-sm"
+                                aria-label={`Edit ${agent.name}`}
+                                onClick={() => setEditingAgentId(agent.id)}
+                              >
+                                <Pencil
+                                  className="size-3.5 group-hover/button:animate-pen-shake motion-reduce:animate-none"
+                                  strokeWidth={1.75}
+                                />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -603,6 +669,8 @@ export function AgentDashboard({
         agents={agents}
         freezeAgent={actions.freezeAgent}
         unfreezeAgent={actions.unfreezeAgent}
+        canFreeze={canFreezeAgent}
+        canUnfreeze={canUnfreezeAgent}
         onStatusChange={onStatusChange}
         variant={attentionAlertsPosition}
       />
@@ -645,7 +713,18 @@ export function AgentDashboard({
           addDashboardMember={addDashboardMember}
           updateDashboardMemberRole={updateDashboardMemberRole}
           removeDashboardMember={removeDashboardMember}
+          canAddMember={canAddDashboardMember}
           onOpenChange={setSharingDashboard}
+        />
+      )}
+
+      {getDashboardRolePermissions !== undefined && setDashboardRolePermissions !== undefined && (
+        <SharePermissionsDialog
+          open={managingPermissions}
+          dashboardName={dashboardName}
+          getDashboardRolePermissions={getDashboardRolePermissions}
+          setDashboardRolePermissions={setDashboardRolePermissions}
+          onOpenChange={setManagingPermissions}
         />
       )}
     </>

@@ -2,13 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { DASHBOARD_MEMBER_ROLE_RANK, freezeKey, type DashboardMemberRole } from "@tollgate/shared";
+import {
+  DASHBOARD_MEMBER_ROLE_RANK,
+  DASHBOARD_PERMISSION_ACTIONS,
+  freezeKey,
+  type DashboardMemberRole,
+  type DashboardPermissionAction,
+} from "@tollgate/shared";
 import { db } from "../db/client.js";
-import { activeDashboards, agents, dashboardMembers, dashboards } from "../db/schema.js";
+import { activeDashboards, agents, dashboardMembers, dashboardRolePermissions, dashboards } from "../db/schema.js";
 // The shape guard this file used to define locally, now shared with
 // routes/agents.ts and routes/activity.ts — see lib/dashboard-scope.ts for why a
 // malformed uuid has to be screened before it reaches Postgres.
 import { dashboardAccessible, resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
+import { canPerformDashboardAction, fetchRolePermissions } from "../lib/dashboard-permissions.js";
 import { auth } from "../lib/auth.js";
 
 /**
@@ -95,6 +102,33 @@ function isDashboardMemberRole(value: unknown): value is DashboardMemberRole {
     typeof value === "string" &&
     Object.prototype.hasOwnProperty.call(DASHBOARD_MEMBER_ROLE_RANK, value)
   );
+}
+
+/** DASHBOARD_PERMISSION_ACTIONS is exactly the 6 gated actions — reusing it
+ *  here means the wire-validation set can't drift from @tollgate/shared's own
+ *  list, same reasoning as isDashboardMemberRole above. */
+function isDashboardPermissionAction(value: unknown): value is DashboardPermissionAction {
+  return typeof value === "string" && (DASHBOARD_PERMISSION_ACTIONS as readonly string[]).includes(value);
+}
+
+type PermissionsParseResult =
+  | { ok: true; permissions: Partial<Record<DashboardPermissionAction, boolean>> }
+  | { ok: false };
+
+/** Accepts a partial toggle set ({ permissions: { createAgent: true, ... } })
+ *  so the popup can save a single flipped switch without resending all 6. */
+function parsePermissionsBody(body: unknown): PermissionsParseResult {
+  if (typeof body !== "object" || body === null) return { ok: false };
+  const raw = (body as Record<string, unknown>)["permissions"];
+  if (typeof raw !== "object" || raw === null) return { ok: false };
+
+  const out: Partial<Record<DashboardPermissionAction, boolean>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isDashboardPermissionAction(key) || typeof value !== "boolean") return { ok: false };
+    out[key] = value;
+  }
+  if (Object.keys(out).length === 0) return { ok: false };
+  return { ok: true, permissions: out };
 }
 
 /** A member/host entry in the share dialog's list. */
@@ -650,6 +684,27 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         return { error: scope.error };
       }
 
+      // The 6th gated action (PLAN.md) — a cross-org member with
+      // addDashboardMember switched off on their role can't invite anyone
+      // else in. scope.orgId is the dashboard's own org; a same-org caller
+      // (the host or their org-mate) always bypasses, matching the full
+      // parity this route already gave them before per-role gating existed.
+      if (
+        !(await canPerformDashboardAction(
+          scope.dashboardId,
+          scope.orgId,
+          orgId,
+          req.authUser!.id,
+          "addDashboardMember",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow adding members to this dashboard.",
+        };
+      }
+
       const body =
         typeof req.body === "object" && req.body !== null
           ? (req.body as Record<string, unknown>)
@@ -805,6 +860,119 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
   );
 
   /**
+   * The role-permission delegation popup's data source — host-only, same
+   * resolveDashboardId -> createdBy === caller gate as the role/removal
+   * routes above. Accepts any DashboardMemberRole, not just Observer — the
+   * dropdown only offers Observer this round (PLAN.md's scope), but there's
+   * no reason to reject Helper/Manager/Moderator/Admin at the api layer just
+   * because the UI doesn't expose them yet.
+   */
+  app.get<{ Params: { id: string; role: string } }>(
+    "/v1/dashboards/:id/permissions/:role",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can view role permissions.",
+        };
+      }
+
+      if (!isDashboardMemberRole(req.params.role)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const permissions = await fetchRolePermissions(scope.dashboardId, req.params.role);
+      return { role: req.params.role, permissions };
+    },
+  );
+
+  /**
+   * Sets one or more of a role's 6 action toggles in a single call — the
+   * delegation popup's save. Same host-only gate and any-role acceptance as
+   * the GET above; the host check runs before the role/body are even parsed
+   * so an unauthorized caller learns nothing about whether their payload
+   * would otherwise have been valid, same ordering as the role-PATCH route.
+   */
+  app.patch<{ Params: { id: string; role: string }; Body: unknown }>(
+    "/v1/dashboards/:id/permissions/:role",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can change role permissions.",
+        };
+      }
+
+      if (!isDashboardMemberRole(req.params.role)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const parsed = parsePermissionsBody(req.body);
+      if (!parsed.ok) {
+        reply.code(400);
+        return { error: "invalid_body" };
+      }
+
+      const role = req.params.role;
+      // Each (dashboardId, role, action) upsert targets a distinct row, so
+      // these can run concurrently rather than as a sequential round trip per
+      // toggle — at most 6 of them, and none conflicts with another.
+      await Promise.all(
+        Object.entries(parsed.permissions).map(([action, enabled]) =>
+          db
+            .insert(dashboardRolePermissions)
+            .values({ dashboardId: scope.dashboardId, role, action: action as DashboardPermissionAction, enabled })
+            .onConflictDoUpdate({
+              target: [
+                dashboardRolePermissions.dashboardId,
+                dashboardRolePermissions.role,
+                dashboardRolePermissions.action,
+              ],
+              set: { enabled },
+            }),
+        ),
+      );
+
+      const permissions = await fetchRolePermissions(scope.dashboardId, role);
+      return { role, permissions };
+    },
+  );
+
+  /**
    * Removes a member's access — host-only, same gate as the role PATCH above
    * (resolveDashboardId for scope/404, then createdBy === caller for 403,
    * before any further logic — see that route's doc comment for why the
@@ -863,6 +1031,42 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       return { userId: req.params.userId };
     },
   );
+
+  /**
+   * "What can I personally do here" — deliberately NOT host-gated, unlike GET
+   * .../permissions/:role above (which reveals a specific ROLE's full
+   * configuration and stays reserved for the host managing it). Any caller who
+   * can already reach this dashboard is entitled to know their own standing on
+   * it; this is what lets the frontend hide/disable actions a restricted
+   * Observer's role doesn't currently allow, rather than only relying on the
+   * 403 from actually trying (PLAN.md's frontend work).
+   */
+  app.get<{ Params: { id: string } }>("/v1/dashboards/:id/my-permissions", async (req, reply) => {
+    const orgId = req.activeOrgId!;
+    const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
+    const entries = await Promise.all(
+      DASHBOARD_PERMISSION_ACTIONS.map(
+        async (action) =>
+          [
+            action,
+            await canPerformDashboardAction(
+              scope.dashboardId,
+              scope.orgId,
+              orgId,
+              req.authUser!.id,
+              action,
+            ),
+          ] as const,
+      ),
+    );
+
+    return { permissions: Object.fromEntries(entries) as Record<DashboardPermissionAction, boolean> };
+  });
 
   /**
    * Dashboards shared WITH the caller — the data source for /dashboards/shared

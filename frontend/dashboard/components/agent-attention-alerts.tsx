@@ -31,6 +31,11 @@ interface AgentAttentionAlertsProps {
    *  batch-stop-dialog.tsx's prop docs for why these are injected. */
   freezeAgent: (id: string, mode: "soft" | "hard") => Promise<AgentMutationResponse>;
   unfreezeAgent: (id: string) => Promise<AgentMutationResponse>;
+  /** The viewer's own standing on these 2 actions (AgentDashboard's
+   *  myPermissions) — default true so every other caller keeps today's
+   *  behaviour untouched. */
+  canFreeze?: boolean;
+  canUnfreeze?: boolean;
   onStatusChange: (id: string, status: AgentStatus) => void;
   /** "fixed" (default) pins to the real viewport's top-right corner — right
    *  for the real dashboard. The marketing page's demo replica passes
@@ -53,6 +58,8 @@ export function AgentAttentionAlerts({
   agents,
   freezeAgent,
   unfreezeAgent,
+  canFreeze = true,
+  canUnfreeze = true,
   onStatusChange,
   variant = "fixed",
 }: AgentAttentionAlertsProps) {
@@ -224,6 +231,7 @@ export function AgentAttentionAlerts({
                       agents={[{ id: agent.id, name: agent.name }]}
                       freezeAgent={freezeAgent}
                       unfreezeAgent={unfreezeAgent}
+                      disabled={!canUnfreeze}
                       onStatusChange={onStatusChange}
                     />
                   ) : (
@@ -233,6 +241,7 @@ export function AgentAttentionAlerts({
                         agents={[{ id: agent.id, name: agent.name }]}
                         freezeAgent={freezeAgent}
                         unfreezeAgent={unfreezeAgent}
+                        disabled={!canFreeze}
                         onStatusChange={onStatusChange}
                       />
                       <Button type="button" variant="ghost" size="sm" onClick={() => dismiss(alert.id)}>

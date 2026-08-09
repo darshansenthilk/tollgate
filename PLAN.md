@@ -1,85 +1,113 @@
-# PLAN.md — Verify dashboard member removal in-browser
+# PLAN.md
 
-Branch: `Eshaan-feature-permissions`.
+## What shipped this round (uncommitted, on `Eshaan-feature-permissions`)
 
-## Shipped: remove a member from a dashboard, host-only (uncommitted — HEAD still `c6bdde0`)
+The full role-permission-delegation feature (HardHat button + popup, from last round's plan) is
+implemented end-to-end and verified by typecheck + curl, but **not yet browser-checked and not yet
+committed**.
 
-- Backend: `DELETE /v1/dashboards/:id/members/:userId` in `backend/api/src/routes/dashboards.ts`,
-  mirroring the existing PATCH role route's auth flow: `resolveDashboardId` (scope/404) →
-  `createdBy === caller` (403 `dashboard_host_required`) → hard `db.delete(dashboardMembers)` → 404
-  `dashboard_member_not_found` if nothing matched. `dashboard_members` has no FK from any other table, so
-  the hard delete is safe and re-adding (existing POST, unchanged) inserts a genuinely fresh row.
-- Frontend: `removeDashboardMember` added to `lib/api.ts` (returns a named
-  `RemoveDashboardMemberResponse`, matching sibling response-type conventions) and threaded as an optional
-  prop through `agent-dashboard.tsx` → `app/agents/page.tsx`, same pattern as `updateDashboardMemberRole`.
-  `share-dashboard-dialog.tsx`: host-only muted "x" per member row (hover → `var(--err)`) → confirm dialog
-  ("Are you sure you want to delete this user from the dashboard?") → on confirm, calls the endpoint and
-  drops the row from local `members` state (no refetch).
-- Verified: typecheck (api + dashboard, clean); a full curl matrix (host success; non-host member → 403;
-  outsider → 404 `dashboard_not_found`; nonexistent member id → 404; repeat-delete → 404); and the
-  add→promote-to-admin→remove→re-add sequence confirming role resets to `observer`.
-- A `/code-review`-style multi-agent pass (3 independent lenses: auth-gate correctness,
-  codebase-consistency, frontend/React correctness — each finding adversarially re-verified by a separate
-  agent) caught and fixed 4 issues before commit-readiness:
-  1. The confirm dialog was originally a React **sibling** of the share dialog rather than nested inside
-     it — Base UI's dialog stacking (topmost-dialog / Escape-key handling) is tracked via parent React
-     context, which siblings don't share, so Escape would have closed both dialogs at once. Fixed by
-     nesting the confirm `<Dialog>` as a child of the outer `<Dialog>`.
-  2. Stale `removeError` could bleed onto a *different* member's confirm dialog after a prior failure —
-     now cleared wherever the confirm dialog opens or closes.
-  3. The confirm dialog's built-in Escape/outside-click/corner-✕ weren't gated on the in-flight request the
-     way the Cancel/Remove footer buttons already were — could abandon a request mid-flight. Fixed by
-     guarding `onOpenChange` on `pendingRemoveUserId`.
-  4. `removeDashboardMember` returned bare `Promise<void>` instead of a named response interface like its
-     siblings (`DeleteDashboardResponse`, `UpdateDashboardMemberRoleResponse`) — cosmetic, fixed.
-- The auth-gate review lens found **nothing** — independent confirmation the host-only gate itself is sound.
-- **Still not done: a real visual check in a browser.** No browser-automation tool was available all
-  session, so the hover color, the confirm-dialog copy/layout, and the actual click→remove→row-disappears
-  flow have only been exercised via typecheck + curl, never actually looked at. That's this plan's one job.
+1. **Schema**: `dashboard_role_permissions` table (`dashboardId`, `role`, `action`, `enabled`,
+   composite PK) — migration `0014_milky_mojo.sql`, generated via `pnpm db:generate` and applied to
+   local Postgres via `pnpm db:migrate`.
+2. **Shared**: `DashboardPermissionAction` type + `DASHBOARD_PERMISSION_ACTIONS` array added to
+   `backend/shared/src/index.ts` (the 6 actions: createAgent, updateAgent, freezeAgent,
+   unfreezeAgent, deleteAgent, addDashboardMember).
+3. **Backend**:
+   - New `backend/api/src/lib/dashboard-permissions.ts` — `canPerformDashboardAction()` (same-org
+     caller = host or org-mate = always bypasses; cross-org caller = looks up their
+     `dashboard_members` role, then that role's toggle for the action, default false) and
+     `fetchRolePermissions()` (full 6-action set for one dashboard+role, host-only callers).
+   - Host-only `GET`/`PATCH /v1/dashboards/:id/permissions/:role` in `dashboards.ts` — accepts any
+     of the 5 roles even though the dropdown only offers Observer this round, per last round's plan.
+   - **New, not in last round's plan**: `GET /v1/dashboards/:id/my-permissions` — NOT host-gated,
+     answers "what can *I* do" for the calling user. Added because the host-only GET above can't
+     answer that for a restricted Observer, and frontend action-hiding (item 6 below) needs it. See
+     "Flag for Eshaan" below.
+   - Enforcement wired into all 6 actions: POST `/v1/agents`, PATCH `/v1/agents/:id`, PATCH
+     `/v1/agents/:id/policy` (reuses the `updateAgent` gate — same budget-editing capability via a
+     second route), POST `/v1/agents/:id/freeze`, POST `/v1/agents/:id/unfreeze`, DELETE
+     `/v1/agents/:id` (all in `agents.ts`), and POST `/v1/dashboards/:id/members` (`addDashboardMember`,
+     in `dashboards.ts`). Every check runs before the route's own body parsing/validation, same
+     "unauthorized caller learns nothing about their payload" ordering the existing role-PATCH route
+     uses.
+4. **Frontend**:
+   - `components/ui/switch.tsx` — thin Base UI Switch wrapper (Root + Thumb, `data-checked` styling),
+     following `checkbox.tsx`'s pattern.
+   - `components/share-permissions-dialog.tsx` — role dropdown (Observer-only option list) + 6
+     toggles, optimistic-update-with-revert-on-error, same generation-counter race-guard pattern as
+     `share-dashboard-dialog.tsx`.
+   - HardHat button wired into `agent-dashboard.tsx`'s `CardAction`, left of the existing share
+     button, both now inside a shared `flex items-center gap-2` wrapper div.
+   - `lib/api.ts`: `getDashboardRolePermissions`, `setDashboardRolePermissions`,
+     `getMyDashboardPermissions`.
+   - `app/agents/page.tsx` fetches `myPermissions` once per dashboard selection (NOT polled every
+     3s like the agent list — permissions changing live under an open tab is a rare edge not worth
+     the extra traffic) and threads it down as a new optional `myPermissions` prop.
+   - Action-hiding (item 6, "frontend hides/disables restricted actions"): Create-agent button, each
+     row's Edit pencil, batch Freeze/Unfreeze/Delete (`selection-toolbar.tsx`), the inline
+     stop/resume in budget-alert popups (`agent-attention-alerts.tsx`), and the "Add someone by
+     email" form in `share-dashboard-dialog.tsx` all hide/disable per `myPermissions`. **Fails open**
+     (shows the control) when `myPermissions` is `undefined` — marketing demo, or not loaded yet —
+     since the api route is the actual enforcement boundary; this is a UI nicety only.
+5. **Verified**: `pnpm typecheck` clean on both `backend/api` and `frontend/dashboard`. Full curl
+   matrix run against local Postgres/Redis and passed:
+   - Host GET/PATCH permissions succeed; non-host GET/PATCH both 403 (`dashboard_host_required`);
+     a total stranger (no access at all) gets 404 on both `permissions/:role` and `my-permissions`,
+     not 403 — no information leak about dashboards they can't reach.
+   - Invalid role param → 400.
+   - A cross-org Observer guest: all 6 actions 403 while their toggle is off
+     (`dashboard_permission_denied`); flipped on one at a time by the host, each then succeeds —
+     including `addDashboardMember`, which correctly reached its inner
+     `dashboard_member_user_not_found` 404 for a fake email, proving the permission gate ran and
+     passed before that lookup.
+   - Host bypass confirmed: host creates/freezes/deletes agents on their own dashboard regardless of
+     any Observer toggle state (same-org check, not identity check).
+   - Test dashboard/accounts created for the matrix were cleaned up via the app's own soft-delete
+     route — no manual DB cleanup needed.
 
-## Guidelines for building on this
+## Not done yet
 
-- **Host-only auth pattern**: `dashboardRow.createdBy === req.authUser!.id`, checked after
-  `resolveDashboardId` and before any body/param validation — see the PATCH and DELETE members routes in
-  `dashboards.ts` for the canonical shape.
-- **No automated test harness** exists for `dashboards.ts`. Verify new endpoints with a curl matrix against
-  the running dev api (`localhost:4000`). Sign up throwaway users via `POST /api/auth/sign-up/email`
-  (`{email, password, name}`, auto-provisions org + session cookie).
-- **Base UI dialog stacking**: any dialog-inside-a-dialog (confirm-on-top-of-a-panel) MUST be a React
-  *descendant* of the outer `Dialog`, not a JSX sibling, or Escape-key/topmost tracking breaks silently —
-  see `dialog/root/useRenderDialogRoot.mjs`'s `nested = Boolean(parentDialogRootContext)` for why.
-- **New authorization logic gets a real review pass** before calling a slice done — a multi-agent adversarial
-  review caught 3 real (non-auth) bugs this round even though the auth gate itself came back clean.
+- **No browser check.** Nothing above has been looked at in an actual browser — the HardHat button,
+  the toggle dialog's look/feel, and the hide/disable behavior for a restricted Observer are only
+  verified via curl + typecheck. Browser-automation tooling was never attempted this session (prior
+  sessions on this branch found none available, but that wasn't re-tested here — check fresh next
+  session rather than assuming either way).
+- **Security review pass was started, then stopped before it produced anything.** A `/code-review
+  xhigh` background workflow (multi-agent finder + independent-verifier pass) was launched per
+  CLAUDE.md's "real review pass" requirement for auth-sensitive code — this round touches
+  authorization on every agent mutation route — then Eshaan asked to stop it mid-run, before any
+  findings came back. **This is the most important next step.**
+- **Not committed.** 12 modified files + 5 new files, all uncommitted on `Eshaan-feature-permissions`.
+  HEAD is still `de95544` "Added account removal feature for shared dashboards" as of this writing —
+  confirm again with `git log`/`git status` before assuming, per this repo's own working rule (Eshaan
+  commits this branch himself, unannounced, mid-session).
 
-## Next: verify the member-removal UI actually works, in a browser
+## New files this round
 
-### Environment as of this writing
+- `backend/api/drizzle/0014_milky_mojo.sql` + `backend/api/drizzle/meta/0014_snapshot.json`
+- `backend/api/src/lib/dashboard-permissions.ts`
+- `frontend/dashboard/components/share-permissions-dialog.tsx`
+- `frontend/dashboard/components/ui/switch.tsx`
 
-- Postgres (5432) / Redis (6379): reachable (Docker Desktop WSL2 integration is up).
-- Dev servers **running now**, started at the end of the last session:
-  - api: `tsx watch`, port 4000 (log: check `ps aux | grep tsx` for the pid; started via `pnpm dev:api`)
-  - dashboard: `next dev`, port 3000 (started via `pnpm dev:dashboard`)
-  - proxy: NOT running (not needed for this check) — start with `pnpm dev:proxy` only if something else
-    needs it.
-- If either has died since, restart with `pnpm dev:api` / `pnpm dev:dashboard` (NOT `pnpm dev`, which would
-  also start the proxy unnecessarily). Confirm with `ps aux | grep -E "tsx watch|next dev"` before assuming.
-- **Never run `next build`/`pnpm build` in `frontend/dashboard` while `next dev` is running** — corrupts the
-  live `.next` cache and breaks CSS.
+## Flag for Eshaan
 
-### What to actually do
+`GET /v1/dashboards/:id/my-permissions` wasn't in last round's plan — it exists because the spec's
+`GET .../permissions/:role` is host-only as specified, which leaves a restricted Observer no way to
+learn their own permission set (needed for frontend hiding). This new route only ever answers "what
+can *I*, the caller, do" — it never reveals another role's configuration, so it doesn't undermine the
+host-only intent of the other route. Worth a quick look before merging since it's the one piece of API
+surface added beyond the original spec.
 
-1. Check whether a browser-automation tool is available this session (re-check every session — it has been
-   unavailable every time so far on this branch, but confirm rather than assume).
-2. If available: sign in (or sign up a throwaway account) at `http://localhost:3000`, create a dashboard,
-   share it with a second throwaway account by email, open the share dialog, and drive the actual flow:
-   hover the "x" (confirm it reads muted → red), click it, confirm the dialog copy/buttons look right,
-   confirm, and confirm the row disappears without a full refetch flash. Also sanity-check the existing
-   role-dropdown UI still looks right next to the new "x" (row layout didn't break).
-3. If no browser tool is available: say so plainly (per CLAUDE.md — don't claim UI verification that didn't
-   happen) and fall back to describing what curl/typecheck already covered, then ask Eshaan whether he wants
-   to eyeball it himself at `localhost:3000` or proceed anyway.
-4. This is a verification-only task — no code is expected to change unless the visual check turns up a real
-   bug. If it does, fix it, then re-run the curl matrix + typecheck (see prior session's commands, both
-   packages) before calling it done again.
-5. Nothing has been committed yet on this branch — Eshaan commits it himself on his own timeline; don't
-   commit or push without being asked.
+## Where to pick up
+
+1. Run the security review — either `/code-review xhigh` again (background) or inline, whichever
+   Eshaan prefers this time; the diff is currently: `backend/api/src/routes/agents.ts`,
+   `backend/api/src/routes/dashboards.ts`, `backend/api/src/lib/dashboard-permissions.ts`,
+   `backend/api/src/db/schema.ts`, `backend/shared/src/index.ts`, plus the frontend files listed
+   above.
+2. Fix whatever the review finds.
+3. Browser-check the feature as host (open the popup, toggle Observer permissions, confirm the UI),
+   and ideally as a shared Observer account too (confirm actions actually hide/disable) — ports
+   :3000 (dashboard) / :4000 (api) should already be running via `pnpm dev:api` / `pnpm
+   dev:dashboard`; Postgres/Redis need Docker Desktop running on the Windows host.
+4. Only after review + browser check: ask Eshaan whether to commit.

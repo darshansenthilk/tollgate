@@ -15,6 +15,7 @@ import {
 import { db } from "../db/client.js";
 import { agents, dashboards, policies, orgUpstreamKeys } from "../db/schema.js";
 import { dashboardAccessible, resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
+import { canPerformDashboardAction } from "../lib/dashboard-permissions.js";
 import { hashToken, generateToken } from "../lib/tokens.js";
 
 interface CreateAgentBody {
@@ -312,6 +313,22 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     }
 
     if (
+      !(await canPerformDashboardAction(
+        scope.dashboardId,
+        scope.orgId,
+        orgId,
+        req.authUser!.id,
+        "createAgent",
+      ))
+    ) {
+      reply.code(403);
+      return {
+        error: "dashboard_permission_denied",
+        message: "Your role doesn't allow creating agents on this dashboard.",
+      };
+    }
+
+    if (
       body.upstreamKeyId !== null &&
       // scope.orgId, not orgId: the vault a BYOK key must belong to is the
       // DASHBOARD's own org (its host's), which a shared caller's own org can
@@ -538,6 +555,26 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      // Checked before parseUpdateBody, same "unauthorized caller learns
+      // nothing about their payload" ordering routes/dashboards.ts's role
+      // PATCH uses — an invalid body from a caller who couldn't have made
+      // this edit anyway shouldn't 400 before it 403s.
+      if (
+        !(await canPerformDashboardAction(
+          agent.dashboardId,
+          agent.dashboardOrgId,
+          orgId,
+          req.authUser!.id,
+          "updateAgent",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow editing agents on this dashboard.",
+        };
+      }
+
       const parsed = parseUpdateBody(req.body);
       if (!parsed.ok) {
         reply.code(400);
@@ -656,6 +693,26 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      // Budget lives on a separate route from PATCH /v1/agents/:id, but it's
+      // the same "edit an agent" capability the updateAgent toggle governs
+      // there — gating one and not the other would let a restricted Observer
+      // rewrite an agent's budget through this door instead.
+      if (
+        !(await canPerformDashboardAction(
+          agent.dashboardId,
+          agent.dashboardOrgId,
+          orgId,
+          req.authUser!.id,
+          "updateAgent",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow editing agents on this dashboard.",
+        };
+      }
+
       const body = parsePolicyBody(req.body);
       if (body === null) {
         reply.code(400);
@@ -690,6 +747,22 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      if (
+        !(await canPerformDashboardAction(
+          agent.dashboardId,
+          agent.dashboardOrgId,
+          orgId,
+          req.authUser!.id,
+          "freezeAgent",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow freezing agents on this dashboard.",
+        };
+      }
+
       const body = parseFreezeBody(req.body);
       if (body === null) {
         reply.code(400);
@@ -722,6 +795,22 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "agent_not_found" };
       }
 
+      if (
+        !(await canPerformDashboardAction(
+          agent.dashboardId,
+          agent.dashboardOrgId,
+          orgId,
+          req.authUser!.id,
+          "unfreezeAgent",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow unfreezing agents on this dashboard.",
+        };
+      }
+
       await db
         .update(agents)
         .set({ status: "active", updatedAt: new Date() })
@@ -739,6 +828,22 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     if (agent === null) {
       reply.code(404);
       return { error: "agent_not_found" };
+    }
+
+    if (
+      !(await canPerformDashboardAction(
+        agent.dashboardId,
+        agent.dashboardOrgId,
+        orgId,
+        req.authUser!.id,
+        "deleteAgent",
+      ))
+    ) {
+      reply.code(403);
+      return {
+        error: "dashboard_permission_denied",
+        message: "Your role doesn't allow deleting agents on this dashboard.",
+      };
     }
 
     await db

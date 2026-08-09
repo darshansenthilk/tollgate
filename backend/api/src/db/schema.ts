@@ -7,6 +7,8 @@ import {
   numeric,
   timestamp,
   uniqueIndex,
+  boolean,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -58,6 +60,15 @@ export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", [
   "manager",
   "moderator",
   "admin",
+]);
+
+export const dashboardPermissionActionEnum = pgEnum("dashboard_permission_action", [
+  "createAgent",
+  "updateAgent",
+  "freezeAgent",
+  "unfreezeAgent",
+  "deleteAgent",
+  "addDashboardMember",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -407,4 +418,30 @@ export const dashboardMembers = pgTable(
     // ON CONFLICT DO NOTHING.
     uniqueIndex("dashboard_members_dashboard_user_unique").on(table.dashboardId, table.userId),
   ],
+);
+
+/**
+ * Per-role, per-action toggle for the 6 dashboard actions a host can delegate
+ * (PLAN.md's "role-permission delegation") — one row per (dashboard, role,
+ * action) combination that's ever actually been set. A combination with NO
+ * row is "not yet configured", and every enforcement check treats that
+ * identically to enabled=false: an unconfigured role starts with no
+ * permissions, matching dashboardMembers.role's own "observer, no
+ * permissions" default above.
+ *
+ * Scoped by dashboardId (not just role) so two dashboards' Observer rows are
+ * independent — a host delegating create-agent to Observers on one dashboard
+ * doesn't touch any other dashboard they host.
+ */
+export const dashboardRolePermissions = pgTable(
+  "dashboard_role_permissions",
+  {
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    role: dashboardMemberRoleEnum("role").notNull(),
+    action: dashboardPermissionActionEnum("action").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+  },
+  (table) => [primaryKey({ columns: [table.dashboardId, table.role, table.action] })],
 );
