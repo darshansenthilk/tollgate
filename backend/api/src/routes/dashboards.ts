@@ -805,6 +805,66 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
   );
 
   /**
+   * Removes a member's access — host-only, same gate as the role PATCH above
+   * (resolveDashboardId for scope/404, then createdBy === caller for 403,
+   * before any further logic — see that route's doc comment for why the
+   * ordering matters). A hard DELETE, not a soft one: unlike dashboards
+   * itself, nothing references dashboard_members by FK (no agents, no
+   * spend_events), so there's no billing history a hard delete could
+   * destroy. That also means re-adding the same person later
+   * (POST .../members, unchanged) inserts a genuinely fresh row — their role
+   * resets to the schema default (observer) rather than remembering
+   * whatever tier they held before removal.
+   *
+   * Same "the host is never a dashboard_members row" fact the PATCH route's
+   * doc comment notes: there's no separate "can't remove the host" check
+   * needed, because a userId equal to the host's id was never a candidate
+   * row to begin with — it just falls into the same 404 as any other id
+   * that was never a member.
+   */
+  app.delete<{ Params: { id: string; userId: string } }>(
+    "/v1/dashboards/:id/members/:userId",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can remove a member.",
+        };
+      }
+
+      const deleted = await db
+        .delete(dashboardMembers)
+        .where(
+          and(
+            eq(dashboardMembers.dashboardId, scope.dashboardId),
+            eq(dashboardMembers.userId, req.params.userId),
+          ),
+        )
+        .returning({ userId: dashboardMembers.userId });
+
+      if (deleted.length === 0) {
+        reply.code(404);
+        return { error: "dashboard_member_not_found" };
+      }
+
+      return { userId: req.params.userId };
+    },
+  );
+
+  /**
    * Dashboards shared WITH the caller — the data source for /dashboards/shared
    * (claude-docs/PLANS.md's slice 5 left this page a static stub for exactly
    * this route to fill in later). Scoped by dashboard_members.user_id, not by

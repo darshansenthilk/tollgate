@@ -557,6 +557,32 @@ export function updateDashboardMemberRole(
   );
 }
 
+/** What DELETE /v1/dashboards/:id/members/:userId answers with — just the
+ *  removed id, echoed back rather than left as an empty body (request()
+ *  always calls res.json(); see DeleteDashboardResponse's own doc comment). */
+export interface RemoveDashboardMemberResponse {
+  userId: string;
+}
+
+/**
+ * Removes a member's access — host-only, mirrors updateDashboardMemberRole.
+ * The api 403s as dashboard_host_required for any other caller. Re-adding
+ * the same person later (addDashboardMember) inserts a fresh row, so their
+ * role resets to the schema default (observer) rather than remembering
+ * whatever tier they held before removal.
+ */
+export function removeDashboardMember(
+  dashboardId: string,
+  userId: string,
+): Promise<RemoveDashboardMemberResponse> {
+  return request<RemoveDashboardMemberResponse>(
+    `/v1/dashboards/${dashboardId}/members/${userId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 /** Dashboards shared WITH the caller (they're in dashboard_members, not the
  *  host) — the data source for /dashboards/shared. Cross-org by design: see
  *  PLAN.md's D1. */

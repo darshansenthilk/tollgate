@@ -1,104 +1,85 @@
-# PLAN.md — Dashboard member roles (permission assignment)
+# PLAN.md — Verify dashboard member removal in-browser
 
-Branch: `Eshaan-feature-permissions`. Builds on the dashboard-sharing feature (`a2a32df`, host +
-`dashboard_members`, currently full-parity access for every member).
+Branch: `Eshaan-feature-permissions`.
 
-## What's being built
+## Shipped: remove a member from a dashboard, host-only (uncommitted — HEAD still `c6bdde0`)
 
-- Every added member starts with role **Observer** — the default, no permissions, view-only.
-- A role label sits to the right of each member's name, in the same position/style the "Host" label
-  already occupies in the share dialog.
-- **Host-only** (for now): clicking a member's role label opens a dropdown listing all 5 roles, ordered
-  bottom→top by rank: **Observer (bottom) → Helper → Manager → Moderator → Admin (top)**. Picking one
-  reassigns that member.
-- **Host is not an assignable role.** It never appears in the dropdown and the host's own row stays
-  non-interactive — matches how Host already works today (a separate identity, not a member-table value).
+- Backend: `DELETE /v1/dashboards/:id/members/:userId` in `backend/api/src/routes/dashboards.ts`,
+  mirroring the existing PATCH role route's auth flow: `resolveDashboardId` (scope/404) →
+  `createdBy === caller` (403 `dashboard_host_required`) → hard `db.delete(dashboardMembers)` → 404
+  `dashboard_member_not_found` if nothing matched. `dashboard_members` has no FK from any other table, so
+  the hard delete is safe and re-adding (existing POST, unchanged) inserts a genuinely fresh row.
+- Frontend: `removeDashboardMember` added to `lib/api.ts` (returns a named
+  `RemoveDashboardMemberResponse`, matching sibling response-type conventions) and threaded as an optional
+  prop through `agent-dashboard.tsx` → `app/agents/page.tsx`, same pattern as `updateDashboardMemberRole`.
+  `share-dashboard-dialog.tsx`: host-only muted "x" per member row (hover → `var(--err)`) → confirm dialog
+  ("Are you sure you want to delete this user from the dashboard?") → on confirm, calls the endpoint and
+  drops the row from local `members` state (no refetch).
+- Verified: typecheck (api + dashboard, clean); a full curl matrix (host success; non-host member → 403;
+  outsider → 404 `dashboard_not_found`; nonexistent member id → 404; repeat-delete → 404); and the
+  add→promote-to-admin→remove→re-add sequence confirming role resets to `observer`.
+- A `/code-review`-style multi-agent pass (3 independent lenses: auth-gate correctness,
+  codebase-consistency, frontend/React correctness — each finding adversarially re-verified by a separate
+  agent) caught and fixed 4 issues before commit-readiness:
+  1. The confirm dialog was originally a React **sibling** of the share dialog rather than nested inside
+     it — Base UI's dialog stacking (topmost-dialog / Escape-key handling) is tracked via parent React
+     context, which siblings don't share, so Escape would have closed both dialogs at once. Fixed by
+     nesting the confirm `<Dialog>` as a child of the outer `<Dialog>`.
+  2. Stale `removeError` could bleed onto a *different* member's confirm dialog after a prior failure —
+     now cleared wherever the confirm dialog opens or closes.
+  3. The confirm dialog's built-in Escape/outside-click/corner-✕ weren't gated on the in-flight request the
+     way the Cancel/Remove footer buttons already were — could abandon a request mid-flight. Fixed by
+     guarding `onOpenChange` on `pendingRemoveUserId`.
+  4. `removeDashboardMember` returned bare `Promise<void>` instead of a named response interface like its
+     siblings (`DeleteDashboardResponse`, `UpdateDashboardMemberRoleResponse`) — cosmetic, fixed.
+- The auth-gate review lens found **nothing** — independent confirmation the host-only gate itself is sound.
+- **Still not done: a real visual check in a browser.** No browser-automation tool was available all
+  session, so the hover color, the confirm-dialog copy/layout, and the actual click→remove→row-disappears
+  flow have only been exercised via typecheck + curl, never actually looked at. That's this plan's one job.
 
-## Grounding facts (verified by reading the current code, not assumed)
+## Guidelines for building on this
 
-- `dashboard_members` (`schema.ts:378-395`) has no role/permission column today — just `dashboardId`,
-  `userId`, `addedAt`. Host = `dashboards.createdBy` (`schema.ts:313-317`), a separate column, not a
-  members-table row — so the dropdown only ever touches `members` array entries, never the host.
-- **No role or permission concept exists anywhere in this codebase.** Grepped `backend/api`,
-  `backend/proxy`, `frontend/dashboard` for `requireRole`/`checkPermission`/`role` — nothing. The only
-  authorization gate is `requireAuth` (`lib/require-auth.ts:28-55`): authenticates + checks org membership,
-  no role check at all. Every dashboard route authorizes via one shared predicate,
-  `dashboardAccessible` (`lib/dashboard-scope.ts:57-63`) — org match OR membership row exists — which
-  gives host and every member **identical** capabilities today. This is explicitly doc-commented in
-  `schema.ts:332-334` as "full parity... tiered permissions explicitly future work."
-- Existing "Host" badge (`share-dashboard-dialog.tsx:137`) is a plain sibling span,
-  `text-xs text-muted-foreground`, right-aligned by the row's `justify-between` — not a pill component.
-  The role label should match this exact style when non-interactive.
-- `DropdownMenu`/`DropdownMenuTrigger`/`DropdownMenuContent`/`DropdownMenuItem`
-  (`components/ui/dropdown-menu.tsx`) already exist and have one live consumer to mirror:
-  `dashboard-tile.tsx`'s 3-dot menu (trigger button → content → items with `onClick`).
-- Fixed-set enums in this repo are plain TS unions in `backend/shared/src/index.ts`
-  (`AgentStatus`, `SpendDecision`, etc.), mirrored 1:1 as a `pgEnum` in `schema.ts` under its own
-  "mirror the string unions in `@tollgate/shared` exactly" comment (`schema.ts:24-26`). No *ordered*
-  enum precedent exists in the repo — the only enum-comparison idiom is `ReadonlySet` membership
-  (`proxy.ts:46-50` `FROZEN_STATUSES`), not rank comparison.
+- **Host-only auth pattern**: `dashboardRow.createdBy === req.authUser!.id`, checked after
+  `resolveDashboardId` and before any body/param validation — see the PATCH and DELETE members routes in
+  `dashboards.ts` for the canonical shape.
+- **No automated test harness** exists for `dashboards.ts`. Verify new endpoints with a curl matrix against
+  the running dev api (`localhost:4000`). Sign up throwaway users via `POST /api/auth/sign-up/email`
+  (`{email, password, name}`, auto-provisions org + session cookie).
+- **Base UI dialog stacking**: any dialog-inside-a-dialog (confirm-on-top-of-a-panel) MUST be a React
+  *descendant* of the outer `Dialog`, not a JSX sibling, or Escape-key/topmost tracking breaks silently —
+  see `dialog/root/useRenderDialogRoot.mjs`'s `nested = Boolean(parentDialogRootContext)` for why.
+- **New authorization logic gets a real review pass** before calling a slice done — a multi-agent adversarial
+  review caught 3 real (non-auth) bugs this round even though the auth gate itself came back clean.
 
-## Decisions / assumptions — flag if any of these read wrong
+## Next: verify the member-removal UI actually works, in a browser
 
-- **D1 — Role is per dashboard-membership** (`dashboard_members.role`), not global per user. Matches the
-  existing per-dashboard sharing model; a user can already be a member of several dashboards independently.
-- **D2 — This slice is assignment + display only. Enforcing what a role can/cannot do — including
-  Observer's "view only" — is explicitly out of scope here**, the same way the original sharing plan
-  carved "tier customization" out as future work. Helper/Manager/Moderator/Admin have no defined
-  capabilities yet, and even just Observer-enforcement means auditing and gating every dashboard- and
-  agent-mutating route — a separate, larger slice once the tiers themselves are defined. This plan adds
-  the data model, the host-only write path, and the UI; it does not gate any existing route on the new
-  column.
-- **D3 — Host's own row is untouched**: still the current non-interactive "Host" span. Only entries in
-  the `members` array become dropdown-editable, and only for the host viewer.
+### Environment as of this writing
 
-## Data model
+- Postgres (5432) / Redis (6379): reachable (Docker Desktop WSL2 integration is up).
+- Dev servers **running now**, started at the end of the last session:
+  - api: `tsx watch`, port 4000 (log: check `ps aux | grep tsx` for the pid; started via `pnpm dev:api`)
+  - dashboard: `next dev`, port 3000 (started via `pnpm dev:dashboard`)
+  - proxy: NOT running (not needed for this check) — start with `pnpm dev:proxy` only if something else
+    needs it.
+- If either has died since, restart with `pnpm dev:api` / `pnpm dev:dashboard` (NOT `pnpm dev`, which would
+  also start the proxy unnecessarily). Confirm with `ps aux | grep -E "tsx watch|next dev"` before assuming.
+- **Never run `next build`/`pnpm build` in `frontend/dashboard` while `next dev` is running** — corrupts the
+  live `.next` cache and breaks CSS.
 
-- `backend/shared/src/index.ts`: new union `DashboardMemberRole = "observer" | "helper" | "manager" |
-  "moderator" | "admin"`, doc-commented low→high like `AgentStatus`. Plus a small rank map,
-  `DASHBOARD_MEMBER_ROLE_RANK: Record<DashboardMemberRole, number>` (observer=0 … admin=4) — new idiom
-  (no ranked-enum precedent exists), styled after shared's existing small pure-helper exports.
-- `schema.ts`: new `dashboardMemberRoleEnum = pgEnum("dashboard_member_role", ["observer","helper",
-  "manager","moderator","admin"])` beside the other 4 enums, mirroring the shared union per convention.
-- `dashboard_members` gains `role: dashboardMemberRoleEnum NOT NULL default 'observer'`.
-- One drizzle-kit migration (next after `0012_zippy_power_man.sql`) — additive column with a default, no
-  backfill logic needed.
+### What to actually do
 
-## Backend
-
-- `GET /v1/dashboards/:id/members` (`dashboards.ts:576`): include `role` on each member entry. Host entry
-  unchanged (still `{id, email}`, no role — it's not a member row).
-- New endpoint, e.g. `PATCH /v1/dashboards/:id/members/:userId` — body `{role}}`, validated against the 5
-  enum values. **New host-only check**: caller's id must equal `dashboards.createdBy` — this doesn't exist
-  anywhere yet (today's routes deliberately treat host and member as equal via `dashboardAccessible`), so
-  it's new code, not an extension of that predicate. 403 with the existing `{error, message}` shape on a
-  non-host caller or an unknown role value.
-- No changes to any other route — see D2.
-
-## Frontend
-
-- `DashboardMember` (`lib/api.ts:498`) gains `role: DashboardMemberRole`.
-- In `share-dashboard-dialog.tsx`, each member row's badge becomes conditional on viewer identity
-  (dialog already tracks `viewerEmail` vs `host?.email`):
-  - **Viewer is host**: role label becomes a `DropdownMenuTrigger` (same text styling as today's plain
-    Host span). `DropdownMenuContent` lists all 5 roles **top-to-bottom as Admin, Moderator, Manager,
-    Helper, Observer** — i.e. bottom-to-top by rank as asked, highest at the top of the open menu, lowest
-    at the bottom. Selecting a `DropdownMenuItem` calls the new PATCH endpoint and updates the row's role
-    in local state on success.
-  - **Viewer is not host** (including a member viewing their own row): plain non-interactive label, same
-    style as the current Host span — no dropdown, per "only the host for now."
-  - Host's own row: unchanged.
-
-## Out of scope (this slice)
-
-- Enforcing any role's actual permissions on any route (see D2).
-- Removing/downgrading a member's access entirely — no delete-member endpoint exists at all today; that
-  gap is pre-existing and not introduced or closed here.
-- Multiple hosts, host transfer, or org-level roles / Better Auth role sync.
-
-## Rollout
-
-Additive only — new enum, new nullable-by-default-free column (has a default), new endpoint, no existing
-route or response field removed or changed shape. Safe to migrate and ship without coordinating with any
-in-flight work (checked: the two uncommitted tweaks currently sitting in `dashboards.ts` / `lib/api.ts` are
-unrelated error-copy wording changes, not permission work).
+1. Check whether a browser-automation tool is available this session (re-check every session — it has been
+   unavailable every time so far on this branch, but confirm rather than assume).
+2. If available: sign in (or sign up a throwaway account) at `http://localhost:3000`, create a dashboard,
+   share it with a second throwaway account by email, open the share dialog, and drive the actual flow:
+   hover the "x" (confirm it reads muted → red), click it, confirm the dialog copy/buttons look right,
+   confirm, and confirm the row disappears without a full refetch flash. Also sanity-check the existing
+   role-dropdown UI still looks right next to the new "x" (row layout didn't break).
+3. If no browser tool is available: say so plainly (per CLAUDE.md — don't claim UI verification that didn't
+   happen) and fall back to describing what curl/typecheck already covered, then ask Eshaan whether he wants
+   to eyeball it himself at `localhost:3000` or proceed anyway.
+4. This is a verification-only task — no code is expected to change unless the visual check turns up a real
+   bug. If it does, fix it, then re-run the curl matrix + typecheck (see prior session's commands, both
+   packages) before calling it done again.
+5. Nothing has been committed yet on this branch — Eshaan commits it himself on his own timeline; don't
+   commit or push without being asked.

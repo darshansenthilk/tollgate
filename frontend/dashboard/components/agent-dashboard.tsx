@@ -162,6 +162,9 @@ interface AgentDashboardProps {
     userId: string,
     role: DashboardMemberRole,
   ) => Promise<UpdateDashboardMemberRoleResponse>;
+  /** Host-only member removal — same optional/paired-with-sharing gating as
+   *  updateDashboardMemberRole above. Undefined for the marketing demo. */
+  removeDashboardMember?: (userId: string) => Promise<void>;
 }
 
 /**
@@ -185,6 +188,7 @@ export function AgentDashboard({
   listDashboardMembers,
   addDashboardMember,
   updateDashboardMemberRole,
+  removeDashboardMember,
 }: AgentDashboardProps) {
   const [renamingDashboard, setRenamingDashboard] = useState(false);
   const [sharingDashboard, setSharingDashboard] = useState(false);
@@ -640,6 +644,7 @@ export function AgentDashboard({
           listDashboardMembers={listDashboardMembers}
           addDashboardMember={addDashboardMember}
           updateDashboardMemberRole={updateDashboardMemberRole}
+          removeDashboardMember={removeDashboardMember}
           onOpenChange={setSharingDashboard}
         />
       )}

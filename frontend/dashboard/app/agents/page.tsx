@@ -20,6 +20,7 @@ import {
   listAgents,
   listDashboardMembers,
   listUpstreamKeys,
+  removeDashboardMember,
   renameDashboard,
   unfreezeAgent,
   updateAgent,
@@ -215,6 +216,14 @@ export default function AgentsPage() {
           addDashboardMember={(email) => addDashboardMember(activeDashboard.id, email)}
           updateDashboardMemberRole={(userId, role) =>
             updateDashboardMemberRole(activeDashboard.id, userId, role)
+          }
+          // Prop is Promise<void> (share-dashboard-dialog.tsx only needs to
+          // know the call settled — it already has userId from its own
+          // confirm-dialog state), so the response body is discarded here
+          // rather than widening every layer of the prop chain to match
+          // lib/api.ts's own RemoveDashboardMemberResponse return type.
+          removeDashboardMember={(userId) =>
+            removeDashboardMember(activeDashboard.id, userId).then(() => undefined)
           }
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
