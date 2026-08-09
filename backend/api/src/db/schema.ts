@@ -9,6 +9,8 @@ import {
   uniqueIndex,
   index,
   jsonb,
+  boolean,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -64,6 +66,23 @@ export const toolApprovalStatusEnum = pgEnum("tool_approval_status", [
   "pending",
   "approved",
   "denied",
+]);
+
+export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", [
+  "observer",
+  "helper",
+  "manager",
+  "moderator",
+  "admin",
+]);
+
+export const dashboardPermissionActionEnum = pgEnum("dashboard_permission_action", [
+  "createAgent",
+  "updateAgent",
+  "freezeAgent",
+  "unfreezeAgent",
+  "deleteAgent",
+  "addDashboardMember",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -416,6 +435,19 @@ export const dashboards = pgTable("dashboards", {
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   /**
+   * Better Auth user id of whoever created this dashboard — the "host" for
+   * dashboard sharing (dashboard_members below). Plain text, deliberately not
+   * an FK to Better Auth's `user` table, same decoupling as active_dashboards.
+   * user_id: the app/proxy tables stay independent of the auth-managed ones.
+   *
+   * Nullable at the column level even though the migration backfills every
+   * pre-existing row (to whichever member holds the org's "owner" role) — kept
+   * loose rather than NOT NULL for the same reason archived_at is nullable
+   * rather than enforced: nothing above the database should rely on a
+   * constraint here to stay correct.
+   */
+  createdBy: text("created_by"),
+  /**
    * Soft delete. Null means live; a timestamp means DELETE /v1/dashboards/:id
    * swept it and every route must behave as though the row is gone.
    *
@@ -454,3 +486,68 @@ export const activeDashboards = pgTable("active_dashboards", {
     .references(() => dashboards.id, { onDelete: "cascade" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Grants ONE user access to a dashboard outside the normal org-ownership path
+ * (see the section comment above) — the "shared with me" half of dashboard
+ * sharing. `dashboards.createdBy` is the host; a row here is a guest, added by
+ * email from the share dialog on /agents.
+ *
+ * No `onDelete` action on dashboard_id, unlike active_dashboards' CASCADE:
+ * dashboards are only ever soft-deleted (archived_at), never hard-deleted, so
+ * there is no delete event for a cascade to fire on. A membership row for an
+ * archived dashboard is inert (every dashboard-scoped route filters on
+ * archived_at IS NULL) rather than cleaned up, the same way agents.ts leaves
+ * archived agent rows in place instead of removing them.
+ */
+export const dashboardMembers = pgTable(
+  "dashboard_members",
+  {
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    /** Better Auth user id, plain text — same decoupling as active_dashboards
+     *  above and dashboards.createdBy. */
+    userId: text("user_id").notNull(),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Assignable permission tier, defaulted to the lowest (observer) on every
+     * add. Assignment + display only for now — no route reads this to gate
+     * anything (see PLAN.md's D2); it exists so the host-only PATCH endpoint
+     * and the share dialog's dropdown have somewhere to write and read.
+     */
+    role: dashboardMemberRoleEnum("role").notNull().default("observer"),
+  },
+  (table) => [
+    // Adding the same person twice is a no-op, not a second row — the routes
+    // rely on this to make POST /v1/dashboards/:id/members idempotent via
+    // ON CONFLICT DO NOTHING.
+    uniqueIndex("dashboard_members_dashboard_user_unique").on(table.dashboardId, table.userId),
+  ],
+);
+
+/**
+ * Per-role, per-action toggle for the 6 dashboard actions a host can delegate
+ * (PLAN.md's "role-permission delegation") — one row per (dashboard, role,
+ * action) combination that's ever actually been set. A combination with NO
+ * row is "not yet configured", and every enforcement check treats that
+ * identically to enabled=false: an unconfigured role starts with no
+ * permissions, matching dashboardMembers.role's own "observer, no
+ * permissions" default above.
+ *
+ * Scoped by dashboardId (not just role) so two dashboards' Observer rows are
+ * independent — a host delegating create-agent to Observers on one dashboard
+ * doesn't touch any other dashboard they host.
+ */
+export const dashboardRolePermissions = pgTable(
+  "dashboard_role_permissions",
+  {
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    role: dashboardMemberRoleEnum("role").notNull(),
+    action: dashboardPermissionActionEnum("action").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+  },
+  (table) => [primaryKey({ columns: [table.dashboardId, table.role, table.action] })],
+);

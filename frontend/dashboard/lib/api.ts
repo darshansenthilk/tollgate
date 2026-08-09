@@ -1,4 +1,4 @@
-import type { AgentStatus, ToolDefinition } from "@tollgate/shared";
+import type { AgentStatus, ToolDefinition, DashboardMemberRole, DashboardPermissionAction } from "@tollgate/shared";
 import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -176,6 +176,12 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_upstream_key: "That key isn't valid for this agent's provider.",
   upstream_credential_incomplete:
     "This provider key is missing something it needs — re-save it in Settings.",
+  dashboard_member_user_not_found: "No Tollgate account found with that email.",
+  dashboard_member_is_host: "You cannot add your own account to a dashboard.",
+  dashboard_member_not_found: "That person no longer has access to this dashboard.",
+  dashboard_host_required: "Only this dashboard's host can do that.",
+  invalid_dashboard_member_role: "That's not a role this dashboard recognizes.",
+  dashboard_permission_denied: "Your role on this dashboard doesn't allow that.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -626,4 +632,152 @@ export function deleteDashboard(id: string): Promise<DeleteDashboardResponse> {
   return request<DeleteDashboardResponse>(`/v1/dashboards/${id}`, {
     method: "DELETE",
   });
+}
+
+/** One person with access to a dashboard — the host, or someone added to it. */
+export interface DashboardUser {
+  id: string;
+  email: string;
+}
+
+/** A DashboardUser plus when they were added and their role — only added
+ *  members carry either, not the host (the host isn't a dashboard_members
+ *  row; see schema.ts). */
+export interface DashboardMember extends DashboardUser {
+  addedAt: string;
+  role: DashboardMemberRole;
+}
+
+/** What GET /v1/dashboards/:id/members answers with — the share dialog's list. */
+export interface DashboardMembersResponse {
+  /** Whoever created the dashboard. Can be null for a dashboard whose org had
+   *  no "owner"-role member to backfill onto at migration time — the dialog
+   *  should treat that as "unknown host", not throw. */
+  host: DashboardUser | null;
+  members: DashboardMember[];
+}
+
+/** The share dialog's list of who currently has access. */
+export function listDashboardMembers(dashboardId: string): Promise<DashboardMembersResponse> {
+  return request<DashboardMembersResponse>(`/v1/dashboards/${dashboardId}/members`);
+}
+
+/**
+ * Grants one user access to a dashboard by email. 404s as
+ * dashboard_member_user_not_found when the email has no Tollgate account —
+ * there's no email-sending integration in this app, so that's a dead end for
+ * now rather than a pending invite. Adding someone already on the list
+ * succeeds again rather than erroring (the api makes this idempotent).
+ */
+export function addDashboardMember(dashboardId: string, email: string): Promise<DashboardMember> {
+  return request<DashboardMember>(`/v1/dashboards/${dashboardId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+/** What PATCH /v1/dashboards/:id/members/:userId answers with — just enough
+ *  to patch the one row that changed in local state, not a full DashboardMember
+ *  (the api doesn't re-look-up the target's email for this). */
+export interface UpdateDashboardMemberRoleResponse {
+  userId: string;
+  role: DashboardMemberRole;
+}
+
+/**
+ * Reassigns a member's role. Host-only — the api 403s as dashboard_host_required
+ * for any other caller, including another member. Never called for the host's
+ * own row, which has no role to change (see DashboardMember's doc comment).
+ */
+export function updateDashboardMemberRole(
+  dashboardId: string,
+  userId: string,
+  role: DashboardMemberRole,
+): Promise<UpdateDashboardMemberRoleResponse> {
+  return request<UpdateDashboardMemberRoleResponse>(
+    `/v1/dashboards/${dashboardId}/members/${userId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    },
+  );
+}
+
+/** What DELETE /v1/dashboards/:id/members/:userId answers with — just the
+ *  removed id, echoed back rather than left as an empty body (request()
+ *  always calls res.json(); see DeleteDashboardResponse's own doc comment). */
+export interface RemoveDashboardMemberResponse {
+  userId: string;
+}
+
+/**
+ * Removes a member's access — host-only, mirrors updateDashboardMemberRole.
+ * The api 403s as dashboard_host_required for any other caller. Re-adding
+ * the same person later (addDashboardMember) inserts a fresh row, so their
+ * role resets to the schema default (observer) rather than remembering
+ * whatever tier they held before removal.
+ */
+export function removeDashboardMember(
+  dashboardId: string,
+  userId: string,
+): Promise<RemoveDashboardMemberResponse> {
+  return request<RemoveDashboardMemberResponse>(
+    `/v1/dashboards/${dashboardId}/members/${userId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+/** Dashboards shared WITH the caller (they're in dashboard_members, not the
+ *  host) — the data source for /dashboards/shared. Cross-org by design: see
+ *  PLAN.md's D1. */
+export function listSharedDashboards(): Promise<DashboardListItem[]> {
+  return request<DashboardListItem[]>("/v1/dashboards/shared");
+}
+
+/** What GET/PATCH /v1/dashboards/:id/permissions/:role answer with — every
+ *  gated action's current on/off state for that role on that dashboard. */
+export interface DashboardRolePermissions {
+  role: DashboardMemberRole;
+  permissions: Record<DashboardPermissionAction, boolean>;
+}
+
+/** Host-only: the role-permission delegation popup's data source. */
+export function getDashboardRolePermissions(
+  dashboardId: string,
+  role: DashboardMemberRole,
+): Promise<DashboardRolePermissions> {
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`);
+}
+
+/**
+ * Host-only: flips one or more of a role's action toggles in a single call.
+ * Only the changed keys need to be sent — the api leaves any action not
+ * present in `permissions` untouched. Returns the full resulting toggle set,
+ * same shape as getDashboardRolePermissions, so the popup can just replace
+ * its local state with the response.
+ */
+export function setDashboardRolePermissions(
+  dashboardId: string,
+  role: DashboardMemberRole,
+  permissions: Partial<Record<DashboardPermissionAction, boolean>>,
+): Promise<DashboardRolePermissions> {
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`, {
+    method: "PATCH",
+    body: JSON.stringify({ permissions }),
+  });
+}
+
+/**
+ * The caller's OWN standing on this dashboard — unlike
+ * getDashboardRolePermissions above, not host-only: anyone who can reach the
+ * dashboard can ask what they personally may do on it. Lets the dashboard
+ * hide/disable actions a restricted Observer's role doesn't currently allow,
+ * rather than only relying on the 403 from actually trying.
+ */
+export function getMyDashboardPermissions(
+  dashboardId: string,
+): Promise<{ permissions: Record<DashboardPermissionAction, boolean> }> {
+  return request(`/v1/dashboards/${dashboardId}/my-permissions`);
 }

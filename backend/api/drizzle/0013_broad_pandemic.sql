@@ -1,0 +1,2 @@
+CREATE TYPE "public"."dashboard_member_role" AS ENUM('observer', 'helper', 'manager', 'moderator', 'admin');--> statement-breakpoint
+ALTER TABLE "dashboard_members" ADD COLUMN "role" "dashboard_member_role" DEFAULT 'observer' NOT NULL;

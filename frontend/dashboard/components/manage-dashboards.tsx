@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreateDashboardDialog } from "@/components/create-dashboard-dialog";
+import { DashboardsNav } from "@/components/dashboards-nav";
 import { DashboardTile } from "@/components/dashboard-tile";
 import { DeleteDashboardDialog } from "@/components/delete-dashboard-dialog";
 import {
@@ -167,7 +168,11 @@ export function ManageDashboards() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
+    // Slice 5 (claude-docs/PLANS.md, D9): the <main> max-w-5xl shell now
+    // lives in app/dashboards/layout.tsx, shared with the new /dashboards/
+    // shared sibling page — this component only owns the right-hand column
+    // next to DashboardsNav. Everything below is otherwise unchanged.
+    <div>
       <header className="mb-6 pl-4 text-left">
         {/* Matches Agent Dashboard's h1 + pl-4 offset (components/agent-
             dashboard.tsx) — the page behind the "Dashboard Panel" nav tab —
@@ -181,6 +186,12 @@ export function ManageDashboards() {
           Create a dashboard and view shared ones.
         </p>
       </header>
+
+      {/* Below the subtitle, not above the header — mb-6 pl-4 mirrors the
+          header's own spacing/indent so it reads as part of the same block. */}
+      <div className="mb-6 pl-4">
+        <DashboardsNav />
+      </div>
 
       {error !== null && (
         <p className="mb-4 text-sm" style={{ color: "var(--err)" }}>
@@ -214,6 +225,6 @@ export function ManageDashboards() {
           if (!open) setDeleting(null);
         }}
       />
-    </main>
+    </div>
   );
 }

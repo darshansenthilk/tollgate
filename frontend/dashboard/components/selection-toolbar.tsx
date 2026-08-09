@@ -13,6 +13,13 @@ interface SelectionToolbarProps {
   freezeAgent: (id: string, mode: "soft" | "hard") => Promise<AgentMutationResponse>;
   unfreezeAgent: (id: string) => Promise<AgentMutationResponse>;
   deleteAgent: (id: string) => Promise<AgentMutationResponse>;
+  /** The viewer's own standing on these 3 actions (AgentDashboard's
+   *  myPermissions) — default true so every other caller keeps today's
+   *  behaviour untouched. A restricted Observer sees the same always-mounted,
+   *  disabled-when-empty button, just disabled for a second reason. */
+  canFreeze?: boolean;
+  canUnfreeze?: boolean;
+  canDelete?: boolean;
   onDeleted: (ids: string[]) => void;
   onStatusChange: (id: string, status: AgentStatus) => void;
   /** Fired when a batch action fully succeeds — drives the auto-exit out of
@@ -25,6 +32,9 @@ export function SelectionToolbar({
   freezeAgent,
   unfreezeAgent,
   deleteAgent,
+  canFreeze = true,
+  canUnfreeze = true,
+  canDelete = true,
   onDeleted,
   onStatusChange,
   onCompleted,
@@ -50,7 +60,7 @@ export function SelectionToolbar({
           agents={stoppable}
           freezeAgent={freezeAgent}
           unfreezeAgent={unfreezeAgent}
-          disabled={stoppable.length === 0}
+          disabled={stoppable.length === 0 || !canFreeze}
           onStatusChange={onStatusChange}
           onCompleted={onCompleted}
         />
@@ -59,14 +69,14 @@ export function SelectionToolbar({
           agents={resumable}
           freezeAgent={freezeAgent}
           unfreezeAgent={unfreezeAgent}
-          disabled={resumable.length === 0}
+          disabled={resumable.length === 0 || !canUnfreeze}
           onStatusChange={onStatusChange}
           onCompleted={onCompleted}
         />
         <BatchDeleteDialog
           agents={selectedAgents}
           deleteAgent={deleteAgent}
-          disabled={selectedAgents.length === 0}
+          disabled={selectedAgents.length === 0 || !canDelete}
           onDeleted={onDeleted}
           onCompleted={onCompleted}
         />

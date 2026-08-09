@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, DashboardPermissionAction } from "@tollgate/shared";
 import { AgentDashboard } from "@/components/agent-dashboard";
 import { ApprovalsPanel } from "@/components/approvals-panel";
 import { SuggestionsPanel } from "@/components/suggestions-panel";
@@ -13,16 +13,23 @@ import {
   applyUpdated,
 } from "@/lib/agent-list-updates";
 import {
+  addDashboardMember,
   ApiError,
   createAgent,
   deleteAgent,
   freezeAgent,
   getActiveDashboard,
+  getDashboardRolePermissions,
+  getMyDashboardPermissions,
   listAgents,
+  listDashboardMembers,
   listUpstreamKeys,
+  removeDashboardMember,
   renameDashboard,
+  setDashboardRolePermissions,
   unfreezeAgent,
   updateAgent,
+  updateDashboardMemberRole,
   type AgentListItem,
   type CreateAgentInput,
   type CreateAgentResponse,
@@ -50,6 +57,12 @@ export default function AgentsPage() {
     undefined,
   );
   const [error, setError] = useState<string | null>(null);
+  // undefined (not yet fetched) reads as "unrestricted" below, same fail-open
+  // stance AgentDashboard's own `myPermissions` doc comment explains — the api
+  // is the actual security boundary, this is only ever a UI nicety.
+  const [myPermissions, setMyPermissions] = useState<
+    Record<DashboardPermissionAction, boolean> | undefined
+  >(undefined);
 
   const refresh = useCallback(async (dashboardId: string) => {
     try {
@@ -142,6 +155,30 @@ export default function AgentsPage() {
     // for the same dashboard, and that shouldn't blank the table and refetch.
   }, [refresh, activeDashboardId]);
 
+  useEffect(() => {
+    if (activeDashboardId === null) {
+      setMyPermissions(undefined);
+      return;
+    }
+    // One fetch per dashboard selection, not polled like agents above — a
+    // host toggling permissions live while a restricted viewer's tab is open
+    // is a rare edge the 3s agent poll doesn't need to cover for this UI-only
+    // nicety (the api enforces the current state regardless of what this
+    // shows).
+    let cancelled = false;
+    void getMyDashboardPermissions(activeDashboardId)
+      .then((res) => {
+        if (!cancelled) setMyPermissions(res.permissions);
+      })
+      .catch(() => {
+        // Leave it undefined (fail-open) on error — see the state's own doc
+        // comment for why that's the safe default here.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDashboardId]);
+
   /** createAgent bound to the dashboard on screen, so a new agent lands where
    *  the user is looking rather than wherever server-side selection state
    *  happens to point. Memoized on the id so AgentDashboard isn't handed a new
@@ -218,6 +255,31 @@ export default function AgentsPage() {
           renameDashboard={async (name) => {
             setActiveDashboard(await renameDashboard(activeDashboard.id, name));
           }}
+          // Same inline-closure-over-the-narrowed-dashboard pattern as
+          // renameDashboard above — AgentDashboard stays decoupled from which
+          // dashboard is active and from lib/api itself.
+          listDashboardMembers={() => listDashboardMembers(activeDashboard.id)}
+          addDashboardMember={(email) => addDashboardMember(activeDashboard.id, email)}
+          updateDashboardMemberRole={(userId, role) =>
+            updateDashboardMemberRole(activeDashboard.id, userId, role)
+          }
+          // Prop is Promise<void> (share-dashboard-dialog.tsx only needs to
+          // know the call settled — it already has userId from its own
+          // confirm-dialog state), so the response body is discarded here
+          // rather than widening every layer of the prop chain to match
+          // lib/api.ts's own RemoveDashboardMemberResponse return type.
+          removeDashboardMember={(userId) =>
+            removeDashboardMember(activeDashboard.id, userId).then(() => undefined)
+          }
+          // Same inline-closure-over-the-narrowed-dashboard pattern as
+          // renameDashboard/listDashboardMembers above.
+          getDashboardRolePermissions={(role) =>
+            getDashboardRolePermissions(activeDashboard.id, role)
+          }
+          setDashboardRolePermissions={(role, permissions) =>
+            setDashboardRolePermissions(activeDashboard.id, role, permissions)
+          }
+          myPermissions={myPermissions}
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

@@ -73,7 +73,12 @@ export function MainNav() {
           </>
         ) : (
           LINKS.map((link) => {
-            const active = pathname === link.href;
+            // Prefix match, not just exact: /dashboards/shared should still
+            // read as "you're in Manage Dashboards", the same way any future
+            // sub-route under one of these four would. A no-op today for the
+            // other three (none have sub-routes), so this isn't a special
+            // case for /dashboards specifically.
+            const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <a
                 key={link.href}

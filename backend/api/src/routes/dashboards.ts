@@ -2,13 +2,21 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { freezeKey } from "@tollgate/shared";
+import {
+  DASHBOARD_MEMBER_ROLE_RANK,
+  DASHBOARD_PERMISSION_ACTIONS,
+  freezeKey,
+  type DashboardMemberRole,
+  type DashboardPermissionAction,
+} from "@tollgate/shared";
 import { db } from "../db/client.js";
-import { activeDashboards, agents, dashboards } from "../db/schema.js";
+import { activeDashboards, agents, dashboardMembers, dashboardRolePermissions, dashboards } from "../db/schema.js";
 // The shape guard this file used to define locally, now shared with
 // routes/agents.ts and routes/activity.ts — see lib/dashboard-scope.ts for why a
 // malformed uuid has to be screened before it reaches Postgres.
-import { UUID_RE } from "../lib/dashboard-scope.js";
+import { dashboardAccessible, resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
+import { canPerformDashboardAction, fetchRolePermissions } from "../lib/dashboard-permissions.js";
+import { auth } from "../lib/auth.js";
 
 /**
  * Dashboards: the org-owned containers `/dashboards` lists as tiles, plus the
@@ -86,6 +94,97 @@ function toJson(row: { id: string; name: string; createdAt: Date }): DashboardJs
   return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };
 }
 
+/** DASHBOARD_MEMBER_ROLE_RANK's keys are exactly the 5 valid roles — reusing
+ *  it here means the wire-validation set can't drift from @tollgate/shared's
+ *  own union. */
+function isDashboardMemberRole(value: unknown): value is DashboardMemberRole {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(DASHBOARD_MEMBER_ROLE_RANK, value)
+  );
+}
+
+/** DASHBOARD_PERMISSION_ACTIONS is exactly the 6 gated actions — reusing it
+ *  here means the wire-validation set can't drift from @tollgate/shared's own
+ *  list, same reasoning as isDashboardMemberRole above. */
+function isDashboardPermissionAction(value: unknown): value is DashboardPermissionAction {
+  return typeof value === "string" && (DASHBOARD_PERMISSION_ACTIONS as readonly string[]).includes(value);
+}
+
+type PermissionsParseResult =
+  | { ok: true; permissions: Partial<Record<DashboardPermissionAction, boolean>> }
+  | { ok: false };
+
+/** Accepts a partial toggle set ({ permissions: { createAgent: true, ... } })
+ *  so the popup can save a single flipped switch without resending all 6. */
+function parsePermissionsBody(body: unknown): PermissionsParseResult {
+  if (typeof body !== "object" || body === null) return { ok: false };
+  const raw = (body as Record<string, unknown>)["permissions"];
+  if (typeof raw !== "object" || raw === null) return { ok: false };
+
+  const out: Partial<Record<DashboardPermissionAction, boolean>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isDashboardPermissionAction(key) || typeof value !== "boolean") return { ok: false };
+    out[key] = value;
+  }
+  if (Object.keys(out).length === 0) return { ok: false };
+  return { ok: true, permissions: out };
+}
+
+/** A member/host entry in the share dialog's list. */
+interface DashboardUserJson {
+  id: string;
+  email: string;
+}
+
+/**
+ * Reaches into Better Auth's own `user` table, which isn't declared in this
+ * package's drizzle schema (Better Auth owns and migrates it itself — see
+ * db/auth-migrate.ts). `auth.$context` is the same adapter lib/auth.ts's own
+ * databaseHooks use (there it arrives as `ctx.context.adapter`; called from a
+ * route instead of a hook, it's `(await auth.$context).adapter`), kept to
+ * Better Auth's own query API rather than a raw SQL join against a table this
+ * package doesn't own the shape of.
+ */
+async function findUserByEmail(email: string): Promise<DashboardUserJson | null> {
+  const ctx = await auth.$context;
+  // select: ["id", "email"] both narrows the query and is what keeps the rest
+  // of the Better Auth user row (name, image, twoFactorEnabled, ...) from
+  // leaking into a dashboard-sharing response — the return type alone doesn't
+  // enforce that, the adapter would otherwise hand back the full row.
+  return ctx.adapter.findOne<DashboardUserJson>({
+    model: "user",
+    where: [{ field: "email", value: email }],
+    select: ["id", "email"],
+  });
+}
+
+async function findUserById(id: string): Promise<DashboardUserJson | null> {
+  const ctx = await auth.$context;
+  return ctx.adapter.findOne<DashboardUserJson>({
+    model: "user",
+    where: [{ field: "id", value: id }],
+    select: ["id", "email"],
+  });
+}
+
+/**
+ * Batched form of findUserById for the member list, which otherwise resolves
+ * one row per member via N separate adapter round trips. `limit` is passed
+ * explicitly — the adapter's default `findMany` limit is meant for
+ * open-ended listing, not "return exactly the ids I asked for".
+ */
+async function findUsersByIds(ids: string[]): Promise<DashboardUserJson[]> {
+  if (ids.length === 0) return [];
+  const ctx = await auth.$context;
+  return ctx.adapter.findMany<DashboardUserJson>({
+    model: "user",
+    where: [{ field: "id", operator: "in", value: ids }],
+    select: ["id", "email"],
+    limit: ids.length,
+  });
+}
+
 /**
  * Point the caller's single active_dashboards row at `dashboardId`, creating it
  * on first selection. One row per user, so the upsert targets user_id. Returns
@@ -114,12 +213,23 @@ async function selectDashboardIfLive(
   dashboardId: string,
   orgId: string,
 ): Promise<boolean> {
+  // The "org_id" = ... OR EXISTS(...) clause mirrors dashboardAccessible
+  // (lib/dashboard-scope.ts) by hand, same reason routes/agents.ts's create
+  // route does — this is raw SQL for the FOR SHARE lock above, not something
+  // that can go through the drizzle query builder. Keep the two in sync if the
+  // sharing predicate ever changes.
   const result = await db.execute(sql`
     with live as materialized (
       select "id"
       from "dashboards"
       where "id" = ${dashboardId}::uuid
-        and "org_id" = ${orgId}
+        and (
+          "org_id" = ${orgId}
+          or exists (
+            select 1 from "dashboard_members"
+            where "dashboard_id" = "dashboards"."id" and "user_id" = ${userId}
+          )
+        )
         and "archived_at" is null
       for share
     )
@@ -152,7 +262,7 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
     }
 
     const created = { id: randomUUID(), name: parsed.name, createdAt: new Date() };
-    await db.insert(dashboards).values({ ...created, orgId });
+    await db.insert(dashboards).values({ ...created, orgId, createdBy: req.authUser!.id });
 
     // Creating a dashboard opens it (DE11) — the frontend navigates straight to
     // /agents afterwards, which reads this selection back. The row we just
@@ -213,9 +323,11 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       })
       .from(activeDashboards)
       .innerJoin(dashboards, eq(dashboards.id, activeDashboards.dashboardId))
-      // The org check matters as much as the user check: a selection made before
-      // the user's active org changed would otherwise surface another org's
-      // dashboard. Reading as "none selected" is the safe answer.
+      // dashboardAccessible, not a plain org check: a selection can now
+      // legitimately point at a dashboard outside the caller's own org (PLAN.md's
+      // dashboard sharing) — but it still has to be one they can actually reach,
+      // so a selection that's gone stale (their access was revoked, or their org
+      // changed) still reads as "none selected", the safe answer.
       //
       // archived_at matters for a subtler reason: active_dashboards.dashboard_id
       // has ON DELETE CASCADE, but a soft delete is an UPDATE, so the cascade
@@ -226,7 +338,7 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       .where(
         and(
           eq(activeDashboards.userId, req.authUser!.id),
-          eq(dashboards.orgId, orgId),
+          dashboardAccessible(orgId, req.authUser!.id),
           isNull(dashboards.archivedAt),
         ),
       );
@@ -258,18 +370,22 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
           : { error: "invalid_body" };
       }
 
-      // Org-scoped UPDATE: the where clause is the authorization check, so
-      // another org's id updates zero rows and reads as 404 (see the select
-      // route). Returning the updated row means no follow-up read. archived_at
-      // joins that where clause for the same reason — otherwise a stale tab
-      // renames a dashboard nobody can see and gets a 200 for it.
+      // The where clause is the authorization check, so an id the caller can't
+      // reach (another org's, with no share grant) updates zero rows and reads
+      // as 404 (see the select route). dashboardAccessible, not a plain org
+      // check — a shared caller can rename a dashboard shared with them, same
+      // full-parity behaviour every dashboard-scoped route gives a share grant
+      // for now (PLAN.md: tiered permissions are explicitly future work).
+      // Returning the updated row means no follow-up read. archived_at joins
+      // that where clause for the same reason — otherwise a stale tab renames a
+      // dashboard nobody can see and gets a 200 for it.
       const updated = await db
         .update(dashboards)
         .set({ name: parsed.name })
         .where(
           and(
             eq(dashboards.id, req.params.id),
-            eq(dashboards.orgId, orgId),
+            dashboardAccessible(orgId, req.authUser!.id),
             isNull(dashboards.archivedAt),
           ),
         )
@@ -303,13 +419,14 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         createdAt: dashboards.createdAt,
       })
       .from(dashboards)
-      // Org-scoped, so another org's id is indistinguishable from a nonexistent
-      // one — 404 rather than 403, the same non-leaking convention agents.ts
-      // uses. A soft-deleted dashboard is indistinguishable from both.
+      // dashboardAccessible, not a plain org check — an id the caller has no
+      // reach into (another org's, no share grant) is indistinguishable from a
+      // nonexistent one — 404 rather than 403, the same non-leaking convention
+      // agents.ts uses. A soft-deleted dashboard is indistinguishable from both.
       .where(
         and(
           eq(dashboards.id, req.params.id),
-          eq(dashboards.orgId, orgId),
+          dashboardAccessible(orgId, req.authUser!.id),
           isNull(dashboards.archivedAt),
         ),
       );
@@ -365,17 +482,24 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       // double-click or a two-tab race into a plain 404 (no new status code
       // needed) — and the FOR NO KEY UPDATE this takes is what a concurrent
       // create or select then has to queue behind.
+      //
+      // dashboardAccessible, not a plain org check: for now a shared caller can
+      // delete a dashboard shared with them, same full-parity behaviour every
+      // dashboard-scoped route gives a share grant until tiered permissions
+      // exist (PLAN.md). orgId is also read back here (not assumed to equal the
+      // caller's) — the survivor search below needs the DASHBOARD's own org,
+      // which a shared (cross-org) caller's own orgId is not.
       const swept = await tx
         .update(dashboards)
         .set({ archivedAt: new Date() })
         .where(
           and(
             eq(dashboards.id, req.params.id),
-            eq(dashboards.orgId, orgId),
+            dashboardAccessible(orgId, userId),
             isNull(dashboards.archivedAt),
           ),
         )
-        .returning({ id: dashboards.id, name: dashboards.name });
+        .returning({ id: dashboards.id, name: dashboards.name, orgId: dashboards.orgId });
 
       const dashboard = swept[0];
       if (dashboard === undefined) return null;
@@ -404,10 +528,19 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       // on "you have no dashboards" while the org still has plenty. Re-point
       // when something survives, delete only when nothing does — one rule
       // covering both halves of "the active one and the last one can both go".
+      //
+      // dashboard.orgId (the DELETED dashboard's own org), not the caller's
+      // orgId — a shared (cross-org) caller deleting this dashboard must still
+      // re-point the HOST org's own members to a survivor in THAT org, not
+      // search the caller's unrelated org. A guest whose own active dashboard
+      // was this one gets re-pointed too (the update below isn't org-filtered),
+      // and if that lands them on a dashboard they in turn can't reach,
+      // GET /v1/dashboards/active's own dashboardAccessible check hides it and
+      // they read as "none selected" — safe, if not perfectly tailored to them.
       const survivors = await tx
         .select({ id: dashboards.id })
         .from(dashboards)
-        .where(and(eq(dashboards.orgId, orgId), isNull(dashboards.archivedAt)))
+        .where(and(eq(dashboards.orgId, dashboard.orgId), isNull(dashboards.archivedAt)))
         // Same total order as the tile grid above, so the survivor everyone
         // lands on is the leftmost tile they can see.
         .orderBy(asc(dashboards.createdAt), asc(dashboards.id))
@@ -426,7 +559,8 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       // The CALLER's resulting selection, read back rather than assumed: a
       // caller who had a different dashboard open keeps it, and only someone who
       // was actually looking at the deleted one moves to the survivor. Same
-      // join, org check and archived filter as GET /v1/dashboards/active.
+      // join, dashboardAccessible check and archived filter as
+      // GET /v1/dashboards/active.
       const active = await tx
         .select({
           id: dashboards.id,
@@ -438,7 +572,7 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         .where(
           and(
             eq(activeDashboards.userId, userId),
-            eq(dashboards.orgId, orgId),
+            dashboardAccessible(orgId, userId),
             isNull(dashboards.archivedAt),
           ),
         );
@@ -474,5 +608,504 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       archivedAgentCount: result.archivedAgentIds.length,
       activeDashboard: result.activeDashboard,
     };
+  });
+
+  /**
+   * The share dialog's list: who created this dashboard, plus everyone it's
+   * been shared with. Gated by resolveDashboardId, which already carries the
+   * cross-org dashboardAccessible check — anyone who can already reach this
+   * dashboard (the host's own org, or an explicit dashboard_members grant)
+   * can see who else has access.
+   */
+  app.get<{ Params: { id: string } }>("/v1/dashboards/:id/members", async (req, reply) => {
+    const orgId = req.activeOrgId!;
+    const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
+    // Neither query depends on the other's result, so they run concurrently
+    // rather than as two sequential round trips.
+    const [[row], memberRows] = await Promise.all([
+      db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId)),
+      db
+        .select({
+          userId: dashboardMembers.userId,
+          addedAt: dashboardMembers.addedAt,
+          role: dashboardMembers.role,
+        })
+        .from(dashboardMembers)
+        .where(eq(dashboardMembers.dashboardId, scope.dashboardId))
+        .orderBy(asc(dashboardMembers.addedAt)),
+    ]);
+
+    const [host, memberUsers] = await Promise.all([
+      row?.createdBy != null ? findUserById(row.createdBy) : Promise.resolve(null),
+      findUsersByIds(memberRows.map((m) => m.userId)),
+    ]);
+
+    // One batched lookup instead of one per member, then re-joined back onto
+    // memberRows so the addedAt ordering above is preserved (a Map/array from
+    // the batched call carries no ordering guarantee of its own).
+    const usersById = new Map(memberUsers.map((u) => [u.id, u]));
+    const members = memberRows
+      .map((m) => {
+        const user = usersById.get(m.userId);
+        return user === undefined
+          ? null
+          : { ...user, addedAt: m.addedAt.toISOString(), role: m.role };
+      })
+      .filter((m) => m !== null);
+
+    return { host, members };
+  });
+
+  /**
+   * Grants one user access to this dashboard by email — the "add" half of the
+   * share dialog. Looks the email up against Better Auth's own user table
+   * (see findUserByEmail's doc comment): there's no email-sending integration
+   * in this codebase, so an email with no account 404s rather than queuing an
+   * invite. Idempotent: adding the same person twice is a 200, not a 409 —
+   * matches this api's existing taste for "a repeat of an already-true action
+   * succeeds" (see DELETE /v1/dashboards/:id's own repeat-delete-is-success
+   * rule above).
+   */
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/v1/dashboards/:id/members",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      // The 6th gated action (PLAN.md) — a cross-org member with
+      // addDashboardMember switched off on their role can't invite anyone
+      // else in. scope.orgId is the dashboard's own org; a same-org caller
+      // (the host or their org-mate) always bypasses, matching the full
+      // parity this route already gave them before per-role gating existed.
+      if (
+        !(await canPerformDashboardAction(
+          scope.dashboardId,
+          scope.orgId,
+          orgId,
+          req.authUser!.id,
+          "addDashboardMember",
+        ))
+      ) {
+        reply.code(403);
+        return {
+          error: "dashboard_permission_denied",
+          message: "Your role doesn't allow adding members to this dashboard.",
+        };
+      }
+
+      const body =
+        typeof req.body === "object" && req.body !== null
+          ? (req.body as Record<string, unknown>)
+          : null;
+      const rawEmail = body?.["email"];
+      if (typeof rawEmail !== "string" || rawEmail.trim() === "") {
+        reply.code(400);
+        return { error: "invalid_body" };
+      }
+
+      // Better Auth lowercases every email at sign-up (its sign-up route calls
+      // email.toLowerCase() before storing), so a lookup that doesn't do the
+      // same falsely 404s a real account typed or pasted with any uppercase.
+      const target = await findUserByEmail(rawEmail.trim().toLowerCase());
+      if (target === null) {
+        reply.code(404);
+        return {
+          error: "dashboard_member_user_not_found",
+          message: "No Tollgate account found with that email.",
+        };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      // The host already has full access via dashboardAccessible's org branch,
+      // so inserting them into dashboard_members would be a second, redundant
+      // grant — and unlike a repeat add of a real guest, the unique index
+      // can't catch it (this would be their FIRST row, not a conflicting
+      // one). Left unguarded, it duplicates the host in this same list AND
+      // makes their own dashboard wrongly appear on their own
+      // /dashboards/shared page (that route has no reason to exclude its own
+      // createdBy from a membership-scoped query).
+      if (dashboardRow?.createdBy === target.id) {
+        reply.code(400);
+        return {
+          error: "dashboard_member_is_host",
+          message: "You cannot add your own account to a dashboard.",
+        };
+      }
+
+      // ON CONFLICT DO NOTHING makes a repeat add a no-op rather than a unique-
+      // index violation. RETURNING covers the common, non-conflicting insert
+      // in one round trip; a conflicting insert returns no row (Postgres
+      // doesn't emit RETURNING for a row ON CONFLICT DO NOTHING skipped), so
+      // the idempotent-repeat-add path falls back to a follow-up select.
+      const [inserted] = await db
+        .insert(dashboardMembers)
+        .values({ dashboardId: scope.dashboardId, userId: target.id })
+        .onConflictDoNothing({
+          target: [dashboardMembers.dashboardId, dashboardMembers.userId],
+        })
+        .returning({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role });
+
+      let addedAt = inserted?.addedAt;
+      // Re-added via the idempotent-repeat-add path below, not read from the
+      // conflicting insert — so this has to be the row's CURRENT role, not the
+      // 'observer' default, in case the host already reassigned it before this
+      // repeat add.
+      let role = inserted?.role;
+      if (addedAt === undefined || role === undefined) {
+        const [existing] = await db
+          .select({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role })
+          .from(dashboardMembers)
+          .where(
+            and(
+              eq(dashboardMembers.dashboardId, scope.dashboardId),
+              eq(dashboardMembers.userId, target.id),
+            ),
+          );
+        addedAt = existing?.addedAt ?? new Date();
+        role = existing?.role ?? "observer";
+      }
+
+      reply.code(201);
+      return { ...target, addedAt: addedAt.toISOString(), role };
+    },
+  );
+
+  /**
+   * Reassigns a member's role — host-only. This is a NEW authorization check,
+   * not an extension of dashboardAccessible: every other route in this file
+   * deliberately treats host and member as equal (see that predicate's doc
+   * comment), but only the host may change who has which role. resolveDashboardId
+   * still runs first so a non-host member (or org-mate) gets the same
+   * dashboard_not_found 404 as anyone else for a dashboard they can't reach at
+   * all — the host check below is a second, narrower gate on top of it, checked
+   * before the role value so an unauthorized caller learns nothing about
+   * whether their payload would otherwise have been valid.
+   *
+   * The host is never a dashboard_members row (see schema.ts), so PATCHing the
+   * host's own id updates zero rows and falls into the same 404 branch as a
+   * userId that was never a member — no separate "that's the host" check is
+   * needed the way POST's add-by-email route needs one, because there the host
+   * doesn't exist as a candidate row to accidentally match in the first place.
+   */
+  app.patch<{ Params: { id: string; userId: string }; Body: unknown }>(
+    "/v1/dashboards/:id/members/:userId",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can change a member's role.",
+        };
+      }
+
+      const body =
+        typeof req.body === "object" && req.body !== null
+          ? (req.body as Record<string, unknown>)
+          : null;
+      const rawRole = body?.["role"];
+      if (!isDashboardMemberRole(rawRole)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const [updated] = await db
+        .update(dashboardMembers)
+        .set({ role: rawRole })
+        .where(
+          and(
+            eq(dashboardMembers.dashboardId, scope.dashboardId),
+            eq(dashboardMembers.userId, req.params.userId),
+          ),
+        )
+        .returning({ role: dashboardMembers.role });
+
+      if (updated === undefined) {
+        reply.code(404);
+        return { error: "dashboard_member_not_found" };
+      }
+
+      return { userId: req.params.userId, role: updated.role };
+    },
+  );
+
+  /**
+   * The role-permission delegation popup's data source — host-only, same
+   * resolveDashboardId -> createdBy === caller gate as the role/removal
+   * routes above. Accepts any DashboardMemberRole, not just Observer — the
+   * dropdown only offers Observer this round (PLAN.md's scope), but there's
+   * no reason to reject Helper/Manager/Moderator/Admin at the api layer just
+   * because the UI doesn't expose them yet.
+   */
+  app.get<{ Params: { id: string; role: string } }>(
+    "/v1/dashboards/:id/permissions/:role",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can view role permissions.",
+        };
+      }
+
+      if (!isDashboardMemberRole(req.params.role)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const permissions = await fetchRolePermissions(scope.dashboardId, req.params.role);
+      return { role: req.params.role, permissions };
+    },
+  );
+
+  /**
+   * Sets one or more of a role's 6 action toggles in a single call — the
+   * delegation popup's save. Same host-only gate and any-role acceptance as
+   * the GET above; the host check runs before the role/body are even parsed
+   * so an unauthorized caller learns nothing about whether their payload
+   * would otherwise have been valid, same ordering as the role-PATCH route.
+   */
+  app.patch<{ Params: { id: string; role: string }; Body: unknown }>(
+    "/v1/dashboards/:id/permissions/:role",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can change role permissions.",
+        };
+      }
+
+      if (!isDashboardMemberRole(req.params.role)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const parsed = parsePermissionsBody(req.body);
+      if (!parsed.ok) {
+        reply.code(400);
+        return { error: "invalid_body" };
+      }
+
+      const role = req.params.role;
+      // Each (dashboardId, role, action) upsert targets a distinct row, so
+      // these can run concurrently rather than as a sequential round trip per
+      // toggle — at most 6 of them, and none conflicts with another.
+      await Promise.all(
+        Object.entries(parsed.permissions).map(([action, enabled]) =>
+          db
+            .insert(dashboardRolePermissions)
+            .values({ dashboardId: scope.dashboardId, role, action: action as DashboardPermissionAction, enabled })
+            .onConflictDoUpdate({
+              target: [
+                dashboardRolePermissions.dashboardId,
+                dashboardRolePermissions.role,
+                dashboardRolePermissions.action,
+              ],
+              set: { enabled },
+            }),
+        ),
+      );
+
+      const permissions = await fetchRolePermissions(scope.dashboardId, role);
+      return { role, permissions };
+    },
+  );
+
+  /**
+   * Removes a member's access — host-only, same gate as the role PATCH above
+   * (resolveDashboardId for scope/404, then createdBy === caller for 403,
+   * before any further logic — see that route's doc comment for why the
+   * ordering matters). A hard DELETE, not a soft one: unlike dashboards
+   * itself, nothing references dashboard_members by FK (no agents, no
+   * spend_events), so there's no billing history a hard delete could
+   * destroy. That also means re-adding the same person later
+   * (POST .../members, unchanged) inserts a genuinely fresh row — their role
+   * resets to the schema default (observer) rather than remembering
+   * whatever tier they held before removal.
+   *
+   * Same "the host is never a dashboard_members row" fact the PATCH route's
+   * doc comment notes: there's no separate "can't remove the host" check
+   * needed, because a userId equal to the host's id was never a candidate
+   * row to begin with — it just falls into the same 404 as any other id
+   * that was never a member.
+   */
+  app.delete<{ Params: { id: string; userId: string } }>(
+    "/v1/dashboards/:id/members/:userId",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can remove a member.",
+        };
+      }
+
+      const deleted = await db
+        .delete(dashboardMembers)
+        .where(
+          and(
+            eq(dashboardMembers.dashboardId, scope.dashboardId),
+            eq(dashboardMembers.userId, req.params.userId),
+          ),
+        )
+        .returning({ userId: dashboardMembers.userId });
+
+      if (deleted.length === 0) {
+        reply.code(404);
+        return { error: "dashboard_member_not_found" };
+      }
+
+      return { userId: req.params.userId };
+    },
+  );
+
+  /**
+   * "What can I personally do here" — deliberately NOT host-gated, unlike GET
+   * .../permissions/:role above (which reveals a specific ROLE's full
+   * configuration and stays reserved for the host managing it). Any caller who
+   * can already reach this dashboard is entitled to know their own standing on
+   * it; this is what lets the frontend hide/disable actions a restricted
+   * Observer's role doesn't currently allow, rather than only relying on the
+   * 403 from actually trying (PLAN.md's frontend work).
+   */
+  app.get<{ Params: { id: string } }>("/v1/dashboards/:id/my-permissions", async (req, reply) => {
+    const orgId = req.activeOrgId!;
+    const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
+    const entries = await Promise.all(
+      DASHBOARD_PERMISSION_ACTIONS.map(
+        async (action) =>
+          [
+            action,
+            await canPerformDashboardAction(
+              scope.dashboardId,
+              scope.orgId,
+              orgId,
+              req.authUser!.id,
+              action,
+            ),
+          ] as const,
+      ),
+    );
+
+    return { permissions: Object.fromEntries(entries) as Record<DashboardPermissionAction, boolean> };
+  });
+
+  /**
+   * Dashboards shared WITH the caller — the data source for /dashboards/shared
+   * (claude-docs/PLANS.md's slice 5 left this page a static stub for exactly
+   * this route to fill in later). Scoped by dashboard_members.user_id, not by
+   * org: sharing is deliberately cross-org (see PLAN.md's D1), so this is a
+   * different query shape from GET /v1/dashboards, not a variant of it.
+   */
+  app.get("/v1/dashboards/shared", async (req) => {
+    const userId = req.authUser!.id;
+    const rows = await db
+      .select({
+        id: dashboards.id,
+        name: dashboards.name,
+        createdAt: dashboards.createdAt,
+        agentCount: sql<number>`count(${agents.id})`.mapWith(Number),
+        liveAgentCount: sql<number>`count(${agents.id}) filter (where ${agents.status} in ('active', 'pending'))`.mapWith(
+          Number,
+        ),
+      })
+      .from(dashboardMembers)
+      .innerJoin(
+        dashboards,
+        and(eq(dashboards.id, dashboardMembers.dashboardId), isNull(dashboards.archivedAt)),
+      )
+      .leftJoin(
+        agents,
+        and(eq(agents.dashboardId, dashboards.id), ne(agents.status, "archived")),
+      )
+      .where(eq(dashboardMembers.userId, userId))
+      .groupBy(dashboards.id, dashboards.name, dashboards.createdAt)
+      .orderBy(asc(dashboards.createdAt), asc(dashboards.id));
+
+    return rows.map(
+      (row): DashboardListJson => ({
+        ...toJson(row),
+        agentCount: row.agentCount,
+        liveAgentCount: row.liveAgentCount,
+      }),
+    );
   });
 }
