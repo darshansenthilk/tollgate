@@ -11,12 +11,14 @@ import {
   applyUpdated,
 } from "@/lib/agent-list-updates";
 import {
+  addDashboardMember,
   ApiError,
   createAgent,
   deleteAgent,
   freezeAgent,
   getActiveDashboard,
   listAgents,
+  listDashboardMembers,
   listUpstreamKeys,
   renameDashboard,
   unfreezeAgent,
@@ -205,6 +207,11 @@ export default function AgentsPage() {
           renameDashboard={async (name) => {
             setActiveDashboard(await renameDashboard(activeDashboard.id, name));
           }}
+          // Same inline-closure-over-the-narrowed-dashboard pattern as
+          // renameDashboard above — AgentDashboard stays decoupled from which
+          // dashboard is active and from lib/api itself.
+          listDashboardMembers={() => listDashboardMembers(activeDashboard.id)}
+          addDashboardMember={(email) => addDashboardMember(activeDashboard.id, email)}
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

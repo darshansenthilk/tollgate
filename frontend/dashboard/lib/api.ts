@@ -150,6 +150,8 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   invalid_upstream_key: "That key isn't valid for this agent's provider.",
   upstream_credential_incomplete:
     "This provider key is missing something it needs — re-save it in Settings.",
+  dashboard_member_user_not_found: "No Tollgate account found with that email.",
+  dashboard_member_is_host: "That's you — you already have full access as this dashboard's host.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -483,4 +485,51 @@ export function deleteDashboard(id: string): Promise<DeleteDashboardResponse> {
   return request<DeleteDashboardResponse>(`/v1/dashboards/${id}`, {
     method: "DELETE",
   });
+}
+
+/** One person with access to a dashboard — the host, or someone added to it. */
+export interface DashboardUser {
+  id: string;
+  email: string;
+}
+
+/** A DashboardUser plus when they were added — only added members carry this,
+ *  not the host. */
+export interface DashboardMember extends DashboardUser {
+  addedAt: string;
+}
+
+/** What GET /v1/dashboards/:id/members answers with — the share dialog's list. */
+export interface DashboardMembersResponse {
+  /** Whoever created the dashboard. Can be null for a dashboard whose org had
+   *  no "owner"-role member to backfill onto at migration time — the dialog
+   *  should treat that as "unknown host", not throw. */
+  host: DashboardUser | null;
+  members: DashboardMember[];
+}
+
+/** The share dialog's list of who currently has access. */
+export function listDashboardMembers(dashboardId: string): Promise<DashboardMembersResponse> {
+  return request<DashboardMembersResponse>(`/v1/dashboards/${dashboardId}/members`);
+}
+
+/**
+ * Grants one user access to a dashboard by email. 404s as
+ * dashboard_member_user_not_found when the email has no Tollgate account —
+ * there's no email-sending integration in this app, so that's a dead end for
+ * now rather than a pending invite. Adding someone already on the list
+ * succeeds again rather than erroring (the api makes this idempotent).
+ */
+export function addDashboardMember(dashboardId: string, email: string): Promise<DashboardMember> {
+  return request<DashboardMember>(`/v1/dashboards/${dashboardId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+/** Dashboards shared WITH the caller (they're in dashboard_members, not the
+ *  host) — the data source for /dashboards/shared. Cross-org by design: see
+ *  PLAN.md's D1. */
+export function listSharedDashboards(): Promise<DashboardListItem[]> {
+  return request<DashboardListItem[]>("/v1/dashboards/shared");
 }

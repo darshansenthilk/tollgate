@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, dashboards, spendEvents } from "../db/schema.js";
-import { resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
+import { dashboardAccessible, resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
 
 /**
  * The activity feed behind the dashboard's log panel: every request one
@@ -36,7 +36,7 @@ export function registerActivityRoutes(app: FastifyInstance): void {
     const orgId = req.activeOrgId!;
     const limit = parseLimit(req.query.limit);
 
-    const scope = await resolveDashboardId(req.query.dashboardId, orgId);
+    const scope = await resolveDashboardId(req.query.dashboardId, orgId, req.authUser!.id);
     if (!scope.ok) {
       reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
       return { error: scope.error };
@@ -63,8 +63,10 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       .from(spendEvents)
       .innerJoin(agents, eq(agents.id, spendEvents.agentId))
       // orgId is kept alongside dashboardId for the same defence-in-depth reason
-      // GET /v1/agents keeps it — see that route's comment.
-      .where(and(eq(agents.dashboardId, scope.dashboardId), eq(agents.orgId, orgId)))
+      // GET /v1/agents keeps it — see that route's comment. scope.orgId (the
+      // dashboard's own org), not the caller's orgId variable — a shared caller
+      // legitimately has a different one (PLAN.md's dashboard sharing).
+      .where(and(eq(agents.dashboardId, scope.dashboardId), eq(agents.orgId, scope.orgId)))
       .orderBy(desc(spendEvents.createdAt))
       .limit(limit);
 
@@ -117,6 +119,10 @@ export function registerActivityRoutes(app: FastifyInstance): void {
       // scoping of its own. The spend_events rows themselves are untouched and
       // stay in Postgres for billing; being reachable through the app is the half
       // that has to look deleted.
+      //
+      // dashboardAccessible, not eq(agents.orgId, orgId): a shared (cross-org)
+      // member drilling into one agent's activity from a shared dashboard needs
+      // the same access this route's dashboard-wide sibling above already has.
       const owned = await db
         .select({ id: agents.id })
         .from(agents)
@@ -124,7 +130,7 @@ export function registerActivityRoutes(app: FastifyInstance): void {
         .where(
           and(
             eq(agents.id, req.params.id),
-            eq(agents.orgId, orgId),
+            dashboardAccessible(orgId, req.authUser!.id),
             isNull(dashboards.archivedAt),
           ),
         );

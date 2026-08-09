@@ -14,7 +14,7 @@ import {
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { agents, dashboards, policies, orgUpstreamKeys } from "../db/schema.js";
-import { resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
+import { dashboardAccessible, resolveDashboardId, UUID_RE } from "../lib/dashboard-scope.js";
 import { hashToken, generateToken } from "../lib/tokens.js";
 
 interface CreateAgentBody {
@@ -200,8 +200,13 @@ function parseFreezeBody(body: unknown): { mode: "soft" | "hard" } | null {
 
 /**
  * Shared lookup for the policy/freeze/unfreeze/delete/update routes. Scoped to
- * the caller's org: an id belonging to another org resolves to null (-> 404), so
- * cross-account isolation is enforced right here rather than in each handler.
+ * dashboardAccessible (the caller's own org, OR an explicit dashboard_members
+ * share grant — see PLAN.md's dashboard sharing): an id belonging to a
+ * dashboard the caller can't reach resolves to null (-> 404), so cross-account
+ * isolation is enforced right here rather than in each handler. Also returns
+ * the dashboard's OWN org (dashboardOrgId) — a shared caller's req.activeOrgId
+ * is NOT that org, so anything downstream that needs to check or stamp an org
+ * (upstreamKeyBelongsToProvider) has to use dashboardOrgId, not the caller's.
  *
  * IT ALSO REFUSES GONE AGENTS, and that guard lives here rather than in each
  * route on purpose: it is what stops the entire family of mutations from
@@ -230,12 +235,14 @@ function parseFreezeBody(body: unknown): { mode: "soft" | "hard" } | null {
 async function findAgent(
   id: string,
   orgId: string,
+  userId: string,
 ): Promise<{
   id: string;
   policyId: string | null;
   status: AgentStatus;
   providerSlug: string;
   dashboardId: string;
+  dashboardOrgId: string;
 } | null> {
   if (!UUID_RE.test(id)) return null;
 
@@ -250,16 +257,18 @@ async function findAgent(
       // Needed by PATCH's rename clash check, which is scoped to the agent's own
       // dashboard now that names are unique per dashboard rather than per org.
       dashboardId: agents.dashboardId,
+      dashboardOrgId: dashboards.orgId,
     })
     .from(agents)
     // The join is the second of the two conditions above — findAgent never
     // looked at the dashboard before, which is exactly how unfreeze could reach
-    // into a deleted one.
+    // into a deleted one. It's also what dashboardAccessible checks against, so
+    // a shared caller resolves this exactly like an org-owning one does.
     .innerJoin(dashboards, eq(dashboards.id, agents.dashboardId))
     .where(
       and(
         eq(agents.id, id),
-        eq(agents.orgId, orgId),
+        dashboardAccessible(orgId, userId),
         ne(agents.status, "archived"),
         isNull(dashboards.archivedAt),
       ),
@@ -296,7 +305,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     // fixing it means deleting and recreating — and deriving it from stored
     // selection state would misfile the agent whenever the two disagree (another
     // tab, a stale page). Requiring it makes the request say what it means.
-    const scope = await resolveDashboardId(body.dashboardId, orgId);
+    const scope = await resolveDashboardId(body.dashboardId, orgId, req.authUser!.id);
     if (!scope.ok) {
       reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
       return { error: scope.error };
@@ -304,7 +313,10 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
 
     if (
       body.upstreamKeyId !== null &&
-      !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, orgId, body.providerSlug))
+      // scope.orgId, not orgId: the vault a BYOK key must belong to is the
+      // DASHBOARD's own org (its host's), which a shared caller's own org can
+      // differ from — see resolveDashboardId's DashboardScopeResult doc.
+      !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, scope.orgId, body.providerSlug))
     ) {
       reply.code(400);
       return { error: "invalid_upstream_key" };
@@ -341,9 +353,13 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     // 1:1 dedicated policy per agent (not a shared template) — see the schema
     // module doc comment for why: PATCH /v1/agents/:id/policy must not have a
     // blast radius onto other agents.
+    //
+    // scope.orgId, not orgId: a policy's org has to match the agent's (and
+    // therefore the dashboard's) own org, which a shared caller's own org can
+    // differ from.
     await db.insert(policies).values({
       id: policyId,
-      orgId,
+      orgId: scope.orgId,
       name: `${body.name} policy`,
       budgetCents: body.maxBudgetCents ?? 0,
       maxBudgetCents: body.maxBudgetCents,
@@ -370,12 +386,24 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     // and Postgres then re-evaluates the predicate against the new row version
     // and matches nothing. Either the agent is created before the sweep (and the
     // sweep archives it) or it is never created at all.
+    //
+    // dashboardAccessible (lib/dashboard-scope.ts) is interpolated directly into
+    // this raw SQL rather than hand-copied — its SQL chunks splice into any
+    // sql`` template, this CTE included, so the FOR SHARE lock's need for raw
+    // SQL doesn't force a second hand-written copy of the sharing predicate to
+    // drift out of sync with the shared one.
+    //
+    // ${scope.orgId} for the inserted row's org_id, NOT the caller's orgId — the
+    // agent has to belong to the DASHBOARD's own org regardless of who (host or
+    // shared guest) is creating it. resolveDashboardId already resolved and
+    // returned that value; the CTE below only needs to re-check the dashboard
+    // is still live and reachable, not re-derive its org.
     const inserted = await db.execute(sql`
       with live as materialized (
         select "id"
         from "dashboards"
         where "id" = ${scope.dashboardId}::uuid
-          and "org_id" = ${orgId}
+          and ${dashboardAccessible(orgId, req.authUser!.id)}
           and "archived_at" is null
         for share
       )
@@ -384,7 +412,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         "provider_slug", "model", "policy_id", "token_hash", "upstream_key_id"
       )
       select
-        ${agentId}::uuid, ${orgId}, live."id", ${body.name},
+        ${agentId}::uuid, ${scope.orgId}, live."id", ${body.name},
         ${body.providerSlug}, ${body.model}::text, ${policyId}::uuid,
         ${tokenHash}, ${body.upstreamKeyId}::uuid
       from live
@@ -424,7 +452,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     // omitted id used to mean "every agent in the org", which is exactly the
     // behaviour that made all dashboards show the same list — leaving that as a
     // silent default would keep the bug one forgotten parameter away.
-    const scope = await resolveDashboardId(req.query.dashboardId, orgId);
+    const scope = await resolveDashboardId(req.query.dashboardId, orgId, req.authUser!.id);
     if (!scope.ok) {
       reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
       return { error: scope.error };
@@ -444,10 +472,13 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       // Three independent filters, all load-bearing:
       //   dashboardId — the whole point of this endpoint; dashboards don't share
       //     agents, so this is what makes them independent of one another.
-      //   orgId — kept even though dashboardId already implies it (the dashboard
-      //     was resolved against this same org). Cross-account isolation should
-      //     not rest on that inference: if the dashboard scoping ever regresses,
-      //     the failure stays inside one account instead of leaking across them.
+      //   orgId — kept even though dashboardId already implies it, as
+      //     defence-in-depth: if the dashboard scoping above ever regresses, the
+      //     failure stays contained instead of leaking across accounts.
+      //     scope.orgId (the DASHBOARD's own org), not the caller's req.activeOrgId
+      //     — dashboard sharing (PLAN.md) means those can legitimately differ for
+      //     a shared caller, and this filter is asserting agents.orgId matches
+      //     its own dashboard, not matching whoever's asking.
       //   status — archived agents are DELETE /v1/agents/:id's result (an
       //     archive, not a hard row delete). Excluding them is what makes delete
       //     stick from the dashboard's perspective: without it, an archived agent
@@ -456,7 +487,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       .where(
         and(
           eq(agents.dashboardId, scope.dashboardId),
-          eq(agents.orgId, orgId),
+          eq(agents.orgId, scope.orgId),
           ne(agents.status, "archived"),
         ),
       );
@@ -496,7 +527,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     "/v1/agents/:id",
     async (req, reply) => {
       const orgId = req.activeOrgId!;
-      const agent = await findAgent(req.params.id, orgId);
+      const agent = await findAgent(req.params.id, orgId, req.authUser!.id);
       // findAgent is org-scoped, so another org's id already reads as null here
       // — and since it also excludes archived agents and agents in deleted
       // dashboards, so does everything the UI treats as gone. (The archived
@@ -560,7 +591,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       if (
         body.upstreamKeyId !== undefined &&
         body.upstreamKeyId !== null &&
-        !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, orgId, agent.providerSlug))
+        // agent.dashboardOrgId, not orgId — same reasoning as POST /v1/agents.
+        !(await upstreamKeyBelongsToProvider(body.upstreamKeyId, agent.dashboardOrgId, agent.providerSlug))
       ) {
         reply.code(400);
         return { error: "invalid_upstream_key" };
@@ -618,7 +650,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     "/v1/agents/:id/policy",
     async (req, reply) => {
       const orgId = req.activeOrgId!;
-      const agent = await findAgent(req.params.id, orgId);
+      const agent = await findAgent(req.params.id, orgId, req.authUser!.id);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
@@ -652,7 +684,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       // org-scoped findAgent), not the agent's own token: a logged-in org member
       // can stop any agent in their org. The raw agent token remains the auth
       // only for the agent -> proxy path.
-      const agent = await findAgent(req.params.id, orgId);
+      const agent = await findAgent(req.params.id, orgId, req.authUser!.id);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
@@ -684,7 +716,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     async (req, reply) => {
       const orgId = req.activeOrgId!;
       // Session + org membership authorizes this (see the freeze route).
-      const agent = await findAgent(req.params.id, orgId);
+      const agent = await findAgent(req.params.id, orgId, req.authUser!.id);
       if (agent === null) {
         reply.code(404);
         return { error: "agent_not_found" };
@@ -703,7 +735,7 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
 
   app.delete<{ Params: { id: string } }>("/v1/agents/:id", async (req, reply) => {
     const orgId = req.activeOrgId!;
-    const agent = await findAgent(req.params.id, orgId);
+    const agent = await findAgent(req.params.id, orgId, req.authUser!.id);
     if (agent === null) {
       reply.code(404);
       return { error: "agent_not_found" };
