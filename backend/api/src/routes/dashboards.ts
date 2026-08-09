@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { freezeKey } from "@tollgate/shared";
+import { DASHBOARD_MEMBER_ROLE_RANK, freezeKey, type DashboardMemberRole } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { activeDashboards, agents, dashboardMembers, dashboards } from "../db/schema.js";
 // The shape guard this file used to define locally, now shared with
@@ -85,6 +85,16 @@ function parseNameBody(body: unknown): NameParseResult {
 
 function toJson(row: { id: string; name: string; createdAt: Date }): DashboardJson {
   return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };
+}
+
+/** DASHBOARD_MEMBER_ROLE_RANK's keys are exactly the 5 valid roles — reusing
+ *  it here means the wire-validation set can't drift from @tollgate/shared's
+ *  own union. */
+function isDashboardMemberRole(value: unknown): value is DashboardMemberRole {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(DASHBOARD_MEMBER_ROLE_RANK, value)
+  );
 }
 
 /** A member/host entry in the share dialog's list. */
@@ -589,7 +599,11 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         .from(dashboards)
         .where(eq(dashboards.id, scope.dashboardId)),
       db
-        .select({ userId: dashboardMembers.userId, addedAt: dashboardMembers.addedAt })
+        .select({
+          userId: dashboardMembers.userId,
+          addedAt: dashboardMembers.addedAt,
+          role: dashboardMembers.role,
+        })
         .from(dashboardMembers)
         .where(eq(dashboardMembers.dashboardId, scope.dashboardId))
         .orderBy(asc(dashboardMembers.addedAt)),
@@ -607,7 +621,9 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
     const members = memberRows
       .map((m) => {
         const user = usersById.get(m.userId);
-        return user === undefined ? null : { ...user, addedAt: m.addedAt.toISOString() };
+        return user === undefined
+          ? null
+          : { ...user, addedAt: m.addedAt.toISOString(), role: m.role };
       })
       .filter((m) => m !== null);
 
@@ -673,7 +689,7 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         reply.code(400);
         return {
           error: "dashboard_member_is_host",
-          message: "That's you — you already have full access as this dashboard's host.",
+          message: "You cannot add your own account to a dashboard.",
         };
       }
 
@@ -688,12 +704,17 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         .onConflictDoNothing({
           target: [dashboardMembers.dashboardId, dashboardMembers.userId],
         })
-        .returning({ addedAt: dashboardMembers.addedAt });
+        .returning({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role });
 
       let addedAt = inserted?.addedAt;
-      if (addedAt === undefined) {
+      // Re-added via the idempotent-repeat-add path below, not read from the
+      // conflicting insert — so this has to be the row's CURRENT role, not the
+      // 'observer' default, in case the host already reassigned it before this
+      // repeat add.
+      let role = inserted?.role;
+      if (addedAt === undefined || role === undefined) {
         const [existing] = await db
-          .select({ addedAt: dashboardMembers.addedAt })
+          .select({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role })
           .from(dashboardMembers)
           .where(
             and(
@@ -702,10 +723,84 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
             ),
           );
         addedAt = existing?.addedAt ?? new Date();
+        role = existing?.role ?? "observer";
       }
 
       reply.code(201);
-      return { ...target, addedAt: addedAt.toISOString() };
+      return { ...target, addedAt: addedAt.toISOString(), role };
+    },
+  );
+
+  /**
+   * Reassigns a member's role — host-only. This is a NEW authorization check,
+   * not an extension of dashboardAccessible: every other route in this file
+   * deliberately treats host and member as equal (see that predicate's doc
+   * comment), but only the host may change who has which role. resolveDashboardId
+   * still runs first so a non-host member (or org-mate) gets the same
+   * dashboard_not_found 404 as anyone else for a dashboard they can't reach at
+   * all — the host check below is a second, narrower gate on top of it, checked
+   * before the role value so an unauthorized caller learns nothing about
+   * whether their payload would otherwise have been valid.
+   *
+   * The host is never a dashboard_members row (see schema.ts), so PATCHing the
+   * host's own id updates zero rows and falls into the same 404 branch as a
+   * userId that was never a member — no separate "that's the host" check is
+   * needed the way POST's add-by-email route needs one, because there the host
+   * doesn't exist as a candidate row to accidentally match in the first place.
+   */
+  app.patch<{ Params: { id: string; userId: string }; Body: unknown }>(
+    "/v1/dashboards/:id/members/:userId",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can change a member's role.",
+        };
+      }
+
+      const body =
+        typeof req.body === "object" && req.body !== null
+          ? (req.body as Record<string, unknown>)
+          : null;
+      const rawRole = body?.["role"];
+      if (!isDashboardMemberRole(rawRole)) {
+        reply.code(400);
+        return {
+          error: "invalid_dashboard_member_role",
+          message: "That's not a role this dashboard recognizes.",
+        };
+      }
+
+      const [updated] = await db
+        .update(dashboardMembers)
+        .set({ role: rawRole })
+        .where(
+          and(
+            eq(dashboardMembers.dashboardId, scope.dashboardId),
+            eq(dashboardMembers.userId, req.params.userId),
+          ),
+        )
+        .returning({ role: dashboardMembers.role });
+
+      if (updated === undefined) {
+        reply.code(404);
+        return { error: "dashboard_member_not_found" };
+      }
+
+      return { userId: req.params.userId, role: updated.role };
     },
   );
 

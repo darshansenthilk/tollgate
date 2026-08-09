@@ -52,6 +52,14 @@ export const spendDecisionEnum = pgEnum("spend_decision", [
   "denied_frozen",
 ]);
 
+export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", [
+  "observer",
+  "helper",
+  "manager",
+  "moderator",
+  "admin",
+]);
+
 // ---------------------------------------------------------------------------
 // Policies
 //
@@ -385,6 +393,13 @@ export const dashboardMembers = pgTable(
      *  above and dashboards.createdBy. */
     userId: text("user_id").notNull(),
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Assignable permission tier, defaulted to the lowest (observer) on every
+     * add. Assignment + display only for now — no route reads this to gate
+     * anything (see PLAN.md's D2); it exists so the host-only PATCH endpoint
+     * and the share dialog's dropdown have somewhere to write and read.
+     */
+    role: dashboardMemberRoleEnum("role").notNull().default("observer"),
   },
   (table) => [
     // Adding the same person twice is a no-op, not a second row — the routes

@@ -1,4 +1,4 @@
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, DashboardMemberRole } from "@tollgate/shared";
 import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -151,7 +151,8 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   upstream_credential_incomplete:
     "This provider key is missing something it needs — re-save it in Settings.",
   dashboard_member_user_not_found: "No Tollgate account found with that email.",
-  dashboard_member_is_host: "That's you — you already have full access as this dashboard's host.",
+  dashboard_member_is_host: "You cannot add your own account to a dashboard.",
+  dashboard_member_not_found: "That person no longer has access to this dashboard.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -493,10 +494,12 @@ export interface DashboardUser {
   email: string;
 }
 
-/** A DashboardUser plus when they were added — only added members carry this,
- *  not the host. */
+/** A DashboardUser plus when they were added and their role — only added
+ *  members carry either, not the host (the host isn't a dashboard_members
+ *  row; see schema.ts). */
 export interface DashboardMember extends DashboardUser {
   addedAt: string;
+  role: DashboardMemberRole;
 }
 
 /** What GET /v1/dashboards/:id/members answers with — the share dialog's list. */
@@ -525,6 +528,33 @@ export function addDashboardMember(dashboardId: string, email: string): Promise<
     method: "POST",
     body: JSON.stringify({ email }),
   });
+}
+
+/** What PATCH /v1/dashboards/:id/members/:userId answers with — just enough
+ *  to patch the one row that changed in local state, not a full DashboardMember
+ *  (the api doesn't re-look-up the target's email for this). */
+export interface UpdateDashboardMemberRoleResponse {
+  userId: string;
+  role: DashboardMemberRole;
+}
+
+/**
+ * Reassigns a member's role. Host-only — the api 403s as dashboard_host_required
+ * for any other caller, including another member. Never called for the host's
+ * own row, which has no role to change (see DashboardMember's doc comment).
+ */
+export function updateDashboardMemberRole(
+  dashboardId: string,
+  userId: string,
+  role: DashboardMemberRole,
+): Promise<UpdateDashboardMemberRoleResponse> {
+  return request<UpdateDashboardMemberRoleResponse>(
+    `/v1/dashboards/${dashboardId}/members/${userId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    },
+  );
 }
 
 /** Dashboards shared WITH the caller (they're in dashboard_members, not the

@@ -23,6 +23,7 @@ import {
   renameDashboard,
   unfreezeAgent,
   updateAgent,
+  updateDashboardMemberRole,
   type AgentListItem,
   type CreateAgentInput,
   type CreateAgentResponse,
@@ -212,6 +213,9 @@ export default function AgentsPage() {
           // dashboard is active and from lib/api itself.
           listDashboardMembers={() => listDashboardMembers(activeDashboard.id)}
           addDashboardMember={(email) => addDashboardMember(activeDashboard.id, email)}
+          updateDashboardMemberRole={(userId, role) =>
+            updateDashboardMemberRole(activeDashboard.id, userId, role)
+          }
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

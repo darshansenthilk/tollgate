@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties } from "react";
 import { Bot, Pencil, Plug, Users } from "lucide-react";
-import type { AgentStatus } from "@tollgate/shared";
+import type { AgentStatus, DashboardMemberRole } from "@tollgate/shared";
 import {
   Card,
   CardAction,
@@ -51,6 +51,7 @@ import type {
   DashboardMembersResponse,
   UpdateAgentInput,
   UpdateAgentResponse,
+  UpdateDashboardMemberRoleResponse,
   UpstreamKeysResponse,
 } from "@/lib/api";
 
@@ -154,6 +155,13 @@ interface AgentDashboardProps {
    */
   listDashboardMembers?: () => Promise<DashboardMembersResponse>;
   addDashboardMember?: (email: string) => Promise<DashboardMember>;
+  /** Host-only role reassignment — see ShareDashboardDialog's own doc comment
+   *  for why only the host ever calls this. Gated together with the two props
+   *  above; the marketing demo supplies none of the three. */
+  updateDashboardMemberRole?: (
+    userId: string,
+    role: DashboardMemberRole,
+  ) => Promise<UpdateDashboardMemberRoleResponse>;
 }
 
 /**
@@ -176,6 +184,7 @@ export function AgentDashboard({
   renameDashboard,
   listDashboardMembers,
   addDashboardMember,
+  updateDashboardMemberRole,
 }: AgentDashboardProps) {
   const [renamingDashboard, setRenamingDashboard] = useState(false);
   const [sharingDashboard, setSharingDashboard] = useState(false);
@@ -630,6 +639,7 @@ export function AgentDashboard({
           dashboardName={dashboardName}
           listDashboardMembers={listDashboardMembers}
           addDashboardMember={addDashboardMember}
+          updateDashboardMemberRole={updateDashboardMemberRole}
           onOpenChange={setSharingDashboard}
         />
       )}

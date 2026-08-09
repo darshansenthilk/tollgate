@@ -619,6 +619,34 @@ export type SpendDecision =
   | "denied_endpoint"
   | "denied_frozen";
 
+// ---------------------------------------------------------------------------
+// Dashboard member roles
+// ---------------------------------------------------------------------------
+
+/**
+ * A dashboard_members row's assignable role, low to high: observer (default on
+ * add, no permissions) < helper < manager < moderator < admin. Host is
+ * deliberately not a member of this union — it's dashboards.createdBy, a
+ * separate column, not a dashboard_members value (see schema.ts). This slice
+ * only adds assignment + display; no route enforces what any of these ranks
+ * can or cannot do yet.
+ */
+export type DashboardMemberRole =
+  | "observer"
+  | "helper"
+  | "manager"
+  | "moderator"
+  | "admin";
+
+/** Numeric rank for comparing two roles, matching the low-to-high order above. */
+export const DASHBOARD_MEMBER_ROLE_RANK: Record<DashboardMemberRole, number> = {
+  observer: 0,
+  helper: 1,
+  manager: 2,
+  moderator: 3,
+  admin: 4,
+};
+
 /** One governed request — the immutable audit-log unit. */
 export interface SpendEvent {
   id: string;

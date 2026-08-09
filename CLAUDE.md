@@ -28,6 +28,8 @@ pnpm workspace, four packages:
 
 **Denials are logged like successes.** Every rejected request (frozen, over budget) still writes a `spend_events` row via `recordDenial` / `spendLog.record`, with its own `decision` value, so the dashboard's activity log shows *why* a request was blocked instead of just going quiet. Any new gate should follow this same pattern rather than short-circuiting silently.
 
+**Version Control** Do not perform any version control actions (commit, push, fetch, merge, etc.) unless prompted by the user. You are allowed to suggest version control practices, such as when something needs to be committed, pushed, merged, etc.
+
 ## Working with agents on this repo
 
 Small team, no near-term hires — prefer extending an existing interface over introducing a new one, and keep PRs the size of a single adapter or a single dashboard feature.
@@ -36,3 +38,5 @@ Small team, no near-term hires — prefer extending an existing interface over i
 - **Parallelize with worktrees, not shared branches** — when two tasks don't overlap in files, run them as separate agent sessions with isolated worktrees so they don't collide, then review and merge each independently.
 - **Security-sensitive code gets a real review pass, always.** That's most of `backend/proxy` — it handles vaulted upstream credentials and AWS SigV4 signing. Don't merge agent-authored changes there on a green test run alone; run a code review pass first, and use the heavier multi-agent review for anything touching `vault.ts`, `aws-sigv4.ts`, or credential handling in an adapter.
 - **No speculative abstractions.** If a task only needs one provider or one feature, don't generalize for a second one that doesn't exist yet — three similar lines beat a premature interface, same as everywhere else in this codebase.
+
+
