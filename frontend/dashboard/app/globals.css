@@ -21,7 +21,7 @@
      #f2a742) — those read as pale/washed-out on white and fail text-contrast
      at this weight; darkening preserves the hue while restoring contrast. */
   --ok: #1f9d5c;
-  --err: #d92d20;
+  --err: #bf281c;
   --amber: #b5760a;
   /* Brand coral — the single warm accent, confined to brand chrome (logo mark,
      title, focus rings, primary CTAs). Never functional status: budget state
@@ -588,7 +588,7 @@ body {
   --line: rgba(255, 255, 255, 0.14);
   --ink: #ededed;
   --ok: #46c47f;
-  --err: #ff5c5c;
+  --err: #e05151;
   --amber: #f2a742;
   --brand: #ff4a3d;
   --muted-ink: #a1a1a1;
