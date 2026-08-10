@@ -1,58 +1,74 @@
 # PLAN.md
 
-## What shipped, what's outstanding (as of this writing)
+## What shipped this round (condensed recap)
 
-The role-permission-delegation feature (HardHat button, per-role action toggles) is **built and
-already live on `main`** (pushed to origin as `a6de787`, before any review ran — Eshaan merged/pushed
-it himself mid-epic). This session's work was a follow-up round on top of that, not a new feature:
+Continuation of the role-permission-delegation feature (HardHat popup) — this round was all fix/polish
+work on top of it, no new-feature planning. Three commits, **all committed AND pushed to
+`origin/Eshaan-feature-permissions` by Eshaan already** (see this round's git-state warning below —
+confirmed via `git rev-list --left-right --count origin/...HEAD` reading `0 0`, with no successful
+`git fetch` run this session, so the only way the local `origin/...` ref could show that is Eshaan pushing
+himself):
 
-1. **Security review (inline, since a background `/code-review xhigh` workflow hit the account's
-   session usage limit and returned a false "no findings")** found 2 real bugs, both fixed and
-   curl-verified against live Postgres/Redis: `DELETE`/`PATCH /v1/dashboards/:id` (delete/rename)
-   had no host check — any shared member of any role, even one with all 6 new toggles off, could
-   delete or rename a dashboard. Now gated the same way the sibling member-role/member-delete/
-   permissions routes already were (`resolveDashboardId` → `createdBy === caller`, `403
-   dashboard_host_required` otherwise).
-2. **Unrelated bug also found + fixed**: `/agents` was 500ing for every account. Root cause: the
-   earlier `main`-merge collided two independently-generated Drizzle migrations both numbered
-   `0012` (this branch's `dashboard_members` one vs. `main`'s `tool_approval_requests`/
-   `policies.*`/`spend_events.prompt` one) — the journal only kept one chain, silently dropping
-   `main`'s migration from ever running against local Postgres even though `schema.ts` and the
-   query code already assumed it had. Fixed by restoring the corrupted snapshot file, deleting the
-   orphaned SQL, and regenerating cleanly via `pnpm db:generate` → `0015_lazy_warstar.sql` → `pnpm
-   db:migrate`. Verified live.
-3. **Hit a dev-environment gotcha mid-session**: `pnpm dev:api`'s `tsx watch` did not hot-reload the
-   route fix (WSL inotify issue) — the running process was hours stale. Diagnosed via `/health`'s
-   `uptimeSec` never resetting across the edit; fixed by killing the whole process tree and
-   restarting. **If a backend edit doesn't seem to take effect, check for this before assuming the
-   code is wrong.**
+1. **`80653af` "Fixed dashboard sharing error messages"** — `POST /v1/dashboards/:id/members` used to say
+   "You cannot add your own account to a dashboard" for BOTH a true self-add AND for adding the dashboard's
+   host by someone else, and silently no-op'd (200, no message) when re-adding an existing regular member.
+   Restructured into three distinct outcomes: self-add → `400 dashboard_member_is_self` ("You cannot add
+   yourself to this dashboard."), target-is-host → `400 dashboard_member_is_host`, target-already-a-member
+   → `400 dashboard_member_already_exists` (removed the old `ON CONFLICT DO NOTHING` idempotent-success
+   fallback) — both latter cases now say "You cannot add an account that is already in this dashboard."
+   Frontend (`lib/api.ts` fallback copy, a stale comment in `share-dashboard-dialog.tsx`) updated to match.
 
-**Full narrative + verification detail for all of the above is in `claude-docs/COMPLETION.md`**
-(new entry at the top) — this file stays condensed per Eshaan's `<3k` token budget for it.
+2. **`0a19137` "Added toggle color to UI"** — two unrelated changes bundled in one commit:
+   - **Host-only gating for the rename pencil and HardHat permissions button** (`agent-dashboard.tsx`):
+     both are hard host-only actions on the api, not among the 6 delegatable toggles, so any shared member
+     (any role) was previously seeing both and getting a 403 on click. `GET
+     /v1/dashboards/:id/my-permissions` now also returns `isHost: boolean`; threaded through
+     `app/agents/page.tsx` (new `isHost` state, fetched in the same call as `myPermissions`, same
+     fail-open-while-loading convention) into `AgentDashboard`'s new `isHost` prop, gating both buttons
+     and the `CardAction` wrapper condition.
+   - **Red/green fill on the permission toggle switches** (`share-permissions-dialog.tsx`): off → red, on →
+     green, via inline `style={{ backgroundColor: enabled ? "var(--ok)" : "var(--err)" }}` at the one call
+     site — the shared `Switch` primitive (`components/ui/switch.tsx`) itself was left untouched since this
+     red/green semantic is specific to "toggle = allow/deny," not a generic switch look, and `Switch` has no
+     other consumer in the app right now.
 
-## Current repo state — VERIFY BEFORE TRUSTING (Eshaan pushes mid-session unannounced)
+3. **`78e35aa` "Darkened red toggle"** — `--err` darkened ~12% (hue preserved) in `globals.css`, both theme
+   variants: light `#d92d20`→`#bf281c`, dark `#ff5c5c`→`#e05151`. Ambiguous which theme Eshaan was viewing
+   when he asked, so both got the same proportional shift rather than guessing one.
 
-- Branch `Eshaan-feature-permissions`, HEAD `a6de787` (same as `main` — both point at the merge that
-  includes the untested permissions feature).
-- Uncommitted in the working tree: `backend/api/src/routes/dashboards.ts` (the host-check fix),
-  `backend/api/drizzle/meta/0012_snapshot.json` (restored), `backend/api/drizzle/0012_curved_wolfpack.sql`
-  (deleted), `backend/api/drizzle/0015_lazy_warstar.sql` + `meta/0015_snapshot.json` (new, generated).
-  **`main` currently has the unpatched dashboard rename/delete bug and the broken `/agents` migration
-  state live** until these are committed and pushed.
-- `pnpm --filter @tollgate/api typecheck` clean. Dev servers: api (:4000) and dashboard (:3000) both
-  up and healthy as of this writing; Postgres/Redis reachable (Docker Desktop running on the Windows
-  host).
+Also answered a **research-only question this round, no code touched**: confirmed a light/dark toggle
+exists (`components/theme-toggle.tsx`, rendered on Settings → Appearance), just not in the main nav.
+
+`pnpm --filter @tollgate/api typecheck` and `pnpm --filter @tollgate/dashboard typecheck` both clean after
+every change above.
+
+## Current repo state — VERIFY BEFORE TRUSTING (Eshaan pushes mid-session unannounced, every commit, not
+just finished features — confirmed again this round on 3 small unrelated fixes)
+
+- Branch `Eshaan-feature-permissions`, HEAD `78e35aa`, **in sync with `origin/Eshaan-feature-permissions`**
+  (already pushed). Working tree clean.
+- `main` (local and origin) is still at `a6de787` — **this branch has NOT been merged into `main` yet**, so
+  `main` still lacks everything above AND still has the two bugs from the prior round live (dashboard
+  rename/delete missing a host check; the `/agents` 500 from the migration-numbering collision) — both were
+  fixed on this branch in `638e6e6`, which is also not yet in `main`.
+- Dev servers: api (`tsx watch`, :4000) and dashboard (`next dev`, :3000) both up, Postgres/Redis reachable.
 
 ## Not done yet
 
-- **No browser check of the original permissions feature itself** — the HardHat popup's toggle UI,
-  and action-hiding for a restricted Observer, have never been visually confirmed (only curl +
-  typecheck). The rename/delete fix specifically WAS confirmed live in-browser by Eshaan.
-- **Nothing from this round is committed or pushed.**
+- **Nothing from this round has been browser- or curl-verified** — everything above (the 3-way add-member
+  error split, the host-only icon gating, the toggle colors, the red darkening) has only been typechecked,
+  never actually exercised live. This is the natural next step.
+- **The HardHat popup's own toggle UI itself has still never been browser-checked** (carried over from
+  before this round too) — only the rename/delete security fix specifically was, by Eshaan, live.
+- This branch is unmerged into `main` — `main` is currently behind on both features and bugfixes.
 
 ## Where to pick up
 
-1. Ask Eshaan whether to commit + push the fixes above (flag clearly: `main` has the bugs live).
-2. Browser-check the HardHat popup: toggle each of the 6 actions as host, confirm a restricted
-   Observer's corresponding UI actions actually hide/disable (not just 403 on click).
-3. If Eshaan raises something else instead, treat that as the real next task.
+1. If Eshaan wants a browser pass: check the add-member 3-way split (self-add, host-add, repeat-add of a
+   real member all show their own correct message), confirm the pencil/HardHat icons are hidden for a
+   non-host shared member and shown for the host, and eyeball the toggle red/green + darkened shade in both
+   themes.
+2. If Eshaan raises something else instead, treat that as the real next task — don't assume browser
+   verification is next just because it's the logical follow-up.
+3. Merging this branch into `main` hasn't been discussed this round — don't assume it's wanted; ask first
+   if it comes up.

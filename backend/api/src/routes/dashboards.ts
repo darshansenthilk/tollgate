@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
-  DASHBOARD_MEMBER_ROLE_RANK,
+  DASHBOARD_MEMBER_ROLES,
   DASHBOARD_PERMISSION_ACTIONS,
   freezeKey,
   type DashboardMemberRole,
@@ -94,14 +94,10 @@ function toJson(row: { id: string; name: string; createdAt: Date }): DashboardJs
   return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };
 }
 
-/** DASHBOARD_MEMBER_ROLE_RANK's keys are exactly the 5 valid roles — reusing
- *  it here means the wire-validation set can't drift from @tollgate/shared's
- *  own union. */
+/** DASHBOARD_MEMBER_ROLES is exactly the valid roles — reusing it here means
+ *  the wire-validation set can't drift from @tollgate/shared's own union. */
 function isDashboardMemberRole(value: unknown): value is DashboardMemberRole {
-  return (
-    typeof value === "string" &&
-    Object.prototype.hasOwnProperty.call(DASHBOARD_MEMBER_ROLE_RANK, value)
-  );
+  return typeof value === "string" && (DASHBOARD_MEMBER_ROLES as readonly string[]).includes(value);
 }
 
 /** DASHBOARD_PERMISSION_ACTIONS is exactly the 6 gated actions — reusing it
@@ -875,10 +871,10 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
   /**
    * The role-permission delegation popup's data source — host-only, same
    * resolveDashboardId -> createdBy === caller gate as the role/removal
-   * routes above. Accepts any DashboardMemberRole, not just Observer — the
-   * dropdown only offers Observer this round (PLAN.md's scope), but there's
-   * no reason to reject Helper/Manager/Moderator/Admin at the api layer just
-   * because the UI doesn't expose them yet.
+   * routes above. `:role` is still validated against the full
+   * DashboardMemberRole union rather than hardcoding "observer": the union is
+   * the single place a future second role gets added, and this route needs no
+   * change when it is.
    */
   app.get<{ Params: { id: string; role: string } }>(
     "/v1/dashboards/:id/permissions/:role",
@@ -918,8 +914,8 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
 
   /**
    * Sets one or more of a role's 6 action toggles in a single call — the
-   * delegation popup's save. Same host-only gate and any-role acceptance as
-   * the GET above; the host check runs before the role/body are even parsed
+   * delegation popup's save. Same host-only gate and union-based role
+   * validation as the GET above; the host check runs before the role/body are even parsed
    * so an unauthorized caller learns nothing about whether their payload
    * would otherwise have been valid, same ordering as the role-PATCH route.
    */

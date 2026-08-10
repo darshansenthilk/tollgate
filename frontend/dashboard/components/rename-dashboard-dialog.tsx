@@ -88,7 +88,15 @@ export function RenameDashboardDialog({
       <DialogContent>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Rename dashboard</DialogTitle>
+            {/* Two separate block-level lines rather than one wrapping string —
+                a short name would otherwise sit inline right after "Rename
+                dashboard" while only a long one wrapped, so the quoted name's
+                line position depended on its length. Splitting into two spans
+                forces the name onto its own line regardless of how short it is. */}
+            <DialogTitle className="flex flex-col gap-1">
+              <span>Rename dashboard</span>
+              <span>&quot;{currentName}&quot;</span>
+            </DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col gap-1.5">

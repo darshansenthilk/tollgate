@@ -720,28 +720,24 @@ export type SpendDecision =
 // ---------------------------------------------------------------------------
 
 /**
- * A dashboard_members row's assignable role, low to high: observer (default on
- * add, no permissions) < helper < manager < moderator < admin. Host is
- * deliberately not a member of this union — it's dashboards.createdBy, a
- * separate column, not a dashboard_members value (see schema.ts). This slice
- * only adds assignment + display; no route enforces what any of these ranks
- * can or cannot do yet.
+ * A dashboard_members row's assignable role. Observer — the default on add,
+ * and the only role a host can delegate toggles to — is currently the whole
+ * union: Helper/Manager/Moderator/Admin existed as named-but-inert tiers and
+ * were removed once it was clear nothing distinguished them (they carried no
+ * permissions of their own, only Observer's toggles were ever configurable).
+ * Host is deliberately not a member of this union — it's dashboards.createdBy,
+ * a separate column, not a dashboard_members value (see schema.ts).
+ *
+ * Adding a second role means: a value here, a value in schema.ts's matching
+ * pgEnum (plus a migration), and a label in the dashboard's ROLE_LABELS.
  */
-export type DashboardMemberRole =
-  | "observer"
-  | "helper"
-  | "manager"
-  | "moderator"
-  | "admin";
+export type DashboardMemberRole = "observer";
 
-/** Numeric rank for comparing two roles, matching the low-to-high order above. */
-export const DASHBOARD_MEMBER_ROLE_RANK: Record<DashboardMemberRole, number> = {
-  observer: 0,
-  helper: 1,
-  manager: 2,
-  moderator: 3,
-  admin: 4,
-};
+/** Exhaustive over DashboardMemberRole, in the role dropdown's display order —
+ *  the api's wire validation and the share dialog's option list both walk this
+ *  rather than each keeping a hand-typed copy, the same way
+ *  DASHBOARD_PERMISSION_ACTIONS below serves the toggle list. */
+export const DASHBOARD_MEMBER_ROLES: readonly DashboardMemberRole[] = ["observer"];
 
 /**
  * The 6 dashboard actions a host can delegate to a role, one on/off toggle

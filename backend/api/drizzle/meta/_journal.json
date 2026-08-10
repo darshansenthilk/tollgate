@@ -113,6 +113,13 @@
       "when": 1786328832601,
       "tag": "0015_lazy_warstar",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786388037421,
+      "tag": "0016_wet_tarantula",
+      "breakpoints": true
     }
   ]
 }

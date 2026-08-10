@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { DASHBOARD_PERMISSION_ACTIONS, type DashboardMemberRole, type DashboardPermissionAction } from "@tollgate/shared";
+import { DASHBOARD_MEMBER_ROLES, DASHBOARD_PERMISSION_ACTIONS, type DashboardMemberRole, type DashboardPermissionAction } from "@tollgate/shared";
 import {
   Dialog,
   DialogContent,
@@ -30,15 +30,23 @@ const ACTION_LABELS: Record<DashboardPermissionAction, string> = {
   addDashboardMember: "Add dashboard members",
 };
 
+/** Display copy for each role. Typed as an exhaustive Record so adding a role
+ *  to @tollgate/shared's union is a compile error here until it gets a label —
+ *  the same guard ShareDashboardDialog's own ROLE_LABELS gives. */
+const ROLE_LABELS: Record<DashboardMemberRole, string> = {
+  observer: "Observer",
+};
+
 /**
- * Roles the dropdown offers — deliberately just Observer this round (PLAN.md:
- * "Scope for this round: Observer only"). Widening this to
- * Helper/Manager/Moderator/Admin later is just adding entries here; nothing
- * else in this component assumes there's only one.
+ * Roles the dropdown offers — Observer is currently the whole union (see
+ * DashboardMemberRole for why Helper/Manager/Moderator/Admin were removed).
+ * Derived from the shared list rather than hand-typed so a role added there
+ * shows up here automatically; nothing else in this component assumes there's
+ * only one.
  */
-const ROLE_OPTIONS: { value: DashboardMemberRole; label: string }[] = [
-  { value: "observer", label: "Observer" },
-];
+const ROLE_OPTIONS: { value: DashboardMemberRole; label: string }[] = DASHBOARD_MEMBER_ROLES.map(
+  (value) => ({ value, label: ROLE_LABELS[value] }),
+);
 
 interface SharePermissionsDialogProps {
   open: boolean;

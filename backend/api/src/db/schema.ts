@@ -68,13 +68,10 @@ export const toolApprovalStatusEnum = pgEnum("tool_approval_status", [
   "denied",
 ]);
 
-export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", [
-  "observer",
-  "helper",
-  "manager",
-  "moderator",
-  "admin",
-]);
+/** Mirrors @tollgate/shared's DashboardMemberRole — see that union for why
+ *  Helper/Manager/Moderator/Admin were dropped (0016 demotes any surviving row
+ *  to observer before narrowing the type). */
+export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", ["observer"]);
 
 export const dashboardPermissionActionEnum = pgEnum("dashboard_permission_action", [
   "createAgent",

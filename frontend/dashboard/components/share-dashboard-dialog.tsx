@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { X } from "lucide-react";
-import { DASHBOARD_MEMBER_ROLE_RANK, type DashboardMemberRole } from "@tollgate/shared";
+import { DASHBOARD_MEMBER_ROLES, type DashboardMemberRole } from "@tollgate/shared";
 import {
   Dialog,
   DialogContent,
@@ -30,24 +30,17 @@ import {
 } from "@/lib/api";
 
 /** Display copy for each role — keyed by the wire value so a lookup can't
- *  drift out of sync with @tollgate/shared's union. */
+ *  drift out of sync with @tollgate/shared's union. Observer is the whole
+ *  union today (see DashboardMemberRole for why the other four went away), so
+ *  the Record is a one-liner that a second role would force an update to. */
 const ROLE_LABELS: Record<DashboardMemberRole, string> = {
   observer: "Observer",
-  helper: "Helper",
-  manager: "Manager",
-  moderator: "Moderator",
-  admin: "Admin",
 };
 
-/** Dropdown lists highest rank first (top of the open menu), lowest last —
- *  PLAN.md's "Admin, Moderator, Manager, Helper, Observer" top-to-bottom.
- *  Derived from DASHBOARD_MEMBER_ROLE_RANK rather than hand-typed, so a role
- *  added to the shared union can't silently go missing from this list the way
- *  a parallel hand-maintained array could — Object.keys is exhaustive over
- *  the rank map's own keys by construction. */
-const ROLE_OPTIONS = (Object.keys(DASHBOARD_MEMBER_ROLE_RANK) as DashboardMemberRole[]).sort(
-  (a, b) => DASHBOARD_MEMBER_ROLE_RANK[b] - DASHBOARD_MEMBER_ROLE_RANK[a],
-);
+/** The dropdown's options, straight off the shared list rather than a parallel
+ *  hand-maintained array, so a role added to the union can't silently go
+ *  missing here. */
+const ROLE_OPTIONS = DASHBOARD_MEMBER_ROLES;
 
 interface ShareDashboardDialogProps {
   open: boolean;
