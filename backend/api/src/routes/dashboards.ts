@@ -352,13 +352,33 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
     "/v1/dashboards/:id",
     async (req, reply) => {
       const orgId = req.activeOrgId!;
-      if (!UUID_RE.test(req.params.id)) {
-        reply.code(404);
-        return { error: "dashboard_not_found" };
+
+      // Host-only, same resolveDashboardId -> createdBy === caller gate as the
+      // member-role/permissions routes below — renaming isn't one of the 6
+      // delegatable actions (@tollgate/shared's DASHBOARD_PERMISSION_ACTIONS
+      // doc comment), so it stays a hard host check rather than a toggle, same
+      // as removing a member. Checked before parseNameBody for the same
+      // "unauthorized caller learns nothing about their payload" reason those
+      // routes give.
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
       }
 
-      // Validate before the org lookup so a malformed body can't be used to
-      // probe which dashboard ids exist — a bad name 400s either way.
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can rename it.",
+        };
+      }
+
       const parsed = parseNameBody(req.body);
       if (!parsed.ok) {
         reply.code(400);
@@ -370,25 +390,13 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
           : { error: "invalid_body" };
       }
 
-      // The where clause is the authorization check, so an id the caller can't
-      // reach (another org's, with no share grant) updates zero rows and reads
-      // as 404 (see the select route). dashboardAccessible, not a plain org
-      // check — a shared caller can rename a dashboard shared with them, same
-      // full-parity behaviour every dashboard-scoped route gives a share grant
-      // for now (PLAN.md: tiered permissions are explicitly future work).
-      // Returning the updated row means no follow-up read. archived_at joins
-      // that where clause for the same reason — otherwise a stale tab renames a
-      // dashboard nobody can see and gets a 200 for it.
+      // archived_at joins the where clause so a stale tab can't rename a
+      // dashboard that was deleted in the gap between the checks above and
+      // here. Returning the updated row means no follow-up read.
       const updated = await db
         .update(dashboards)
         .set({ name: parsed.name })
-        .where(
-          and(
-            eq(dashboards.id, req.params.id),
-            dashboardAccessible(orgId, req.authUser!.id),
-            isNull(dashboards.archivedAt),
-          ),
-        )
+        .where(and(eq(dashboards.id, scope.dashboardId), isNull(dashboards.archivedAt)))
         .returning({
           id: dashboards.id,
           name: dashboards.name,
@@ -464,9 +472,32 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
   app.delete<{ Params: { id: string } }>("/v1/dashboards/:id", async (req, reply) => {
     const orgId = req.activeOrgId!;
     const userId = req.authUser!.id;
-    if (!UUID_RE.test(req.params.id)) {
-      reply.code(404);
-      return { error: "dashboard_not_found" };
+
+    // Host-only, same resolveDashboardId -> createdBy === caller gate as the
+    // member-role/permissions/rename routes — deleting isn't one of the 6
+    // delegatable actions (@tollgate/shared's DASHBOARD_PERMISSION_ACTIONS doc
+    // comment), so a shared caller (any role, even one with every toggle
+    // enabled) can never trigger it. createdBy is immutable once a dashboard
+    // exists, so checking it here rather than inside the transaction below
+    // can't race: there's no window where this passes and the row's host
+    // subsequently changes.
+    const scope = await resolveDashboardId(req.params.id, orgId, userId);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
+    const [hostRow] = await db
+      .select({ createdBy: dashboards.createdBy })
+      .from(dashboards)
+      .where(eq(dashboards.id, scope.dashboardId));
+
+    if (hostRow?.createdBy !== userId) {
+      reply.code(403);
+      return {
+        error: "dashboard_host_required",
+        message: "Only this dashboard's host can delete it.",
+      };
     }
 
     // One transaction, because a half-applied delete is the exact failure the
@@ -477,28 +508,16 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
     // OUTSIDE this transaction. Everything below is inlined on `tx` for that
     // reason — don't refactor it back out into a helper that takes no tx.
     const result = await db.transaction(async (tx) => {
-      // Claiming the row and authorizing are the same statement. `archived_at IS
-      // NULL` also makes a repeat delete match zero rows, which is what turns a
-      // double-click or a two-tab race into a plain 404 (no new status code
-      // needed) — and the FOR NO KEY UPDATE this takes is what a concurrent
-      // create or select then has to queue behind.
-      //
-      // dashboardAccessible, not a plain org check: for now a shared caller can
-      // delete a dashboard shared with them, same full-parity behaviour every
-      // dashboard-scoped route gives a share grant until tiered permissions
-      // exist (PLAN.md). orgId is also read back here (not assumed to equal the
-      // caller's) — the survivor search below needs the DASHBOARD's own org,
-      // which a shared (cross-org) caller's own orgId is not.
+      // The host check above already authorized this delete; this statement's
+      // job is just to atomically claim the row. `archived_at IS NULL` makes a
+      // repeat delete match zero rows, which is what turns a double-click or a
+      // two-tab race into a plain 404 (no new status code needed) — and the
+      // FOR NO KEY UPDATE this takes is what a concurrent create or select then
+      // has to queue behind.
       const swept = await tx
         .update(dashboards)
         .set({ archivedAt: new Date() })
-        .where(
-          and(
-            eq(dashboards.id, req.params.id),
-            dashboardAccessible(orgId, userId),
-            isNull(dashboards.archivedAt),
-          ),
-        )
+        .where(and(eq(dashboards.id, scope.dashboardId), isNull(dashboards.archivedAt)))
         .returning({ id: dashboards.id, name: dashboards.name, orgId: dashboards.orgId });
 
       const dashboard = swept[0];
