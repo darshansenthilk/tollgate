@@ -688,10 +688,9 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
    * share dialog. Looks the email up against Better Auth's own user table
    * (see findUserByEmail's doc comment): there's no email-sending integration
    * in this codebase, so an email with no account 404s rather than queuing an
-   * invite. Idempotent: adding the same person twice is a 200, not a 409 —
-   * matches this api's existing taste for "a repeat of an already-true action
-   * succeeds" (see DELETE /v1/dashboards/:id's own repeat-delete-is-success
-   * rule above).
+   * invite. Rejects (rather than silently no-opping) two cases: adding
+   * yourself, and adding someone who already has access — either an existing
+   * dashboard_members row or the dashboard's own host.
    */
   app.post<{ Params: { id: string }; Body: unknown }>(
     "/v1/dashboards/:id/members",
@@ -746,6 +745,14 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         };
       }
 
+      if (target.id === req.authUser!.id) {
+        reply.code(400);
+        return {
+          error: "dashboard_member_is_self",
+          message: "You cannot add yourself to this dashboard.",
+        };
+      }
+
       const [dashboardRow] = await db
         .select({ createdBy: dashboards.createdBy })
         .from(dashboards)
@@ -763,15 +770,14 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         reply.code(400);
         return {
           error: "dashboard_member_is_host",
-          message: "You cannot add your own account to a dashboard.",
+          message: "You cannot add an account that is already in this dashboard.",
         };
       }
 
-      // ON CONFLICT DO NOTHING makes a repeat add a no-op rather than a unique-
-      // index violation. RETURNING covers the common, non-conflicting insert
-      // in one round trip; a conflicting insert returns no row (Postgres
-      // doesn't emit RETURNING for a row ON CONFLICT DO NOTHING skipped), so
-      // the idempotent-repeat-add path falls back to a follow-up select.
+      // ON CONFLICT DO NOTHING turns a repeat add into a no-op at the database
+      // level rather than a unique-index violation; the check on the returned
+      // row below is what turns that no-op into an explicit error instead of
+      // a silent (and misleading) success.
       const [inserted] = await db
         .insert(dashboardMembers)
         .values({ dashboardId: scope.dashboardId, userId: target.id })
@@ -780,28 +786,16 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         })
         .returning({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role });
 
-      let addedAt = inserted?.addedAt;
-      // Re-added via the idempotent-repeat-add path below, not read from the
-      // conflicting insert — so this has to be the row's CURRENT role, not the
-      // 'observer' default, in case the host already reassigned it before this
-      // repeat add.
-      let role = inserted?.role;
-      if (addedAt === undefined || role === undefined) {
-        const [existing] = await db
-          .select({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role })
-          .from(dashboardMembers)
-          .where(
-            and(
-              eq(dashboardMembers.dashboardId, scope.dashboardId),
-              eq(dashboardMembers.userId, target.id),
-            ),
-          );
-        addedAt = existing?.addedAt ?? new Date();
-        role = existing?.role ?? "observer";
+      if (inserted === undefined) {
+        reply.code(400);
+        return {
+          error: "dashboard_member_already_exists",
+          message: "You cannot add an account that is already in this dashboard.",
+        };
       }
 
       reply.code(201);
-      return { ...target, addedAt: addedAt.toISOString(), role };
+      return { ...target, addedAt: inserted.addedAt.toISOString(), role: inserted.role };
     },
   );
 

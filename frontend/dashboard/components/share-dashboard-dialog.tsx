@@ -184,8 +184,9 @@ export function ShareDashboardDialog({
       if (generation.current !== gen) return;
       // Append in place rather than refetching the whole list — matches
       // "the drop down will still show but now that email has been added".
-      // Re-adding an existing member (the api is idempotent) replaces their
-      // row instead of duplicating it.
+      // The api rejects a repeat add (dashboard_member_already_exists) rather
+      // than no-opping, so a successful response here is always a genuinely
+      // new member — the filter is just defensive against a duplicate key.
       setMembers((prev) => [...prev.filter((m) => m.id !== member.id), member]);
       setEmail("");
     } catch (err) {

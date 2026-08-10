@@ -177,7 +177,9 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   upstream_credential_incomplete:
     "This provider key is missing something it needs — re-save it in Settings.",
   dashboard_member_user_not_found: "No Tollgate account found with that email.",
-  dashboard_member_is_host: "You cannot add your own account to a dashboard.",
+  dashboard_member_is_self: "You cannot add yourself to this dashboard.",
+  dashboard_member_is_host: "You cannot add an account that is already in this dashboard.",
+  dashboard_member_already_exists: "You cannot add an account that is already in this dashboard.",
   dashboard_member_not_found: "That person no longer has access to this dashboard.",
   dashboard_host_required: "Only this dashboard's host can do that.",
   invalid_dashboard_member_role: "That's not a role this dashboard recognizes.",
