@@ -63,6 +63,10 @@ export default function AgentsPage() {
   const [myPermissions, setMyPermissions] = useState<
     Record<DashboardPermissionAction, boolean> | undefined
   >(undefined);
+  // Same fail-open stance as myPermissions above, and fetched alongside it —
+  // gates the two host-only affordances (rename, the permissions popup) that
+  // aren't part of the per-role toggle set.
+  const [isHost, setIsHost] = useState<boolean | undefined>(undefined);
 
   const refresh = useCallback(async (dashboardId: string) => {
     try {
@@ -158,6 +162,7 @@ export default function AgentsPage() {
   useEffect(() => {
     if (activeDashboardId === null) {
       setMyPermissions(undefined);
+      setIsHost(undefined);
       return;
     }
     // One fetch per dashboard selection, not polled like agents above — a
@@ -168,11 +173,14 @@ export default function AgentsPage() {
     let cancelled = false;
     void getMyDashboardPermissions(activeDashboardId)
       .then((res) => {
-        if (!cancelled) setMyPermissions(res.permissions);
+        if (!cancelled) {
+          setMyPermissions(res.permissions);
+          setIsHost(res.isHost);
+        }
       })
       .catch(() => {
-        // Leave it undefined (fail-open) on error — see the state's own doc
-        // comment for why that's the safe default here.
+        // Leave both undefined (fail-open) on error — see the states' own doc
+        // comments for why that's the safe default here.
       });
     return () => {
       cancelled = true;
@@ -280,6 +288,7 @@ export default function AgentsPage() {
             setDashboardRolePermissions(activeDashboard.id, role, permissions)
           }
           myPermissions={myPermissions}
+          isHost={isHost}
           onCreated={handleCreated}
           onStatusChange={handleStatusChange}
           onUpdated={handleUpdated}

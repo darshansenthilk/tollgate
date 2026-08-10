@@ -776,10 +776,12 @@ export function setDashboardRolePermissions(
  * getDashboardRolePermissions above, not host-only: anyone who can reach the
  * dashboard can ask what they personally may do on it. Lets the dashboard
  * hide/disable actions a restricted Observer's role doesn't currently allow,
- * rather than only relying on the 403 from actually trying.
+ * rather than only relying on the 403 from actually trying. `isHost` covers
+ * the two host-only affordances (rename, the permissions popup itself) that
+ * aren't part of `permissions` because they're not delegatable actions.
  */
 export function getMyDashboardPermissions(
   dashboardId: string,
-): Promise<{ permissions: Record<DashboardPermissionAction, boolean> }> {
+): Promise<{ isHost: boolean; permissions: Record<DashboardPermissionAction, boolean> }> {
   return request(`/v1/dashboards/${dashboardId}/my-permissions`);
 }

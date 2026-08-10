@@ -176,19 +176,30 @@ export function SharePermissionsDialog({
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
-              {DASHBOARD_PERMISSION_ACTIONS.map((action) => (
-                <li key={action} className="flex items-center justify-between gap-4">
-                  <Label htmlFor={`permission-${action}`} className="font-normal">
-                    {ACTION_LABELS[action]}
-                  </Label>
-                  <Switch
-                    id={`permission-${action}`}
-                    checked={permissions?.[action] ?? false}
-                    disabled={permissions === null || pendingAction === action}
-                    onCheckedChange={(checked) => void handleToggle(action, checked)}
-                  />
-                </li>
-              ))}
+              {DASHBOARD_PERMISSION_ACTIONS.map((action) => {
+                const enabled = permissions?.[action] ?? false;
+                return (
+                  <li key={action} className="flex items-center justify-between gap-4">
+                    <Label htmlFor={`permission-${action}`} className="font-normal">
+                      {ACTION_LABELS[action]}
+                    </Label>
+                    {/* Red/green fill (not the Switch primitive's default
+                        neutral/primary) — this toggle specifically represents
+                        an allow/deny decision, unlike a generic on/off
+                        setting, so it gets the same --ok/--err semantic
+                        colors the rest of the dashboard uses for that
+                        distinction rather than becoming the shared
+                        component's new default look. */}
+                    <Switch
+                      id={`permission-${action}`}
+                      checked={enabled}
+                      disabled={permissions === null || pendingAction === action}
+                      onCheckedChange={(checked) => void handleToggle(action, checked)}
+                      style={{ backgroundColor: enabled ? "var(--ok)" : "var(--err)" }}
+                    />
+                  </li>
+                );
+              })}
             </ul>
           )}
           {saveError !== null && (

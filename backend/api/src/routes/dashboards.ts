@@ -1053,6 +1053,13 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
    * it; this is what lets the frontend hide/disable actions a restricted
    * Observer's role doesn't currently allow, rather than only relying on the
    * 403 from actually trying (PLAN.md's frontend work).
+   *
+   * `isHost` rides along on the same response for the same reason: rename and
+   * the permissions-management popup itself are both host-only (neither is
+   * one of the 6 delegatable DASHBOARD_PERMISSION_ACTIONS), so there's no
+   * per-role toggle that could ever answer "can I do this" for them the way
+   * `permissions` does — the frontend needs a direct host check to decide
+   * whether to show those two affordances at all.
    */
   app.get<{ Params: { id: string } }>("/v1/dashboards/:id/my-permissions", async (req, reply) => {
     const orgId = req.activeOrgId!;
@@ -1061,6 +1068,11 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
       return { error: scope.error };
     }
+
+    const [dashboardRow] = await db
+      .select({ createdBy: dashboards.createdBy })
+      .from(dashboards)
+      .where(eq(dashboards.id, scope.dashboardId));
 
     const entries = await Promise.all(
       DASHBOARD_PERMISSION_ACTIONS.map(
@@ -1078,7 +1090,10 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       ),
     );
 
-    return { permissions: Object.fromEntries(entries) as Record<DashboardPermissionAction, boolean> };
+    return {
+      isHost: dashboardRow?.createdBy === req.authUser!.id,
+      permissions: Object.fromEntries(entries) as Record<DashboardPermissionAction, boolean>,
+    };
   });
 
   /**

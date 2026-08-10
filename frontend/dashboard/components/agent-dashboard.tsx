@@ -189,6 +189,14 @@ interface AgentDashboardProps {
    * fail-open here is a UI nicety, not a security decision.
    */
   myPermissions?: Record<DashboardPermissionAction, boolean>;
+  /**
+   * Whether the viewer is this dashboard's host — gates the rename pencil and
+   * the HardHat permissions button, neither of which is one of the 6
+   * delegatable actions `myPermissions` covers (both stay hard host checks on
+   * the api, same as removing a member). Same fail-open default as
+   * `myPermissions` when undefined — the api is the real boundary.
+   */
+  isHost?: boolean;
 }
 
 /**
@@ -216,6 +224,7 @@ export function AgentDashboard({
   getDashboardRolePermissions,
   setDashboardRolePermissions,
   myPermissions,
+  isHost,
 }: AgentDashboardProps) {
   const [renamingDashboard, setRenamingDashboard] = useState(false);
   const [sharingDashboard, setSharingDashboard] = useState(false);
@@ -228,6 +237,9 @@ export function AgentDashboard({
   const canUnfreezeAgent = myPermissions?.unfreezeAgent ?? true;
   const canDeleteAgent = myPermissions?.deleteAgent ?? true;
   const canAddDashboardMember = myPermissions?.addDashboardMember ?? true;
+  // Gates the rename pencil and the HardHat permissions button — see isHost's
+  // own doc comment for why neither belongs in myPermissions.
+  const isDashboardHost = isHost ?? true;
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -363,9 +375,12 @@ export function AgentDashboard({
                   actually propagate up through the flex/grid ancestors. */}
               <CardTitle className="min-w-0 wrap-anywhere">{dashboardName}</CardTitle>
               {/* Same button and pen-shake hover as each row's Edit control
-                  below. Rendered only when a rename action is supplied — the
-                  marketing demo has no dashboard to rename. */}
-              {renameDashboard !== undefined && (
+                  below. Rendered only when a rename action is supplied (the
+                  marketing demo has no dashboard to rename) AND the viewer is
+                  the host — renaming is a hard host check on the api, not one
+                  of the 6 delegatable actions, so a restricted viewer's click
+                  would only ever 403. */}
+              {renameDashboard !== undefined && isDashboardHost && (
                 <Button
                   type="button"
                   variant="outline"
@@ -395,14 +410,17 @@ export function AgentDashboard({
               buttons. CardAction wraps a single child, so the flex wrapper
               below holds both — same pattern as the title+rename-pencil pair
               above. Each button is rendered only when its own actions are
-              supplied, so either can be present without the other. */}
+              supplied (and, for the HardHat button, only for the host — see
+              isDashboardHost), so either can be present without the other. */}
           {((getDashboardRolePermissions !== undefined &&
-            setDashboardRolePermissions !== undefined) ||
+            setDashboardRolePermissions !== undefined &&
+            isDashboardHost) ||
             (listDashboardMembers !== undefined && addDashboardMember !== undefined)) && (
             <CardAction>
               <div className="flex items-center gap-2">
                 {getDashboardRolePermissions !== undefined &&
-                  setDashboardRolePermissions !== undefined && (
+                  setDashboardRolePermissions !== undefined &&
+                  isDashboardHost && (
                     <Button
                       type="button"
                       variant="outline"
