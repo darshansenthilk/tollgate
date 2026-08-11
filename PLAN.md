@@ -1,7 +1,8 @@
 # PLAN.md
 
-**Status: the dashboard role-permissions feature is BUILT and verified — backend committed as `efbed52`,
-the popup reshape as `5ed9a7d`. Only the role counter is still uncommitted.**
+**Status: the dashboard role-permissions feature is BUILT, verified, committed and pushed — `efbed52`
+(backend + create/delete), `5ed9a7d` (popup reshape), `be69d1e` (role counter). The first-boot migration
+ordering bug is also fixed, uncommitted.**
 This file is a reference for the feature as it stands. It is not a plan for new work; nothing here is
 outstanding except the one gap named at the bottom.
 
@@ -179,17 +180,34 @@ by Eshaan, who reported it good**: the `+` reveal and its reset on reopen, the f
 create, the confirm panel's placement and role naming, disarm-on-role-switch, Observer having no trash
 button, the in-use refusal keeping the panel open with its count, and the share dialog's in-row remove
 confirmation. That is the **first visual verification this feature has ever had**, across five sessions.
-**The counter itself landed after that pass and has not been looked at** — it is the one piece of this
-round nobody has seen.
+The **role counter** landed after that pass and got its own second pass, also confirmed good — so every
+part of this feature has now been seen in a browser.
 
-## The one open gap
+## Open gaps: none
 
-**A pre-existing first-boot bug, deliberately not fixed:** `0012_zippy_power_man.sql` reads Better Auth's
-`member` table, but `index.ts` boots `runMigrations()` **before** `runAuthMigrations()`, so a genuinely
-fresh database fails 0012 with `42P01`, swallowed as "postgres migration failed; continuing". Existing
-databases are unaffected. The fix is a two-line reorder.
+Both gaps this file used to carry are closed. The browser pass is covered under Verification above; the
+first-boot bug is fixed and described below.
 
-*(The browser-pass gap that sat here for four sessions is closed — see Verification above.)*
+### The first-boot migration order (FIXED)
+
+`index.ts` now calls **`runAuthMigrations()` before `runMigrations()`**. It used to be the other way round,
+and on a genuinely fresh database that failed: `0012_zippy_power_man.sql` backfills `dashboards.created_by`
+by reading Better Auth's `member` table (`org_id` is plain text, so it reaches across by value, not by FK),
+which doesn't exist yet — `42P01`.
+
+**The failure was total, not partial**, which is worse than this file previously claimed. Drizzle's
+migrator runs the whole chain in **one transaction**, so 0012 failing rolled `0000–0011` back out with it,
+and the throw skipped `runAuthMigrations()` entirely, so Better Auth's tables were never created either.
+The `catch` then downgraded all of it to `"postgres migration failed; continuing"` and the api listened
+anyway — on a completely empty database.
+
+**Verified by replay, not by reasoning.** Each order was run into its own scratch database: the old order
+leaves **0** applied migrations, no `member`, no `dashboards.created_by`, no `dashboard_roles`; the new
+order leaves **18** applied and all three present. Both scratch databases were dropped afterwards and the
+dev database was confirmed untouched at 18.
+
+Existing databases were never affected either way — they already have both halves, and both migrators are
+idempotent, so the reorder costs nothing on a database that has already booted once.
 
 ## Deliberately not built
 
@@ -200,12 +218,15 @@ the confirmation panels (both are plain conditional renders).
 
 ## Commit state
 
-Backend and the original feature: **`efbed52`**. The popup reshape (both dialogs, inline confirmations,
-the `+` reveal): **`5ed9a7d`**, "Polished construction hat UI pop up" — committed and pushed by Eshaan
-mid-session.
+Three commits, all pushed:
+- **`efbed52`** — backend, schema, migration `0017`, role create/delete.
+- **`5ed9a7d`** — "Polished construction hat UI pop up": both dialogs, inline confirmations, the `+` reveal.
+- **`be69d1e`** — "Added role counter to construction hat", including the `MAX_ROLES_PER_DASHBOARD` move
+  into `@tollgate/shared`.
 
-**Still uncommitted:** the role counter — `frontend/dashboard/components/share-permissions-dialog.tsx`,
-`backend/shared/src/index.ts`, `backend/api/src/routes/dashboards.ts` — plus this file.
+**Uncommitted:** the migration-order fix — `backend/api/src/index.ts`, `backend/api/src/db/auth-migrate.ts`
+— plus this file.
 
-`main` is at `a6de787` and this branch is **unmerged**. (`git fetch` can't authenticate from this shell, so
-"pushed" is evidenced by the remote-tracking ref being level with HEAD, not by a re-fetch.)
+`main` is at `a6de787` and this branch is **unmerged** — it is three commits ahead. (`git fetch` can't
+authenticate from this shell, so "pushed" is evidenced by the remote-tracking ref being level with HEAD,
+not by a re-fetch.)

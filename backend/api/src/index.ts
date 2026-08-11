@@ -94,10 +94,26 @@ await app.register(async (scope) => {
 
 async function main() {
   try {
-    await runMigrations();
-    app.log.info("postgres migrations applied");
+    // Better Auth FIRST, and the order is load-bearing on a fresh database:
+    // 0012_zippy_power_man.sql backfills dashboards.created_by by reading
+    // Better Auth's "member" table (org_id is plain text, so it reaches across
+    // by value rather than by FK). Run drizzle first and that UPDATE hits a
+    // table that doesn't exist yet — 42P01.
+    //
+    // The damage is total, not partial: drizzle's migrator runs the whole
+    // chain in ONE transaction, so 0012 failing rolls 0000–0011 back out with
+    // it, and the throw skips runAuthMigrations() below, so Better Auth's
+    // tables are never created either. The catch then downgrades all of that
+    // to a warning and the api listens anyway — on an EMPTY database.
+    // (Measured, not reasoned: replaying each order into a scratch database
+    // gives 18 applied migrations this way round and 0 the other.)
+    //
+    // Both migrators are idempotent and nothing Better Auth creates depends on
+    // an app table, so this direction has no cost on an existing database.
     await runAuthMigrations();
     app.log.info("better-auth migrations applied");
+    await runMigrations();
+    app.log.info("postgres migrations applied");
   } catch (err) {
     // Don't crash: /health will report the Postgres failure with detail, and
     // routes that hit missing tables will surface it per-request.
