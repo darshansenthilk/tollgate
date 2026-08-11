@@ -2,14 +2,7 @@
 
 import { useRef, useState } from "react";
 import { X } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -258,6 +251,14 @@ export function ShareDashboardDialog({
   }
 
   return (
+    // One Dialog, no nesting — the remove confirmation is an inline panel in
+    // the member row it targets. Consequence worth stating: Escape now closes
+    // the WHOLE share dialog, including while a removal is in flight, where the
+    // nested confirm dialog used to be topmost and swallow it. Accepted rather
+    // than guarded, matching SharePermissionsDialog: closing mid-request is
+    // already allowed for an in-flight role change, `generation` discards the
+    // response, the request still lands server-side, and the next open refetches
+    // the member list from scratch.
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
@@ -285,58 +286,111 @@ export function ShareDashboardDialog({
                 </li>
               )}
               {members.map((m) => (
-                <li key={m.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="flex min-w-0 items-center gap-1">
-                    <span className="min-w-0 truncate">{m.email}</span>
-                    {viewerEmail !== null && m.email === viewerEmail && (
-                      <span className="shrink-0 text-xs text-muted-foreground">(You)</span>
-                    )}
-                    {isHost && removeDashboardMember !== undefined && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Clear any error left over from a previous target
-                          // row — otherwise it briefly shows on THIS row's
-                          // confirm dialog before any request for it has run.
-                          setRemoveError(null);
-                          setConfirmingRemoveUserId(m.id);
-                        }}
-                        disabled={pendingRoleUserId === m.id || pendingRemoveUserId === m.id}
-                        aria-label={`Remove ${m.email} from this dashboard`}
-                        className="shrink-0 text-muted-foreground outline-none transition-colors hover:text-[var(--err)] disabled:pointer-events-none disabled:opacity-50"
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    )}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    {/* roles.length > 0 as well as the host check: if the
-                        options fetch failed there's nothing to pick from, so
-                        the row falls back to the same plain label a non-host
-                        viewer gets rather than an empty menu. */}
-                    {isHost && updateDashboardMemberRole !== undefined && roles.length > 0 ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
+                <li key={m.id} className="flex flex-col gap-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="min-w-0 truncate">{m.email}</span>
+                      {viewerEmail !== null && m.email === viewerEmail && (
+                        <span className="shrink-0 text-xs text-muted-foreground">(You)</span>
+                      )}
+                      {isHost && removeDashboardMember !== undefined && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Clear any error left over from a previous target
+                            // row — otherwise it briefly shows on THIS row's
+                            // confirmation panel before any request for it has
+                            // run.
+                            setRemoveError(null);
+                            setConfirmingRemoveUserId(m.id);
+                          }}
                           disabled={pendingRoleUserId === m.id || pendingRemoveUserId === m.id}
-                          className="shrink-0 text-xs text-muted-foreground outline-none hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                          aria-label={`Remove ${m.email} from this dashboard`}
+                          aria-expanded={confirmingRemoveUserId === m.id}
+                          className="shrink-0 text-muted-foreground outline-none transition-colors hover:text-[var(--err)] disabled:pointer-events-none disabled:opacity-50"
                         >
-                          {pendingRoleUserId === m.id ? "Updating…" : m.role.name}
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          {roles.map((role) => (
-                            <DropdownMenuItem
-                              key={role.id}
-                              onClick={() => void handleRoleChange(m.id, role.id)}
-                            >
-                              {role.name}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : (
-                      <span className="shrink-0 text-xs text-muted-foreground">{m.role.name}</span>
-                    )}
-                  </span>
+                          <X className="size-3.5" />
+                        </button>
+                      )}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {/* roles.length > 0 as well as the host check: if the
+                          options fetch failed there's nothing to pick from, so
+                          the row falls back to the same plain label a non-host
+                          viewer gets rather than an empty menu. */}
+                      {isHost && updateDashboardMemberRole !== undefined && roles.length > 0 ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            disabled={pendingRoleUserId === m.id || pendingRemoveUserId === m.id}
+                            className="shrink-0 text-xs text-muted-foreground outline-none hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                          >
+                            {pendingRoleUserId === m.id ? "Updating…" : m.role.name}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent>
+                            {roles.map((role) => (
+                              <DropdownMenuItem
+                                key={role.id}
+                                onClick={() => void handleRoleChange(m.id, role.id)}
+                              >
+                                {role.name}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {m.role.name}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Confirmation lives INSIDE the row it targets, not at the
+                      bottom of the dialog: this list can be long enough to
+                      scroll, and a panel anywhere else would ask the host to
+                      remember which of several similar emails they clicked.
+                      Scoping the condition to `m.id` here is also what makes an
+                      orphaned confirmation impossible — if the member leaves
+                      the list, the panel it belongs to is simply not
+                      rendered. */}
+                  {confirmingRemoveUserId === m.id && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
+                      <p>Remove this member from the dashboard?</p>
+
+                      {removeError !== null && (
+                        <p style={{ color: "var(--err)" }}>{removeError}</p>
+                      )}
+
+                      <div className="flex justify-end gap-2">
+                        {/* Focus lands on Cancel, not Remove — the panel opens
+                            without a focus trap, so something must take focus
+                            for a keyboard user to notice it, and it should
+                            never be the destructive choice. */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          autoFocus
+                          onClick={() => {
+                            setConfirmingRemoveUserId(null);
+                            setRemoveError(null);
+                          }}
+                          disabled={pendingRemoveUserId !== null}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => void handleRemove()}
+                          disabled={pendingRemoveUserId !== null}
+                        >
+                          {pendingRemoveUserId !== null ? "Removing…" : "Remove"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               ))}
               {host === null && members.length === 0 && (
@@ -375,68 +429,6 @@ export function ShareDashboardDialog({
           </form>
         )}
       </DialogContent>
-
-      {/* A React CHILD of the outer Dialog (not a portalled grandchild, and
-          deliberately not a JSX sibling either) — Base UI only links a nested
-          dialog's escape-key/topmost tracking to its parent via React context
-          (dialog/root/useRenderDialogRoot.mjs: nested = Boolean(parentDialogRootContext)),
-          which a sibling Dialog.Root never picks up. Two unrelated Dialog
-          roots would each consider themselves "topmost" and both dismiss on
-          Escape, closing the whole share panel when the user only meant to
-          cancel the remove confirmation. Nesting here (context still reaches
-          through DialogContent's own portal boundary above) is what makes
-          Escape close only this confirm dialog. */}
-      <Dialog
-        open={confirmingRemoveUserId !== null}
-        onOpenChange={(next) => {
-          // Ignore dismissal (Escape, outside click, the built-in corner "x")
-          // while a removal is actually in flight — DialogContent's own close
-          // affordances aren't wired to pendingRemoveUserId the way the
-          // Cancel/Remove footer buttons below explicitly are, so without this
-          // guard a fast Escape could abandon a request the UI no longer shows
-          // as pending anywhere.
-          if (next || pendingRemoveUserId !== null) return;
-          setConfirmingRemoveUserId(null);
-          setRemoveError(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove member?</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this user from the dashboard?
-            </DialogDescription>
-          </DialogHeader>
-
-          {removeError !== null && (
-            <p className="text-sm" style={{ color: "var(--err)" }}>
-              {removeError}
-            </p>
-          )}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setConfirmingRemoveUserId(null);
-                setRemoveError(null);
-              }}
-              disabled={pendingRemoveUserId !== null}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleRemove()}
-              disabled={pendingRemoveUserId !== null}
-            >
-              {pendingRemoveUserId !== null ? "Removing…" : "Remove"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Dialog>
   );
 }

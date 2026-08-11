@@ -1,16 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { DASHBOARD_PERMISSION_ACTIONS, type DashboardPermissionAction } from "@tollgate/shared";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -93,6 +86,10 @@ export function SharePermissionsDialog({
   const [newRoleName, setNewRoleName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // The create form is revealed by the "+" button, never shown on arrival, and
+  // deliberately NOT remembered across a close/reopen — it resets in the
+  // seeding block below with the rest of the popup-scoped state.
+  const [showCreateForm, setShowCreateForm] = useState(false);
   // Which role is queued up in the confirmation dialog, and which one (if any)
   // has a DELETE actually in flight — kept in their own state rather than
   // folded into pendingAction, the same way share-dashboard-dialog.tsx keeps
@@ -103,6 +100,10 @@ export function SharePermissionsDialog({
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId) ?? null;
+  // Always the same role as `selectedRole` while a confirmation is armed —
+  // switchToRole disarms — but looked up by its own id so the panel can never
+  // render copy naming a role other than the one handleDelete would delete.
+  const confirmingRole = roles.find((r) => r.id === confirmingDeleteRoleId) ?? null;
 
   // Same single-counter-guards-several-async-flows pattern as
   // ShareDashboardDialog — the roles fetch, a permissions fetch, any number of
@@ -148,6 +149,14 @@ export function SharePermissionsDialog({
     setSaveError(null);
     setPendingAction(null);
     setLoadError(null);
+    // Disarm any confirmation still showing. The delete confirmation is inline
+    // rather than a modal dialog now, so nothing else stops the host changing
+    // the selection while it's up — without this they could be looking at a
+    // panel that names one role while the dropdown reads another. Clearing it
+    // here keeps the armed role and the selected role the same role, which is
+    // what the panel's copy assumes.
+    setConfirmingDeleteRoleId(null);
+    setDeleteError(null);
 
     if (known !== undefined) {
       setPermissions(known);
@@ -171,6 +180,7 @@ export function SharePermissionsDialog({
     setNewRoleName("");
     setCreating(false);
     setCreateError(null);
+    setShowCreateForm(false);
     setConfirmingDeleteRoleId(null);
     setPendingDeleteRoleId(null);
     setDeleteError(null);
@@ -281,28 +291,105 @@ export function SharePermissionsDialog({
       switchToRole(fallback?.id ?? null);
     } catch (err) {
       if (generation.current !== gen) return;
-      // Deliberately leaves the confirm dialog OPEN. For dashboard_role_in_use
-      // the message carries the count of accounts holding this role, which is
-      // the entire explanation — closing the dialog would throw it away.
+      // Deliberately leaves the confirmation panel OPEN. For
+      // dashboard_role_in_use the message carries the count of accounts
+      // holding this role, which is the entire explanation — dismissing the
+      // panel would throw it away.
       setDeleteError(err instanceof ApiError ? err.message : "Couldn't delete that role.");
       setPendingDeleteRoleId(null);
     }
   }
 
   return (
+    // One Dialog, no nesting. Both the create form and the delete confirmation
+    // are inline panels inside this content, which has a consequence worth
+    // stating: Escape now closes the WHOLE popup, including while a delete is
+    // in flight — the nested confirm dialog used to be topmost and swallow it.
+    // That is accepted rather than guarded here. Closing mid-request is already
+    // allowed for an in-flight toggle save: the `!open && seeded` branch bumps
+    // `generation`, the response is discarded, the request still lands
+    // server-side, and the next open refetches the roles list from scratch.
+    // Locking the host out of the entire popup to protect one request would be
+    // a heavier behaviour than the one being removed.
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Role permissions for &quot;{dashboardName}&quot;</DialogTitle>
         </DialogHeader>
 
+        {/* Above the Role section deliberately: the "+" that reveals this sits
+            at the top-right of that section, so the form unfolds directly
+            against its own trigger instead of appearing somewhere the eye has
+            to go looking for it. Inline rather than a nested dialog because
+            creating needs no confirmation — and as of this round, neither does
+            deleting. */}
+        {showCreateForm && (
+          <form onSubmit={handleCreate} className="flex flex-col gap-2">
+            <Label htmlFor="permissions-new-role">Create a role</Label>
+            <div className="flex gap-2">
+              <Input
+                id="permissions-new-role"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                placeholder="Editor"
+                maxLength={30}
+                // Mounts fresh on every reveal, so this needs no ref and no
+                // effect — which matters here: this component syncs all of its
+                // state in the render phase and has no useEffect at all.
+                autoFocus
+                className="min-w-0 flex-1"
+              />
+              <Button type="submit" disabled={creating || newRoleName.trim() === ""}>
+                {creating ? "Creating…" : "Create"}
+              </Button>
+            </div>
+            {createError !== null && (
+              <p className="text-sm" style={{ color: "var(--err)" }}>
+                {createError}
+              </p>
+            )}
+          </form>
+        )}
+
         <div className="flex flex-col gap-2">
-          <Label htmlFor="permissions-role-trigger">Role</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="permissions-role-trigger">Role</Label>
+            {/* Stays ENABLED at MAX_ROLES_PER_DASHBOARD. Same doctrine as the
+                delete button on a held role below: the attempt is what
+                produces the explanation (dashboard_role_limit_reached), so
+                pre-disabling this would mean that message could never be
+                shown. The icon never changes, so aria-label carries the
+                open/closed state rather than leaving it to aria-expanded
+                alone. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              aria-expanded={showCreateForm}
+              aria-label={showCreateForm ? "Hide the create-role form" : "Create a role"}
+              onClick={() => {
+                // Collapsing discards what was typed and any error with it, so
+                // the next reveal can't open onto a stale duplicate-name
+                // refusal for a name that is no longer in the box.
+                if (showCreateForm) {
+                  setNewRoleName("");
+                  setCreateError(null);
+                }
+                setShowCreateForm(!showCreateForm);
+              }}
+            >
+              <Plus />
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger
                 id="permissions-role-trigger"
-                disabled={roles.length === 0}
+                // Locked while a delete is in flight: the confirmation is
+                // inline and no longer modal, so without this the host could
+                // switch away mid-request and orphan it.
+                disabled={roles.length === 0 || pendingDeleteRoleId !== null}
                 className="flex h-8 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none transition-colors hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:text-sm"
               >
                 <span className="min-w-0 truncate">{selectedRole?.name ?? "No roles yet"}</span>
@@ -327,10 +414,11 @@ export function SharePermissionsDialog({
                 variant="outline"
                 size="icon"
                 aria-label={`Delete the ${selectedRole.name} role`}
+                aria-expanded={confirmingDeleteRoleId === selectedRole.id}
                 onClick={() => {
                   // Clear any error left over from a previous target role —
-                  // otherwise it briefly shows on THIS role's confirm dialog
-                  // before any request for it has run.
+                  // otherwise it briefly shows on THIS role's confirmation
+                  // panel before any request for it has run.
                   setDeleteError(null);
                   setConfirmingDeleteRoleId(selectedRole.id);
                 }}
@@ -342,31 +430,51 @@ export function SharePermissionsDialog({
           </div>
         </div>
 
-        {/* Same Label + Input + Button shape as ShareDashboardDialog's "Add
-            someone by email" form. Inline rather than a nested dialog because
-            creating needs no confirmation — deleting does, and that one is
-            nested below. */}
-        <form onSubmit={handleCreate} className="flex flex-col gap-2">
-          <Label htmlFor="permissions-new-role">Create a role</Label>
-          <div className="flex gap-2">
-            <Input
-              id="permissions-new-role"
-              value={newRoleName}
-              onChange={(e) => setNewRoleName(e.target.value)}
-              placeholder="Editor"
-              maxLength={30}
-              className="min-w-0 flex-1"
-            />
-            <Button type="submit" disabled={creating || newRoleName.trim() === ""}>
-              {creating ? "Creating…" : "Create"}
-            </Button>
-          </div>
-          {createError !== null && (
-            <p className="text-sm" style={{ color: "var(--err)" }}>
-              {createError}
+        {/* The delete confirmation, inline directly under the role it targets
+            rather than as a second Dialog stacked over this one. Tinted and
+            bordered so it reads as a distinct danger zone instead of more body
+            copy, and able to name the role now that it isn't confined to a
+            dialog title. */}
+        {confirmingRole !== null && (
+          <div className="flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-sm">
+              Delete the &quot;{confirmingRole.name}&quot; role? Its permission settings go with it.
             </p>
-          )}
-        </form>
+
+            {deleteError !== null && (
+              <p className="text-sm" style={{ color: "var(--err)" }}>
+                {deleteError}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              {/* Focus lands on Cancel, not Delete: this panel appears without
+                  a focus trap, so something has to take focus for a keyboard
+                  user to know it opened — and the destructive choice is the
+                  wrong thing to hand them by default. */}
+              <Button
+                type="button"
+                variant="outline"
+                autoFocus
+                onClick={() => {
+                  setConfirmingDeleteRoleId(null);
+                  setDeleteError(null);
+                }}
+                disabled={pendingDeleteRoleId !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void handleDelete()}
+                disabled={pendingDeleteRoleId !== null}
+              >
+                {pendingDeleteRoleId !== null ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3">
           {loading ? (
@@ -376,8 +484,12 @@ export function SharePermissionsDialog({
               {loadError}
             </p>
           ) : selectedRoleId === null ? (
+            // Names the button, because with the form hidden by default this
+            // is otherwise an instruction to use a control that isn't on
+            // screen. Only reachable through a failed or empty roles fetch —
+            // every dashboard has a seeded default role.
             <p className="text-sm text-muted-foreground">
-              Create a role to start delegating permissions.
+              Use + above to create a role and start delegating permissions.
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
@@ -414,63 +526,6 @@ export function SharePermissionsDialog({
           )}
         </div>
       </DialogContent>
-
-      {/* A React CHILD of the outer Dialog (not a portalled grandchild, and
-          deliberately not a JSX sibling either) — see the identical nesting in
-          share-dashboard-dialog.tsx's remove-member confirmation for the full
-          reasoning: Base UI links a nested dialog's escape-key/topmost
-          tracking to its parent through React context, so two sibling Dialog
-          roots would both consider themselves topmost and Escape would close
-          this whole popup instead of just the confirmation. */}
-      <Dialog
-        open={confirmingDeleteRoleId !== null}
-        onOpenChange={(next) => {
-          // Ignore dismissal (Escape, outside click, the built-in corner "x")
-          // while a delete is actually in flight — DialogContent's own close
-          // affordances aren't wired to pendingDeleteRoleId the way the
-          // Cancel/Delete footer buttons below explicitly are.
-          if (next || pendingDeleteRoleId !== null) return;
-          setConfirmingDeleteRoleId(null);
-          setDeleteError(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete role?</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this role? Its permission settings go with it.
-            </DialogDescription>
-          </DialogHeader>
-
-          {deleteError !== null && (
-            <p className="text-sm" style={{ color: "var(--err)" }}>
-              {deleteError}
-            </p>
-          )}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setConfirmingDeleteRoleId(null);
-                setDeleteError(null);
-              }}
-              disabled={pendingDeleteRoleId !== null}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleDelete()}
-              disabled={pendingDeleteRoleId !== null}
-            >
-              {pendingDeleteRoleId !== null ? "Deleting…" : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Dialog>
   );
 }
