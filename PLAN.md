@@ -1,7 +1,7 @@
 # PLAN.md
 
 **Status: the dashboard role-permissions feature is BUILT and verified — backend committed as `efbed52`,
-this round's frontend reshape UNCOMMITTED in the working tree.**
+the popup reshape as `5ed9a7d`. Only the role counter is still uncommitted.**
 This file is a reference for the feature as it stands. It is not a plan for new work; nothing here is
 outstanding except the one gap named at the bottom.
 
@@ -62,7 +62,12 @@ included. Exactly one per dashboard. `POST .../members` resolves it to assign a 
 | `GET /v1/dashboards/:id/members` | anyone who can reach it | each member carries `role: {id,name}` inline. |
 | `GET /v1/dashboards/:id/my-permissions` | anyone who can reach it | **unchanged shape**: `{isHost, permissions}`. |
 
-**Constants:** `MAX_ROLE_NAME_LENGTH = 30`, `MAX_ROLES_PER_DASHBOARD = 15` (Observer included).
+**Constants:** `MAX_NAME_LENGTH = 50` and `MAX_ROLE_NAME_LENGTH = 30` are private to
+`routes/dashboards.ts`. **`MAX_ROLES_PER_DASHBOARD = 15`** (Observer included) lives in
+**`@tollgate/shared`** instead, because the HardHat popup's role counter renders the number — a second
+copy in the frontend could show the host a limit the api doesn't actually enforce. The frontend's
+`maxLength={30}` on the create input is still a hand-copy of `MAX_ROLE_NAME_LENGTH`; it isn't displayed
+as a number, so it was left alone rather than moved on spec.
 
 **Authorization rules that must not drift:**
 1. `resolveDashboardId` gates `:id`; **`resolveDashboardRole` gates `:roleId`** and is the authorization
@@ -102,11 +107,15 @@ one structural rule in this half of the feature.
   - After a successful create the form **stays open** (input cleared, new role selected below). One
     invariant — it closes only on `+` or on reopen — instead of two, since the error path must keep it
     open regardless.
+  - A **role counter** (`N of 15`) sits between the label and the `+`, counting the seeded default because
+    the cap does. It renders only once the roles list has arrived — "0 of 15" mid-fetch would describe a
+    dashboard with no roles, which is not a state that exists — and turns `var(--err)` **at** the cap
+    rather than near it, since its job there is to pre-announce a refusal, not to nag.
   - The `+` **stays enabled at `MAX_ROLES_PER_DASHBOARD`**, and the trash button **stays enabled on a role
     someone holds**. Same doctrine in both cases: the attempt is what produces the explanation, so
-    pre-disabling would mean that message could never appear. The *default* role is the one exception — it
-    gets **no** trash button at all rather than a disabled one, since clicking it could only ever be
-    refused.
+    pre-disabling would mean that message could never appear — the counter is what gives advance notice
+    instead. The *default* role is the one exception — it gets **no** trash button at all rather than a
+    disabled one, since clicking it could only ever be refused.
   - The delete confirmation is an inline destructive-tinted panel, not a dialog. It **names the role**
     (via a `confirmingRole` lookup by id, so it can never name a role other than the one `handleDelete`
     would delete) and **stays open on failure** — for `dashboard_role_in_use` the message carries the
@@ -149,7 +158,7 @@ panels now, and the codebase contains **no dialog-in-a-dialog anywhere**. Conseq
 
 ## Verification already done — don't redo
 
-**Backend (2026-08-11, commit `efbed52`).** `pnpm typecheck` ×4; 89 proxy tests + 24 api unit tests; **no
+**Backend (2026-08-10, commit `efbed52`).** `pnpm typecheck` ×4; 89 proxy tests + 24 api unit tests; **no
 file under `backend/proxy` changed**. A 44-assertion HTTP matrix passed twice on independent fixtures,
 covering case-insensitive duplicates, the `UUID_RE` screen answering 404 on all four routes, enforcement
 flipping both directions on a *custom* role, the default-role refusal at zero holders, and the in-use
@@ -158,14 +167,20 @@ deleted role's toggles; a direct `DELETE` of a held role raises 23503; a cross-d
 raises 23503 via the composite FK. The `0000 → 0017` fresh-clone replay was run into a scratch database
 and produces the intended constraints.
 
-**Frontend reshape (this round).** `pnpm typecheck` ×4, 89 proxy tests, 24 api unit tests — all green,
-though the last two only evidence the diff's narrowness, since **nothing outside
-`frontend/dashboard/components/` changed**. There is still no browser automation on this box, so the visual
-pass was a 10-step manual checklist **run by Eshaan, who reported it good**: the `+` reveal and its reset
-on reopen, the form staying open after a create, the confirm panel's placement and role naming,
-disarm-on-role-switch, Observer having no trash button, the in-use refusal keeping the panel open with its
-count, and the share dialog's in-row remove confirmation. That is the **first visual verification this
-feature has ever had**, across five sessions.
+**Frontend reshape (this round).** `pnpm typecheck` ×4, 89 proxy tests, 24 api unit tests — all green.
+The reshape itself touched only `frontend/dashboard/components/`; the **role counter additionally moved
+`MAX_ROLES_PER_DASHBOARD` into `@tollgate/shared`**, so `backend/shared/src/index.ts` and
+`backend/api/src/routes/dashboards.ts` changed too. That move is a relocation, not a value change — the
+api reads the same 15 from a different module, and the proxy suite passing confirms nothing else that
+imports `@tollgate/shared` was disturbed.
+
+There is still no browser automation on this box, so the visual pass was a 10-step manual checklist **run
+by Eshaan, who reported it good**: the `+` reveal and its reset on reopen, the form staying open after a
+create, the confirm panel's placement and role naming, disarm-on-role-switch, Observer having no trash
+button, the in-use refusal keeping the panel open with its count, and the share dialog's in-row remove
+confirmation. That is the **first visual verification this feature has ever had**, across five sessions.
+**The counter itself landed after that pass and has not been looked at** — it is the one piece of this
+round nobody has seen.
 
 ## The one open gap
 
@@ -185,6 +200,12 @@ the confirmation panels (both are plain conditional renders).
 
 ## Commit state
 
-Backend and the original feature are committed and pushed as **`efbed52`**. **This round's frontend
-reshape is uncommitted** — `share-permissions-dialog.tsx`, `share-dashboard-dialog.tsx` and this file are
-all modified in the working tree. `main` is at `a6de787` and this branch is **unmerged**.
+Backend and the original feature: **`efbed52`**. The popup reshape (both dialogs, inline confirmations,
+the `+` reveal): **`5ed9a7d`**, "Polished construction hat UI pop up" — committed and pushed by Eshaan
+mid-session.
+
+**Still uncommitted:** the role counter — `frontend/dashboard/components/share-permissions-dialog.tsx`,
+`backend/shared/src/index.ts`, `backend/api/src/routes/dashboards.ts` — plus this file.
+
+`main` is at `a6de787` and this branch is **unmerged**. (`git fetch` can't authenticate from this shell, so
+"pushed" is evidenced by the remote-tracking ref being level with HEAD, not by a re-fetch.)

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
   DASHBOARD_PERMISSION_ACTIONS,
+  MAX_ROLES_PER_DASHBOARD,
   freezeKey,
   type DashboardPermissionAction,
 } from "@tollgate/shared";
@@ -89,9 +90,10 @@ const MAX_NAME_LENGTH = 50;
 /** Shorter than a dashboard's 50: role names render inside a compact dropdown
  *  trigger next to a delete button, not on a card header. */
 const MAX_ROLE_NAME_LENGTH = 30;
-/** Per dashboard, INCLUDING the seeded Observer — so 14 custom roles. A bound
- *  on how long the two dropdowns can get, not a security control. */
-const MAX_ROLES_PER_DASHBOARD = 15;
+// MAX_ROLES_PER_DASHBOARD is imported from @tollgate/shared instead of being
+// declared here beside the name caps: the HardHat popup's role counter renders
+// the number, so a second copy could show the host a limit the api doesn't
+// actually enforce.
 
 type NameParseResult =
   | { ok: true; name: string }

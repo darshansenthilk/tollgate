@@ -769,6 +769,20 @@ export const DASHBOARD_PERMISSION_ACTIONS: readonly DashboardPermissionAction[] 
   "addDashboardMember",
 ];
 
+/**
+ * How many roles one dashboard may have, INCLUDING the seeded default — so 14
+ * custom ones. A bound on how long the two role dropdowns can get, not a
+ * security control.
+ *
+ * Here rather than private to the api's dashboards route (where the other name
+ * caps still live) because the HardHat popup *renders* this number in its role
+ * counter. A hardcoded copy in the frontend could quietly disagree with the cap
+ * the api actually enforces, and the host would be shown a limit that isn't the
+ * real one — the same reason DASHBOARD_PERMISSION_ACTIONS is shared rather than
+ * hand-copied into each side.
+ */
+export const MAX_ROLES_PER_DASHBOARD = 15;
+
 /** One governed request — the immutable audit-log unit. */
 export interface SpendEvent {
   id: string;

@@ -2,7 +2,11 @@
 
 import { useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { DASHBOARD_PERMISSION_ACTIONS, type DashboardPermissionAction } from "@tollgate/shared";
+import {
+  DASHBOARD_PERMISSION_ACTIONS,
+  MAX_ROLES_PER_DASHBOARD,
+  type DashboardPermissionAction,
+} from "@tollgate/shared";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -354,33 +358,51 @@ export function SharePermissionsDialog({
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <Label htmlFor="permissions-role-trigger">Role</Label>
-            {/* Stays ENABLED at MAX_ROLES_PER_DASHBOARD. Same doctrine as the
-                delete button on a held role below: the attempt is what
-                produces the explanation (dashboard_role_limit_reached), so
-                pre-disabling this would mean that message could never be
-                shown. The icon never changes, so aria-label carries the
-                open/closed state rather than leaving it to aria-expanded
-                alone. */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground"
-              aria-expanded={showCreateForm}
-              aria-label={showCreateForm ? "Hide the create-role form" : "Create a role"}
-              onClick={() => {
-                // Collapsing discards what was typed and any error with it, so
-                // the next reveal can't open onto a stale duplicate-name
-                // refusal for a name that is no longer in the box.
-                if (showCreateForm) {
-                  setNewRoleName("");
-                  setCreateError(null);
-                }
-                setShowCreateForm(!showCreateForm);
-              }}
-            >
-              <Plus />
-            </Button>
+            <span className="flex shrink-0 items-center gap-1.5">
+              {/* Counts the seeded default too, because the cap does. Hidden
+                  until the list has actually arrived — "0 of 15" during the
+                  fetch would read as a dashboard with no roles, which is not a
+                  state that exists. Turns red AT the cap rather than near it:
+                  this is the advance notice that the create attempt is about to
+                  be refused, not a running warning. */}
+              {roles.length > 0 && (
+                <span
+                  className="text-xs tabular-nums text-muted-foreground"
+                  style={
+                    roles.length >= MAX_ROLES_PER_DASHBOARD ? { color: "var(--err)" } : undefined
+                  }
+                >
+                  {roles.length} of {MAX_ROLES_PER_DASHBOARD}
+                </span>
+              )}
+              {/* Stays ENABLED at MAX_ROLES_PER_DASHBOARD. Same doctrine as the
+                  delete button on a held role below: the attempt is what
+                  produces the explanation (dashboard_role_limit_reached), so
+                  pre-disabling this would mean that message could never be
+                  shown — the counter beside it is what warns in advance. The
+                  icon never changes, so aria-label carries the open/closed
+                  state rather than leaving it to aria-expanded alone. */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-expanded={showCreateForm}
+                aria-label={showCreateForm ? "Hide the create-role form" : "Create a role"}
+                onClick={() => {
+                  // Collapsing discards what was typed and any error with it,
+                  // so the next reveal can't open onto a stale duplicate-name
+                  // refusal for a name that is no longer in the box.
+                  if (showCreateForm) {
+                    setNewRoleName("");
+                    setCreateError(null);
+                  }
+                  setShowCreateForm(!showCreateForm);
+                }}
+              >
+                <Plus />
+              </Button>
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>
