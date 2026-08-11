@@ -716,36 +716,38 @@ export type SpendDecision =
   | "approval_denied";
 
 // ---------------------------------------------------------------------------
-// Dashboard member roles
+// Dashboard permissions
+//
+// THE ASYMMETRY THIS SECTION EXISTS TO EXPLAIN: roles live in the database,
+// actions live here.
+//
+// A dashboard's ROLES used to be a compile-time value in three places at once
+// — a DashboardMemberRole union here, a dashboard_member_role pgEnum in
+// schema.ts, and a literal path segment in /v1/dashboards/:id/permissions/:role
+// — which made a host-created role structurally impossible: you cannot add a
+// union member or an enum value at runtime. Both are gone. A role is now a row
+// in dashboard_roles, scoped to one dashboard, addressed on the wire by its
+// uuid (names are mutable-in-principle display strings; ids aren't), and its
+// wire shape lives locally in the api's routes/dashboards.ts and the
+// dashboard's lib/api.ts — the same place DashboardJson/DashboardUserJson
+// already live, rather than here.
+//
+// The ACTIONS deliberately did NOT follow. They stay a fixed list below,
+// because every one of them names a specific route's gate in code — a 7th
+// action would be a code change no matter how it were stored, so making it
+// data would buy nothing and cost the exhaustive
+// Record<DashboardPermissionAction, boolean> that the api's validation, the
+// popup's toggle list, and the my-permissions response all rely on.
 // ---------------------------------------------------------------------------
-
-/**
- * A dashboard_members row's assignable role. Observer — the default on add,
- * and the only role a host can delegate toggles to — is currently the whole
- * union: Helper/Manager/Moderator/Admin existed as named-but-inert tiers and
- * were removed once it was clear nothing distinguished them (they carried no
- * permissions of their own, only Observer's toggles were ever configurable).
- * Host is deliberately not a member of this union — it's dashboards.createdBy,
- * a separate column, not a dashboard_members value (see schema.ts).
- *
- * Adding a second role means: a value here, a value in schema.ts's matching
- * pgEnum (plus a migration), and a label in the dashboard's ROLE_LABELS.
- */
-export type DashboardMemberRole = "observer";
-
-/** Exhaustive over DashboardMemberRole, in the role dropdown's display order —
- *  the api's wire validation and the share dialog's option list both walk this
- *  rather than each keeping a hand-typed copy, the same way
- *  DASHBOARD_PERMISSION_ACTIONS below serves the toggle list. */
-export const DASHBOARD_MEMBER_ROLES: readonly DashboardMemberRole[] = ["observer"];
 
 /**
  * The 6 dashboard actions a host can delegate to a role, one on/off toggle
  * each (PLAN.md's "role-permission delegation"). Deliberately NOT exhaustive
  * over every mutation the api exposes — removing a member, deleting/renaming
- * the dashboard, and delegating permissions itself stay host-only and are
- * never shown as a toggle (see PLAN.md's "Action inventory" for why each one
- * was left out).
+ * the dashboard, and managing roles themselves (creating one, deleting one,
+ * configuring its toggles) stay host-only and are never shown as a toggle (see
+ * PLAN.md's "Action inventory" for why each one was left out; a role that could
+ * grant itself permissions, or delete the role gating it, would defeat the gate).
  */
 export type DashboardPermissionAction =
   | "createAgent"

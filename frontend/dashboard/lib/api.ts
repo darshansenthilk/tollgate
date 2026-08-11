@@ -1,4 +1,4 @@
-import type { AgentStatus, ToolDefinition, DashboardMemberRole, DashboardPermissionAction } from "@tollgate/shared";
+import type { AgentStatus, ToolDefinition, DashboardPermissionAction } from "@tollgate/shared";
 import { authClient } from "./auth-client";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -182,7 +182,14 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   dashboard_member_already_exists: "You cannot add an account that is already in this dashboard.",
   dashboard_member_not_found: "That person no longer has access to this dashboard.",
   dashboard_host_required: "Only this dashboard's host can do that.",
-  invalid_dashboard_member_role: "That's not a role this dashboard recognizes.",
+  // Answered for a role id that isn't this dashboard's (another dashboard's,
+  // malformed, or already deleted) — the api deliberately can't tell those
+  // apart, so neither can this copy. The three role REFUSALS
+  // (dashboard_role_name_exists / _too_long / _is_default / _in_use /
+  // _limit_reached) all arrive with a server `message` and so need no entry
+  // here — dashboard_role_in_use's especially, since its whole payload is the
+  // account count the api composed into the sentence.
+  dashboard_role_not_found: "That role no longer exists on this dashboard.",
   dashboard_permission_denied: "Your role on this dashboard doesn't allow that.",
 };
 
@@ -642,12 +649,29 @@ export interface DashboardUser {
   email: string;
 }
 
+/**
+ * One assignable role on a dashboard. A ROW now, not a compile-time union —
+ * the host creates and deletes these from the permissions popup — so it's
+ * addressed everywhere by `id`, never by name (see the api's own
+ * DashboardRoleJson). Only the 6 ACTIONS stayed compile-time; see
+ * @tollgate/shared's "Dashboard permissions" section for the asymmetry.
+ */
+export interface DashboardRole {
+  id: string;
+  name: string;
+  /** The seeded "Observer" every dashboard is born with — what a new member is
+   *  assigned, and the one role that can never be deleted. Exactly one role per
+   *  dashboard carries it. */
+  isDefault: boolean;
+}
+
 /** A DashboardUser plus when they were added and their role — only added
  *  members carry either, not the host (the host isn't a dashboard_members
- *  row; see schema.ts). */
+ *  row; see schema.ts). The role arrives inline as { id, name } so a member row
+ *  can be labelled without the separate roles fetch having succeeded. */
 export interface DashboardMember extends DashboardUser {
   addedAt: string;
-  role: DashboardMemberRole;
+  role: Pick<DashboardRole, "id" | "name">;
 }
 
 /** What GET /v1/dashboards/:id/members answers with — the share dialog's list. */
@@ -665,11 +689,13 @@ export function listDashboardMembers(dashboardId: string): Promise<DashboardMemb
 }
 
 /**
- * Grants one user access to a dashboard by email. 404s as
- * dashboard_member_user_not_found when the email has no Tollgate account —
- * there's no email-sending integration in this app, so that's a dead end for
- * now rather than a pending invite. Adding someone already on the list
- * succeeds again rather than erroring (the api makes this idempotent).
+ * Grants one user access to a dashboard by email, on the dashboard's default
+ * (Observer) role. 404s as dashboard_member_user_not_found when the email has
+ * no Tollgate account — there's no email-sending integration in this app, so
+ * that's a dead end for now rather than a pending invite. Adding someone who
+ * already has access is a 400 (dashboard_member_already_exists, or
+ * dashboard_member_is_host for the host's own address), NOT the idempotent
+ * success it used to be.
  */
 export function addDashboardMember(dashboardId: string, email: string): Promise<DashboardMember> {
   return request<DashboardMember>(`/v1/dashboards/${dashboardId}/members`, {
@@ -683,24 +709,27 @@ export function addDashboardMember(dashboardId: string, email: string): Promise<
  *  (the api doesn't re-look-up the target's email for this). */
 export interface UpdateDashboardMemberRoleResponse {
   userId: string;
-  role: DashboardMemberRole;
+  role: Pick<DashboardRole, "id" | "name">;
 }
 
 /**
- * Reassigns a member's role. Host-only — the api 403s as dashboard_host_required
- * for any other caller, including another member. Never called for the host's
- * own row, which has no role to change (see DashboardMember's doc comment).
+ * Reassigns a member's role, by role id. Host-only — the api 403s as
+ * dashboard_host_required for any other caller, including another member.
+ * Never called for the host's own row, which has no role to change (see
+ * DashboardMember's doc comment). A role id that isn't this dashboard's 404s
+ * as dashboard_role_not_found rather than 403ing, so it can't be used to probe
+ * which role ids exist.
  */
 export function updateDashboardMemberRole(
   dashboardId: string,
   userId: string,
-  role: DashboardMemberRole,
+  roleId: string,
 ): Promise<UpdateDashboardMemberRoleResponse> {
   return request<UpdateDashboardMemberRoleResponse>(
     `/v1/dashboards/${dashboardId}/members/${userId}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ role }),
+      body: JSON.stringify({ roleId }),
     },
   );
 }
@@ -716,8 +745,8 @@ export interface RemoveDashboardMemberResponse {
  * Removes a member's access — host-only, mirrors updateDashboardMemberRole.
  * The api 403s as dashboard_host_required for any other caller. Re-adding
  * the same person later (addDashboardMember) inserts a fresh row, so their
- * role resets to the schema default (observer) rather than remembering
- * whatever tier they held before removal.
+ * role resets to the dashboard's default (Observer) rather than remembering
+ * whatever role they held before removal.
  */
 export function removeDashboardMember(
   dashboardId: string,
@@ -738,19 +767,76 @@ export function listSharedDashboards(): Promise<DashboardListItem[]> {
   return request<DashboardListItem[]>("/v1/dashboards/shared");
 }
 
-/** What GET/PATCH /v1/dashboards/:id/permissions/:role answer with — every
- *  gated action's current on/off state for that role on that dashboard. */
+/**
+ * Every role on a dashboard, default first then creation order — the option
+ * list for BOTH dialogs. Deliberately NOT host-only on the api: a member
+ * already sees role names on every row of the share dialog, so host-gating it
+ * would break that dialog for exactly the people it exists to show.
+ */
+export function listDashboardRoles(dashboardId: string): Promise<DashboardRole[]> {
+  return request<DashboardRole[]>(`/v1/dashboards/${dashboardId}/roles`);
+}
+
+/**
+ * Host-only: creates a role, with every permission toggle off. 400s on a
+ * duplicate name (dashboard_role_name_exists) — CASE-INSENSITIVELY, so
+ * "editor" collides with an existing "Editor", and no role can be called
+ * "Observer" in any casing — on an over-cap name (dashboard_role_name_too_long)
+ * and once the dashboard is full (dashboard_role_limit_reached).
+ */
+export function createDashboardRole(dashboardId: string, name: string): Promise<DashboardRole> {
+  return request<DashboardRole>(`/v1/dashboards/${dashboardId}/roles`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** What DELETE /v1/dashboards/:id/roles/:roleId answers with — the id echoed
+ *  back rather than an empty body, since request() always calls res.json()
+ *  (see DeleteDashboardResponse's own doc comment). */
+export interface DeleteDashboardRoleResponse {
+  id: string;
+}
+
+/**
+ * Host-only: deletes a role and its permission toggles.
+ *
+ * Two refusals, both 400 and both carrying the copy to show verbatim:
+ *  - `dashboard_role_is_default` — the Observer role can never be deleted, and
+ *    this is checked FIRST, so it's the answer even when nobody holds it.
+ *  - `dashboard_role_in_use` — somebody currently has this role. THE COUNT OF
+ *    HOLDERS ARRIVES INSIDE err.message ("…because 2 accounts currently have
+ *    it.") and nowhere else: there is no memberCount field, and deliberately
+ *    no list of who, so the caller must render the message rather than
+ *    composing its own sentence.
+ *
+ * A repeat delete answers 404, which callers should read as "already gone",
+ * the same convention deleteDashboard uses.
+ */
+export function deleteDashboardRole(
+  dashboardId: string,
+  roleId: string,
+): Promise<DeleteDashboardRoleResponse> {
+  return request<DeleteDashboardRoleResponse>(`/v1/dashboards/${dashboardId}/roles/${roleId}`, {
+    method: "DELETE",
+  });
+}
+
+/** What GET/PATCH /v1/dashboards/:id/permissions/:roleId answer with — every
+ *  gated action's current on/off state for that role. Keyed by role ID, not
+ *  name: roles are rows now (see DashboardRole). */
 export interface DashboardRolePermissions {
-  role: DashboardMemberRole;
+  roleId: string;
   permissions: Record<DashboardPermissionAction, boolean>;
 }
 
-/** Host-only: the role-permission delegation popup's data source. */
+/** Host-only: the role-permission delegation popup's data source. A role id
+ *  that isn't this dashboard's 404s as dashboard_role_not_found. */
 export function getDashboardRolePermissions(
   dashboardId: string,
-  role: DashboardMemberRole,
+  roleId: string,
 ): Promise<DashboardRolePermissions> {
-  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`);
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${roleId}`);
 }
 
 /**
@@ -762,10 +848,10 @@ export function getDashboardRolePermissions(
  */
 export function setDashboardRolePermissions(
   dashboardId: string,
-  role: DashboardMemberRole,
+  roleId: string,
   permissions: Partial<Record<DashboardPermissionAction, boolean>>,
 ): Promise<DashboardRolePermissions> {
-  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${role}`, {
+  return request<DashboardRolePermissions>(`/v1/dashboards/${dashboardId}/permissions/${roleId}`, {
     method: "PATCH",
     body: JSON.stringify({ permissions }),
   });

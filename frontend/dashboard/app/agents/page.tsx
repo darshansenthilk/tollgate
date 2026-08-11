@@ -16,13 +16,16 @@ import {
   addDashboardMember,
   ApiError,
   createAgent,
+  createDashboardRole,
   deleteAgent,
+  deleteDashboardRole,
   freezeAgent,
   getActiveDashboard,
   getDashboardRolePermissions,
   getMyDashboardPermissions,
   listAgents,
   listDashboardMembers,
+  listDashboardRoles,
   listUpstreamKeys,
   removeDashboardMember,
   renameDashboard,
@@ -267,9 +270,10 @@ export default function AgentsPage() {
           // renameDashboard above — AgentDashboard stays decoupled from which
           // dashboard is active and from lib/api itself.
           listDashboardMembers={() => listDashboardMembers(activeDashboard.id)}
+          listDashboardRoles={() => listDashboardRoles(activeDashboard.id)}
           addDashboardMember={(email) => addDashboardMember(activeDashboard.id, email)}
-          updateDashboardMemberRole={(userId, role) =>
-            updateDashboardMemberRole(activeDashboard.id, userId, role)
+          updateDashboardMemberRole={(userId, roleId) =>
+            updateDashboardMemberRole(activeDashboard.id, userId, roleId)
           }
           // Prop is Promise<void> (share-dashboard-dialog.tsx only needs to
           // know the call settled — it already has userId from its own
@@ -281,12 +285,14 @@ export default function AgentsPage() {
           }
           // Same inline-closure-over-the-narrowed-dashboard pattern as
           // renameDashboard/listDashboardMembers above.
-          getDashboardRolePermissions={(role) =>
-            getDashboardRolePermissions(activeDashboard.id, role)
+          getDashboardRolePermissions={(roleId) =>
+            getDashboardRolePermissions(activeDashboard.id, roleId)
           }
-          setDashboardRolePermissions={(role, permissions) =>
-            setDashboardRolePermissions(activeDashboard.id, role, permissions)
+          setDashboardRolePermissions={(roleId, permissions) =>
+            setDashboardRolePermissions(activeDashboard.id, roleId, permissions)
           }
+          createDashboardRole={(name) => createDashboardRole(activeDashboard.id, name)}
+          deleteDashboardRole={(roleId) => deleteDashboardRole(activeDashboard.id, roleId)}
           myPermissions={myPermissions}
           isHost={isHost}
           onCreated={handleCreated}

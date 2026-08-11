@@ -120,6 +120,13 @@
       "when": 1786388037421,
       "tag": "0016_wet_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786416048092,
+      "tag": "0017_normal_blink",
+      "breakpoints": true
     }
   ]
 }

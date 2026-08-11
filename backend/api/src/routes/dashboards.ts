@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import {
-  DASHBOARD_MEMBER_ROLES,
   DASHBOARD_PERMISSION_ACTIONS,
   freezeKey,
-  type DashboardMemberRole,
   type DashboardPermissionAction,
 } from "@tollgate/shared";
 import { db } from "../db/client.js";
-import { activeDashboards, agents, dashboardMembers, dashboardRolePermissions, dashboards } from "../db/schema.js";
+import {
+  activeDashboards,
+  agents,
+  dashboardMembers,
+  dashboardRolePermissions,
+  dashboardRoles,
+  dashboards,
+} from "../db/schema.js";
 // The shape guard this file used to define locally, now shared with
 // routes/agents.ts and routes/activity.ts — see lib/dashboard-scope.ts for why a
 // malformed uuid has to be screened before it reaches Postgres.
@@ -67,7 +72,26 @@ interface DashboardListJson extends DashboardJson {
   liveAgentCount: number;
 }
 
+/** A role a host can assign to a member — the wire shape for the three /roles
+ *  routes, and for the `role` a member row carries. Local to this file (and
+ *  mirrored in the dashboard's lib/api.ts) rather than in @tollgate/shared, the
+ *  same placement DashboardJson/DashboardUserJson already use. */
+interface DashboardRoleJson {
+  id: string;
+  name: string;
+  /** The seeded "Observer" every dashboard is born with. Exactly one role per
+   *  dashboard carries this; it's what a new member is assigned and what can
+   *  never be deleted. */
+  isDefault: boolean;
+}
+
 const MAX_NAME_LENGTH = 50;
+/** Shorter than a dashboard's 50: role names render inside a compact dropdown
+ *  trigger next to a delete button, not on a card header. */
+const MAX_ROLE_NAME_LENGTH = 30;
+/** Per dashboard, INCLUDING the seeded Observer — so 14 custom roles. A bound
+ *  on how long the two dropdowns can get, not a security control. */
+const MAX_ROLES_PER_DASHBOARD = 15;
 
 type NameParseResult =
   | { ok: true; name: string }
@@ -90,19 +114,63 @@ function parseNameBody(body: unknown): NameParseResult {
   return { ok: true, name };
 }
 
+/** Role names get their own cap and their own error code, but otherwise the
+ *  same trim-then-reject-empty treatment parseNameBody gives dashboard names —
+ *  so `"Editor "` and `"Editor"` are one name here too, which matters because
+ *  the uniqueness check downstream compares the trimmed value. */
+function parseRoleNameBody(
+  body: unknown,
+): { ok: true; name: string } | { ok: false; error: "invalid_body" | "dashboard_role_name_too_long" } {
+  if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
+  const raw = (body as Record<string, unknown>)["name"];
+  if (typeof raw !== "string") return { ok: false, error: "invalid_body" };
+
+  const name = raw.trim();
+  if (name === "") return { ok: false, error: "invalid_body" };
+  if (name.length > MAX_ROLE_NAME_LENGTH) return { ok: false, error: "dashboard_role_name_too_long" };
+
+  return { ok: true, name };
+}
+
 function toJson(row: { id: string; name: string; createdAt: Date }): DashboardJson {
   return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };
 }
 
-/** DASHBOARD_MEMBER_ROLES is exactly the valid roles — reusing it here means
- *  the wire-validation set can't drift from @tollgate/shared's own union. */
-function isDashboardMemberRole(value: unknown): value is DashboardMemberRole {
-  return typeof value === "string" && (DASHBOARD_MEMBER_ROLES as readonly string[]).includes(value);
+/**
+ * Validates a caller-supplied ROLE id against one dashboard, and is therefore
+ * the authorization check for every `:roleId` path segment here — exactly what
+ * resolveDashboardId is for `:id`. A role id belonging to somebody else's
+ * dashboard resolves to null and must answer 404: never 403, and never a
+ * distinguishable "exists but isn't yours", which would turn these routes into
+ * a probe for which role ids exist.
+ *
+ * The UUID_RE screen is not cosmetic. dashboard_roles.id is a uuid column, so a
+ * malformed id reaches Postgres as a cast error (22P02) rather than zero rows,
+ * and with no setErrorHandler registered Fastify answers 500 with the driver's
+ * raw message instead of the 404 these routes promise — the same reasoning
+ * lib/dashboard-scope.ts spells out for dashboard ids.
+ */
+async function resolveDashboardRole(
+  roleId: string,
+  dashboardId: string,
+): Promise<DashboardRoleJson | null> {
+  if (!UUID_RE.test(roleId)) return null;
+
+  const [row] = await db
+    .select({
+      id: dashboardRoles.id,
+      name: dashboardRoles.name,
+      isDefault: dashboardRoles.isDefault,
+    })
+    .from(dashboardRoles)
+    .where(and(eq(dashboardRoles.id, roleId), eq(dashboardRoles.dashboardId, dashboardId)));
+
+  return row ?? null;
 }
 
 /** DASHBOARD_PERMISSION_ACTIONS is exactly the 6 gated actions — reusing it
  *  here means the wire-validation set can't drift from @tollgate/shared's own
- *  list, same reasoning as isDashboardMemberRole above. */
+ *  list. */
 function isDashboardPermissionAction(value: unknown): value is DashboardPermissionAction {
   return typeof value === "string" && (DASHBOARD_PERMISSION_ACTIONS as readonly string[]).includes(value);
 }
@@ -258,7 +326,16 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
     }
 
     const created = { id: randomUUID(), name: parsed.name, createdAt: new Date() };
-    await db.insert(dashboards).values({ ...created, orgId, createdBy: req.authUser!.id });
+    // One transaction so a dashboard can never exist without its default role.
+    // POST .../members resolves that row to decide which role a new member
+    // gets (a per-dashboard uuid can't be a static column default), so a
+    // dashboard missing it would accept no members at all.
+    await db.transaction(async (tx) => {
+      await tx.insert(dashboards).values({ ...created, orgId, createdBy: req.authUser!.id });
+      await tx
+        .insert(dashboardRoles)
+        .values({ id: randomUUID(), dashboardId: created.id, name: "Observer", isDefault: true });
+    });
 
     // Creating a dashboard opens it (DE11) — the frontend navigates straight to
     // /agents afterwards, which reads this selection back. The row we just
@@ -626,6 +703,251 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
   });
 
   /**
+   * Every role on this dashboard — the option list for BOTH dialogs (the
+   * permissions popup's role picker, and the share dialog's per-member
+   * dropdown).
+   *
+   * Deliberately NOT host-only, unlike the three routes that CONFIGURE a role.
+   * A non-host member already sees a role name on every row of the share
+   * dialog, so the names here are not new information — and host-gating this
+   * would break that dialog for exactly the people it's meant to show. Only
+   * creating, deleting, and flipping a role's toggles stay host-only.
+   */
+  app.get<{ Params: { id: string } }>("/v1/dashboards/:id/roles", async (req, reply) => {
+    const orgId = req.activeOrgId!;
+    const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+    if (!scope.ok) {
+      reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+      return { error: scope.error };
+    }
+
+    const rows = await db
+      .select({
+        id: dashboardRoles.id,
+        name: dashboardRoles.name,
+        isDefault: dashboardRoles.isDefault,
+      })
+      .from(dashboardRoles)
+      .where(eq(dashboardRoles.dashboardId, scope.dashboardId))
+      // is_default first so Observer always heads both dropdowns, then creation
+      // order so a newly created role appends rather than reshuffling the list
+      // (same instinct as the tile grid's ordering). The id tiebreak makes that
+      // order total.
+      .orderBy(
+        desc(dashboardRoles.isDefault),
+        asc(dashboardRoles.createdAt),
+        asc(dashboardRoles.id),
+      );
+
+    return rows satisfies DashboardRoleJson[];
+  });
+
+  /**
+   * Creates a role — host-only, with the same resolveDashboardId -> createdBy
+   * gate and the same check ORDER as every other host-only route here: the host
+   * check runs before the body is parsed, so an unauthorized caller learns
+   * nothing about whether their payload would otherwise have been valid.
+   *
+   * A duplicate name is an explicit 400 rather than a silent no-op, following
+   * 80653af's precedent for re-adding a member.
+   */
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/v1/dashboards/:id/roles",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can create a role.",
+        };
+      }
+
+      const parsed = parseRoleNameBody(req.body);
+      if (!parsed.ok) {
+        reply.code(400);
+        return parsed.error === "dashboard_role_name_too_long"
+          ? {
+              error: "dashboard_role_name_too_long",
+              message: `A role name can be at most ${MAX_ROLE_NAME_LENGTH} characters.`,
+            }
+          : { error: "invalid_body" };
+      }
+
+      const [counts] = await db
+        .select({ total: sql<number>`count(*)`.mapWith(Number) })
+        .from(dashboardRoles)
+        .where(eq(dashboardRoles.dashboardId, scope.dashboardId));
+
+      if ((counts?.total ?? 0) >= MAX_ROLES_PER_DASHBOARD) {
+        reply.code(400);
+        return {
+          error: "dashboard_role_limit_reached",
+          message: `A dashboard can have at most ${MAX_ROLES_PER_DASHBOARD} roles.`,
+        };
+      }
+
+      // ON CONFLICT DO NOTHING against the (dashboard_id, lower(name)) unique
+      // index, then reporting the un-returned row as an error — the same shape
+      // POST .../members uses for a repeat add. Doing the uniqueness check in
+      // the database rather than as a preceding SELECT is what makes two
+      // concurrent creates of "Editor" impossible rather than merely unlikely,
+      // and it's case-insensitive, so Editor/editor/EDITOR are one name (which
+      // is also what stops a second "observer" shadowing the seeded default).
+      //
+      // No conflict TARGET: every other unique constraint on this table is on
+      // the freshly generated id, so a conflict can only ever be the name.
+      const [inserted] = await db
+        .insert(dashboardRoles)
+        .values({ id: randomUUID(), dashboardId: scope.dashboardId, name: parsed.name })
+        .onConflictDoNothing()
+        .returning({
+          id: dashboardRoles.id,
+          name: dashboardRoles.name,
+          isDefault: dashboardRoles.isDefault,
+        });
+
+      if (inserted === undefined) {
+        reply.code(400);
+        return {
+          error: "dashboard_role_name_exists",
+          message: "This dashboard already has a role with that name.",
+        };
+      }
+
+      reply.code(201);
+      return inserted satisfies DashboardRoleJson;
+    },
+  );
+
+  /**
+   * Deletes a role — host-only, same gate and ordering as POST above. A HARD
+   * delete, unlike `dashboards` itself: a role has no billing history behind it
+   * (its dashboard_role_permissions rows are pure config and cascade away), and
+   * by the in-use check below a role anyone actually holds can't be deleted at
+   * all, so the cascade can only ever sweep the toggles of a role nobody holds.
+   *
+   * Two refusals, in this order:
+   *  - the default (Observer) role, ALWAYS — checked first so a host trying to
+   *    delete it gets "the Observer role can't be deleted" rather than a member
+   *    count implying the answer would change if they emptied it. Keyed off
+   *    is_default rather than the literal name, which is display copy.
+   *  - a role somebody holds, reported as a COUNT and nothing else: no emails,
+   *    no ids, no member list. The count is the whole payload.
+   *
+   * Returns { id } rather than an empty body — request() in the dashboard's
+   * lib/api.ts always calls res.json(), the same reason DeleteDashboardResponse
+   * exists. A repeat delete answers 404, which callers read as "already gone",
+   * matching deleteDashboard's own convention.
+   */
+  app.delete<{ Params: { id: string; roleId: string } }>(
+    "/v1/dashboards/:id/roles/:roleId",
+    async (req, reply) => {
+      const orgId = req.activeOrgId!;
+      const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
+      if (!scope.ok) {
+        reply.code(scope.error === "dashboard_id_required" ? 400 : 404);
+        return { error: scope.error };
+      }
+
+      const [dashboardRow] = await db
+        .select({ createdBy: dashboards.createdBy })
+        .from(dashboards)
+        .where(eq(dashboards.id, scope.dashboardId));
+
+      if (dashboardRow?.createdBy !== req.authUser!.id) {
+        reply.code(403);
+        return {
+          error: "dashboard_host_required",
+          message: "Only this dashboard's host can delete a role.",
+        };
+      }
+
+      const role = await resolveDashboardRole(req.params.roleId, scope.dashboardId);
+      if (role === null) {
+        reply.code(404);
+        return { error: "dashboard_role_not_found" };
+      }
+
+      if (role.isDefault) {
+        reply.code(400);
+        return {
+          error: "dashboard_role_is_default",
+          message: "The Observer role can't be deleted.",
+        };
+      }
+
+      // THE COUNT IS THE FRIENDLY ANSWER, NOT THE GUARANTEE. The guarantee is
+      // dashboard_members.role_id having no ON DELETE action, so Postgres
+      // itself refuses the delete (23503). This transaction only exists to keep
+      // a concurrent "assign this role to someone" from turning that friendly
+      // 400 into a raw driver error and a 500: FOR UPDATE conflicts with the
+      // FOR KEY SHARE a member-insert's FK check takes, so the two serialize
+      // and whichever loses sees the committed truth. Same lock-conflict
+      // reasoning as selectDashboardIfLive's FOR SHARE.
+      //
+      // TRANSACTION TRAP, same as the dashboard-delete route below: the helpers
+      // above close over the module-level `db`, so the count and the delete are
+      // inlined on `tx` here rather than extracted. is_default is checked
+      // outside because nothing ever updates it — a role is born default or
+      // not.
+      const result = await db.transaction(async (tx) => {
+        const locked = await tx
+          .select({ id: dashboardRoles.id })
+          .from(dashboardRoles)
+          .where(eq(dashboardRoles.id, role.id))
+          .for("update");
+
+        if (locked[0] === undefined) return null;
+
+        const [countRow] = await tx
+          .select({ holders: sql<number>`count(*)`.mapWith(Number) })
+          .from(dashboardMembers)
+          .where(eq(dashboardMembers.roleId, role.id));
+
+        const holders = countRow?.holders ?? 0;
+        if (holders > 0) return { holders };
+
+        // The cascade on dashboard_role_permissions.role_id sweeps this role's
+        // toggles with it; no second statement needed.
+        await tx.delete(dashboardRoles).where(eq(dashboardRoles.id, role.id));
+        return { holders: 0 };
+      });
+
+      if (result === null) {
+        reply.code(404);
+        return { error: "dashboard_role_not_found" };
+      }
+
+      if (result.holders > 0) {
+        reply.code(400);
+        // The api composes the whole sentence, pluralization included, because
+        // the dialog renders err.message verbatim — which is what every other
+        // error path in these dialogs already does.
+        const holders =
+          result.holders === 1 ? "1 account currently has it" : `${result.holders} accounts currently have it`;
+        return {
+          error: "dashboard_role_in_use",
+          message: `This role can't be deleted because ${holders}.`,
+        };
+      }
+
+      return { id: role.id };
+    },
+  );
+
+  /**
    * The share dialog's list: who created this dashboard, plus everyone it's
    * been shared with. Gated by resolveDashboardId, which already carries the
    * cross-org dashboardAccessible check — anyone who can already reach this
@@ -651,9 +973,16 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         .select({
           userId: dashboardMembers.userId,
           addedAt: dashboardMembers.addedAt,
-          role: dashboardMembers.role,
+          roleId: dashboardRoles.id,
+          roleName: dashboardRoles.name,
         })
         .from(dashboardMembers)
+        // Each member carries its role INLINE as { id, name } rather than a
+        // bare id, so the share dialog can label a row without needing the
+        // separate roles fetch to have succeeded first. An inner join is
+        // total here: role_id is NOT NULL behind an FK, so every member row
+        // has exactly one role row.
+        .innerJoin(dashboardRoles, eq(dashboardRoles.id, dashboardMembers.roleId))
         .where(eq(dashboardMembers.dashboardId, scope.dashboardId))
         .orderBy(asc(dashboardMembers.addedAt)),
     ]);
@@ -672,7 +1001,11 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         const user = usersById.get(m.userId);
         return user === undefined
           ? null
-          : { ...user, addedAt: m.addedAt.toISOString(), role: m.role };
+          : {
+              ...user,
+              addedAt: m.addedAt.toISOString(),
+              role: { id: m.roleId, name: m.roleName },
+            };
       })
       .filter((m) => m !== null);
 
@@ -770,17 +1103,40 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         };
       }
 
+      // A new member lands on the dashboard's DEFAULT role, resolved here and
+      // written explicitly: role_id is a per-dashboard uuid, so it can't be a
+      // static column default the way the old 'observer' enum value was.
+      const [defaultRole] = await db
+        .select({ id: dashboardRoles.id, name: dashboardRoles.name })
+        .from(dashboardRoles)
+        .where(
+          and(
+            eq(dashboardRoles.dashboardId, scope.dashboardId),
+            eq(dashboardRoles.isDefault, true),
+          ),
+        );
+
+      // Can't happen: POST /v1/dashboards writes this row in the same
+      // transaction as the dashboard, 0017 backfilled every pre-existing one
+      // (archived included), and DELETE .../roles/:roleId refuses to remove it.
+      // Failing loudly is still the right answer — role_id is NOT NULL, so
+      // there is no value to fall back to, and inventing one would be worse.
+      if (defaultRole === undefined) {
+        reply.code(500);
+        return { error: "dashboard_default_role_missing" };
+      }
+
       // ON CONFLICT DO NOTHING turns a repeat add into a no-op at the database
       // level rather than a unique-index violation; the check on the returned
       // row below is what turns that no-op into an explicit error instead of
       // a silent (and misleading) success.
       const [inserted] = await db
         .insert(dashboardMembers)
-        .values({ dashboardId: scope.dashboardId, userId: target.id })
+        .values({ dashboardId: scope.dashboardId, userId: target.id, roleId: defaultRole.id })
         .onConflictDoNothing({
           target: [dashboardMembers.dashboardId, dashboardMembers.userId],
         })
-        .returning({ addedAt: dashboardMembers.addedAt, role: dashboardMembers.role });
+        .returning({ addedAt: dashboardMembers.addedAt });
 
       if (inserted === undefined) {
         reply.code(400);
@@ -791,7 +1147,11 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
       }
 
       reply.code(201);
-      return { ...target, addedAt: inserted.addedAt.toISOString(), role: inserted.role };
+      return {
+        ...target,
+        addedAt: inserted.addedAt.toISOString(),
+        role: { id: defaultRole.id, name: defaultRole.name },
+      };
     },
   );
 
@@ -839,45 +1199,54 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         typeof req.body === "object" && req.body !== null
           ? (req.body as Record<string, unknown>)
           : null;
-      const rawRole = body?.["role"];
-      if (!isDashboardMemberRole(rawRole)) {
+      const rawRoleId = body?.["roleId"];
+      // Absent/non-string is the caller forgetting a required field (400);
+      // present-but-unreachable is 404 below. Same split resolveDashboardId
+      // draws between dashboard_id_required and dashboard_not_found.
+      if (typeof rawRoleId !== "string" || rawRoleId === "") {
         reply.code(400);
-        return {
-          error: "invalid_dashboard_member_role",
-          message: "That's not a role this dashboard recognizes.",
-        };
+        return { error: "invalid_body" };
+      }
+
+      // A role id that isn't THIS dashboard's answers 404, not the 400 the old
+      // union guard gave — a role is a row now, and an id pointing at another
+      // dashboard's row is just another unreachable id, answered the same
+      // non-leaking way every other one here is.
+      const role = await resolveDashboardRole(rawRoleId, scope.dashboardId);
+      if (role === null) {
+        reply.code(404);
+        return { error: "dashboard_role_not_found" };
       }
 
       const [updated] = await db
         .update(dashboardMembers)
-        .set({ role: rawRole })
+        .set({ roleId: role.id })
         .where(
           and(
             eq(dashboardMembers.dashboardId, scope.dashboardId),
             eq(dashboardMembers.userId, req.params.userId),
           ),
         )
-        .returning({ role: dashboardMembers.role });
+        .returning({ roleId: dashboardMembers.roleId });
 
       if (updated === undefined) {
         reply.code(404);
         return { error: "dashboard_member_not_found" };
       }
 
-      return { userId: req.params.userId, role: updated.role };
+      return { userId: req.params.userId, role: { id: role.id, name: role.name } };
     },
   );
 
   /**
    * The role-permission delegation popup's data source — host-only, same
    * resolveDashboardId -> createdBy === caller gate as the role/removal
-   * routes above. `:role` is still validated against the full
-   * DashboardMemberRole union rather than hardcoding "observer": the union is
-   * the single place a future second role gets added, and this route needs no
-   * change when it is.
+   * routes above. `:roleId` is validated by resolveDashboardRole, which is
+   * what makes another dashboard's role id a 404 here rather than a 403 or a
+   * leak of whether it exists.
    */
-  app.get<{ Params: { id: string; role: string } }>(
-    "/v1/dashboards/:id/permissions/:role",
+  app.get<{ Params: { id: string; roleId: string } }>(
+    "/v1/dashboards/:id/permissions/:roleId",
     async (req, reply) => {
       const orgId = req.activeOrgId!;
       const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
@@ -899,28 +1268,27 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         };
       }
 
-      if (!isDashboardMemberRole(req.params.role)) {
-        reply.code(400);
-        return {
-          error: "invalid_dashboard_member_role",
-          message: "That's not a role this dashboard recognizes.",
-        };
+      const role = await resolveDashboardRole(req.params.roleId, scope.dashboardId);
+      if (role === null) {
+        reply.code(404);
+        return { error: "dashboard_role_not_found" };
       }
 
-      const permissions = await fetchRolePermissions(scope.dashboardId, req.params.role);
-      return { role: req.params.role, permissions };
+      const permissions = await fetchRolePermissions(role.id);
+      return { roleId: role.id, permissions };
     },
   );
 
   /**
    * Sets one or more of a role's 6 action toggles in a single call — the
-   * delegation popup's save. Same host-only gate and union-based role
-   * validation as the GET above; the host check runs before the role/body are even parsed
-   * so an unauthorized caller learns nothing about whether their payload
-   * would otherwise have been valid, same ordering as the role-PATCH route.
+   * delegation popup's save. Same host-only gate and same resolveDashboardRole
+   * validation as the GET above; the host check runs before the role id/body
+   * are even looked at, so an unauthorized caller learns nothing about whether
+   * their payload would otherwise have been valid, same ordering as the
+   * role-PATCH route.
    */
-  app.patch<{ Params: { id: string; role: string }; Body: unknown }>(
-    "/v1/dashboards/:id/permissions/:role",
+  app.patch<{ Params: { id: string; roleId: string }; Body: unknown }>(
+    "/v1/dashboards/:id/permissions/:roleId",
     async (req, reply) => {
       const orgId = req.activeOrgId!;
       const scope = await resolveDashboardId(req.params.id, orgId, req.authUser!.id);
@@ -942,12 +1310,10 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         };
       }
 
-      if (!isDashboardMemberRole(req.params.role)) {
-        reply.code(400);
-        return {
-          error: "invalid_dashboard_member_role",
-          message: "That's not a role this dashboard recognizes.",
-        };
+      const role = await resolveDashboardRole(req.params.roleId, scope.dashboardId);
+      if (role === null) {
+        reply.code(404);
+        return { error: "dashboard_role_not_found" };
       }
 
       const parsed = parsePermissionsBody(req.body);
@@ -956,28 +1322,23 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
         return { error: "invalid_body" };
       }
 
-      const role = req.params.role;
-      // Each (dashboardId, role, action) upsert targets a distinct row, so
-      // these can run concurrently rather than as a sequential round trip per
-      // toggle — at most 6 of them, and none conflicts with another.
+      // Each (roleId, action) upsert targets a distinct row, so these can run
+      // concurrently rather than as a sequential round trip per toggle — at
+      // most 6 of them, and none conflicts with another.
       await Promise.all(
         Object.entries(parsed.permissions).map(([action, enabled]) =>
           db
             .insert(dashboardRolePermissions)
-            .values({ dashboardId: scope.dashboardId, role, action: action as DashboardPermissionAction, enabled })
+            .values({ roleId: role.id, action: action as DashboardPermissionAction, enabled })
             .onConflictDoUpdate({
-              target: [
-                dashboardRolePermissions.dashboardId,
-                dashboardRolePermissions.role,
-                dashboardRolePermissions.action,
-              ],
+              target: [dashboardRolePermissions.roleId, dashboardRolePermissions.action],
               set: { enabled },
             }),
         ),
       );
 
-      const permissions = await fetchRolePermissions(scope.dashboardId, role);
-      return { role, permissions };
+      const permissions = await fetchRolePermissions(role.id);
+      return { roleId: role.id, permissions };
     },
   );
 
@@ -990,8 +1351,8 @@ export function registerDashboardRoutes(app: FastifyInstance, redis: Redis): voi
    * spend_events), so there's no billing history a hard delete could
    * destroy. That also means re-adding the same person later
    * (POST .../members, unchanged) inserts a genuinely fresh row — their role
-   * resets to the schema default (observer) rather than remembering
-   * whatever tier they held before removal.
+   * resets to the dashboard's default (Observer) rather than remembering
+   * whatever role they held before removal.
    *
    * Same "the host is never a dashboard_members row" fact the PATCH route's
    * doc comment notes: there's no separate "can't remove the host" check

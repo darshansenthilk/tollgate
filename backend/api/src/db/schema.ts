@@ -11,6 +11,8 @@ import {
   jsonb,
   boolean,
   primaryKey,
+  foreignKey,
+  unique,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -68,11 +70,12 @@ export const toolApprovalStatusEnum = pgEnum("tool_approval_status", [
   "denied",
 ]);
 
-/** Mirrors @tollgate/shared's DashboardMemberRole — see that union for why
- *  Helper/Manager/Moderator/Admin were dropped (0016 demotes any surviving row
- *  to observer before narrowing the type). */
-export const dashboardMemberRoleEnum = pgEnum("dashboard_member_role", ["observer"]);
-
+/**
+ * There is deliberately NO dashboard_member_role enum here anymore. Roles are
+ * rows in dashboard_roles below — a host creates and deletes them at runtime,
+ * which an enum cannot express (0017 dropped the type). ACTIONS stayed an enum
+ * for the reason @tollgate/shared's "Dashboard permissions" section gives.
+ */
 export const dashboardPermissionActionEnum = pgEnum("dashboard_permission_action", [
   "createAgent",
   "updateAgent",
@@ -485,6 +488,63 @@ export const activeDashboards = pgTable("active_dashboards", {
 });
 
 /**
+ * The roles a dashboard's host can assign to its members — DATA, not an enum,
+ * which is the whole point: a host creates and deletes these from the
+ * permissions popup at runtime, so they cannot be a pgEnum or a TS union (see
+ * @tollgate/shared's "Dashboard permissions" section for the actions/roles
+ * asymmetry).
+ *
+ * PER DASHBOARD, matching how dashboard_role_permissions was already scoped:
+ * two dashboards' Observer rows are independent, and creating "Editor" on one
+ * dashboard creates it on no other, not even another one the same host owns.
+ *
+ * No `onDelete` on dashboard_id, same reasoning as dashboard_members below:
+ * dashboards are only ever soft-deleted, so there's no delete event to cascade
+ * from. Roles on an archived dashboard are inert rather than cleaned up.
+ */
+export const dashboardRoles = pgTable(
+  "dashboard_roles",
+  {
+    id: uuid("id").primaryKey(),
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id),
+    /** Length-capped at 30 by the dashboards routes (parseRoleNameBody), not by
+     *  the column — same split as dashboards.name. Unique per dashboard
+     *  CASE-INSENSITIVELY; see the index below. */
+    name: text("name").notNull(),
+    /**
+     * Exactly one row per dashboard carries this, seeded as "Observer" when the
+     * dashboard is created (and by 0017 for every pre-existing dashboard,
+     * archived ones included). It earns its keep twice: POST .../members
+     * resolves it to decide which role a newly added member gets — a
+     * per-dashboard uuid can't be a static column default the way 'observer'
+     * was — and DELETE .../roles/:roleId refuses on it. Keyed off this flag
+     * rather than the literal name "Observer", which is display copy a future
+     * rename feature could change; the flag is the invariant.
+     */
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Case-insensitive, per dashboard: "Editor", "editor" and "EDITOR" are one
+    // name, not three. The create route checks this too, but the index is what
+    // makes a race between two concurrent creates impossible rather than
+    // merely unlikely — and it's also what stops a second "observer" in any
+    // casing from ever shadowing the seeded default role.
+    uniqueIndex("dashboard_roles_dashboard_lower_name_unique").on(
+      table.dashboardId,
+      sql`lower(${table.name})`,
+    ),
+    // A real UNIQUE CONSTRAINT (not just a unique index) because it is the
+    // TARGET of dashboard_members' composite FK below — Postgres will only
+    // accept a constraint there. Redundant-looking (id is already the PK) and
+    // deliberately so: it's what lets that FK carry dashboard_id along.
+    unique("dashboard_roles_id_dashboard_unique").on(table.id, table.dashboardId),
+  ],
+);
+
+/**
  * Grants ONE user access to a dashboard outside the normal org-ownership path
  * (see the section comment above) — the "shared with me" half of dashboard
  * sharing. `dashboards.createdBy` is the host; a row here is a guest, added by
@@ -508,43 +568,73 @@ export const dashboardMembers = pgTable(
     userId: text("user_id").notNull(),
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
     /**
-     * Assignable permission tier, defaulted to the lowest (observer) on every
-     * add. Assignment + display only for now — no route reads this to gate
-     * anything (see PLAN.md's D2); it exists so the host-only PATCH endpoint
-     * and the share dialog's dropdown have somewhere to write and read.
+     * Which dashboard_roles row this member holds. NOT NULL with no column
+     * default: a per-dashboard uuid can't be a static default the way the old
+     * 'observer' enum value was, so POST .../members resolves the dashboard's
+     * is_default role and inserts it explicitly. NOT NULL rather than "NULL
+     * means the default role" — otherwise there'd be two spellings of one
+     * state and every read would have to handle both.
+     *
+     * The FK is declared in the composite form below, NOT here.
      */
-    role: dashboardMemberRoleEnum("role").notNull().default("observer"),
+    roleId: uuid("role_id").notNull(),
   },
   (table) => [
     // Adding the same person twice is a no-op, not a second row — the routes
     // rely on this to make POST /v1/dashboards/:id/members idempotent via
     // ON CONFLICT DO NOTHING.
     uniqueIndex("dashboard_members_dashboard_user_unique").on(table.dashboardId, table.userId),
+    // COMPOSITE, carrying dashboard_id along with role_id, so Postgres itself
+    // makes "member of dashboard A holding a role belonging to dashboard B"
+    // unrepresentable rather than leaving it to the route's own check. This is
+    // an authorization table; the codebase decides these in SQL where SQL can
+    // decide them (see selectDashboardIfLive). Targets dashboard_roles'
+    // (id, dashboard_id) UNIQUE constraint above.
+    //
+    // DELIBERATELY NO onDelete ACTION — do NOT "tidy" this into a cascade.
+    // The default NO ACTION is precisely what makes Postgres REFUSE to delete
+    // a role somebody still holds, which is the real guarantee behind DELETE
+    // .../roles/:roleId's friendly "N account(s) currently have it" 400: that
+    // count is the explanation, this omission is the enforcement. A cascade
+    // here would silently strip people's roles (and violate the NOT NULL
+    // above); SET NULL would too.
+    foreignKey({
+      columns: [table.roleId, table.dashboardId],
+      foreignColumns: [dashboardRoles.id, dashboardRoles.dashboardId],
+      name: "dashboard_members_role_id_dashboard_id_fk",
+    }),
   ],
 );
 
 /**
  * Per-role, per-action toggle for the 6 dashboard actions a host can delegate
- * (PLAN.md's "role-permission delegation") — one row per (dashboard, role,
- * action) combination that's ever actually been set. A combination with NO
- * row is "not yet configured", and every enforcement check treats that
- * identically to enabled=false: an unconfigured role starts with no
- * permissions, matching dashboardMembers.role's own "observer, no
- * permissions" default above.
+ * (PLAN.md's "role-permission delegation") — one row per (role, action)
+ * combination that's ever actually been set. A combination with NO row is "not
+ * yet configured", and every enforcement check treats that identically to
+ * enabled=false: a newly created role therefore starts with every toggle off,
+ * strictly no more privileged than an unconfigured Observer.
  *
- * Scoped by dashboardId (not just role) so two dashboards' Observer rows are
- * independent — a host delegating create-agent to Observers on one dashboard
- * doesn't touch any other dashboard they host.
+ * NO dashboard_id column of its own: role_id already determines the dashboard
+ * via dashboard_roles.dashboard_id, and a second copy could disagree with it —
+ * the same hazard the composite FK above closes, but with no equivalent
+ * constraint available here. Dashboard scoping lives in exactly one place.
  */
 export const dashboardRolePermissions = pgTable(
   "dashboard_role_permissions",
   {
-    dashboardId: uuid("dashboard_id")
+    /**
+     * ON DELETE CASCADE, unlike dashboard_members.role_id's deliberate
+     * omission — and the asymmetry is the design. These rows are pure
+     * configuration with no audit value, and a role anyone actually holds
+     * can't be deleted at all, so this cascade can only ever sweep the toggles
+     * of a role nobody holds. That's what makes deleting a role a real
+     * DELETE rather than the soft delete `dashboards` is stuck with.
+     */
+    roleId: uuid("role_id")
       .notNull()
-      .references(() => dashboards.id),
-    role: dashboardMemberRoleEnum("role").notNull(),
+      .references(() => dashboardRoles.id, { onDelete: "cascade" }),
     action: dashboardPermissionActionEnum("action").notNull(),
     enabled: boolean("enabled").notNull().default(false),
   },
-  (table) => [primaryKey({ columns: [table.dashboardId, table.role, table.action] })],
+  (table) => [primaryKey({ columns: [table.roleId, table.action] })],
 );

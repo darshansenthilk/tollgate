@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { X } from "lucide-react";
-import { DASHBOARD_MEMBER_ROLES, type DashboardMemberRole } from "@tollgate/shared";
 import {
   Dialog,
   DialogContent,
@@ -25,22 +24,17 @@ import {
   ApiError,
   type DashboardMember,
   type DashboardMembersResponse,
+  type DashboardRole,
   type DashboardUser,
   type UpdateDashboardMemberRoleResponse,
 } from "@/lib/api";
 
-/** Display copy for each role — keyed by the wire value so a lookup can't
- *  drift out of sync with @tollgate/shared's union. Observer is the whole
- *  union today (see DashboardMemberRole for why the other four went away), so
- *  the Record is a one-liner that a second role would force an update to. */
-const ROLE_LABELS: Record<DashboardMemberRole, string> = {
-  observer: "Observer",
-};
-
-/** The dropdown's options, straight off the shared list rather than a parallel
- *  hand-maintained array, so a role added to the union can't silently go
- *  missing here. */
-const ROLE_OPTIONS = DASHBOARD_MEMBER_ROLES;
+/**
+ * No ROLE_LABELS here anymore, and no options list either. Roles are rows the
+ * host creates on the permissions popup, so both the labels and the options
+ * are fetched (listDashboardRoles) rather than derived from a compile-time
+ * union — a member row's own `role.name` is what labels it.
+ */
 
 interface ShareDashboardDialogProps {
   open: boolean;
@@ -48,6 +42,10 @@ interface ShareDashboardDialogProps {
   /** Injected like renameDashboard on AgentDashboard — decouples this dialog
    *  from lib/api and from which dashboard is active. */
   listDashboardMembers: () => Promise<DashboardMembersResponse>;
+  /** The role dropdown's OPTIONS. Not host-only on the api, deliberately: a
+   *  member already sees a role name on every row here, so the names are not
+   *  new information. */
+  listDashboardRoles: () => Promise<DashboardRole[]>;
   addDashboardMember: (email: string) => Promise<DashboardMember>;
   /**
    * Host-only role reassignment. Undefined for the marketing demo (which never
@@ -58,7 +56,7 @@ interface ShareDashboardDialogProps {
    */
   updateDashboardMemberRole?: (
     userId: string,
-    role: DashboardMemberRole,
+    roleId: string,
   ) => Promise<UpdateDashboardMemberRoleResponse>;
   /**
    * Host-only member removal. Same optional gating as updateDashboardMemberRole
@@ -82,6 +80,7 @@ export function ShareDashboardDialog({
   open,
   dashboardName,
   listDashboardMembers,
+  listDashboardRoles,
   addDashboardMember,
   updateDashboardMemberRole,
   removeDashboardMember,
@@ -99,6 +98,9 @@ export function ShareDashboardDialog({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [host, setHost] = useState<DashboardUser | null>(null);
   const [members, setMembers] = useState<DashboardMember[]>([]);
+  /** The dropdown's options. Empty is a legitimate state — see the fetch's
+   *  catch branch — and renders every row as a plain label instead. */
+  const [roles, setRoles] = useState<DashboardRole[]>([]);
   const [email, setEmail] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -138,6 +140,7 @@ export function ShareDashboardDialog({
     setAdding(false);
     setHost(null);
     setMembers([]);
+    setRoles([]);
     setPendingRoleUserId(null);
     setRoleError(null);
     setConfirmingRemoveUserId(null);
@@ -158,6 +161,24 @@ export function ShareDashboardDialog({
       })
       .finally(() => {
         if (generation.current === gen) setLoading(false);
+      });
+
+    // In parallel with the member list, under the same generation guard —
+    // neither depends on the other, and the rows can render their own
+    // `role.name` before these options arrive.
+    void listDashboardRoles()
+      .then((res) => {
+        if (generation.current !== gen) return;
+        setRoles(res);
+      })
+      .catch(() => {
+        // Deliberately not surfaced as an error and deliberately not tied to
+        // `loading`: the point of this dialog is the member list, and every
+        // row can still label its own role without these. With no options the
+        // rows fall back to plain non-interactive labels rather than showing a
+        // dropdown that opens onto nothing.
+        if (generation.current !== gen) return;
+        setRoles([]);
       });
   } else if (!open && seeded) {
     setSeeded(false);
@@ -190,14 +211,18 @@ export function ShareDashboardDialog({
     }
   }
 
-  async function handleRoleChange(userId: string, role: DashboardMemberRole) {
+  async function handleRoleChange(userId: string, roleId: string) {
     if (updateDashboardMemberRole === undefined) return;
+    // Re-picking the role a member already has is a no-op, not a PATCH. This
+    // was harmless when the menu had exactly one option; now that a host can
+    // create several, it's a request that would change nothing.
+    if (members.find((m) => m.id === userId)?.role.id === roleId) return;
 
     const gen = generation.current;
     setPendingRoleUserId(userId);
     setRoleError(null);
     try {
-      const result = await updateDashboardMemberRole(userId, role);
+      const result = await updateDashboardMemberRole(userId, roleId);
       if (generation.current !== gen) return;
       setMembers((prev) =>
         prev.map((m) => (m.id === result.userId ? { ...m, role: result.role } : m)),
@@ -285,29 +310,31 @@ export function ShareDashboardDialog({
                     )}
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
-                    {isHost && updateDashboardMemberRole !== undefined ? (
+                    {/* roles.length > 0 as well as the host check: if the
+                        options fetch failed there's nothing to pick from, so
+                        the row falls back to the same plain label a non-host
+                        viewer gets rather than an empty menu. */}
+                    {isHost && updateDashboardMemberRole !== undefined && roles.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           disabled={pendingRoleUserId === m.id || pendingRemoveUserId === m.id}
                           className="shrink-0 text-xs text-muted-foreground outline-none hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                         >
-                          {pendingRoleUserId === m.id ? "Updating…" : ROLE_LABELS[m.role]}
+                          {pendingRoleUserId === m.id ? "Updating…" : m.role.name}
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          {ROLE_OPTIONS.map((role) => (
+                          {roles.map((role) => (
                             <DropdownMenuItem
-                              key={role}
-                              onClick={() => void handleRoleChange(m.id, role)}
+                              key={role.id}
+                              onClick={() => void handleRoleChange(m.id, role.id)}
                             >
-                              {ROLE_LABELS[role]}
+                              {role.name}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {ROLE_LABELS[m.role]}
-                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{m.role.name}</span>
                     )}
                   </span>
                 </li>

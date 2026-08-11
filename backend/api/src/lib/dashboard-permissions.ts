@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { DASHBOARD_PERMISSION_ACTIONS, type DashboardMemberRole, type DashboardPermissionAction } from "@tollgate/shared";
+import { DASHBOARD_PERMISSION_ACTIONS, type DashboardPermissionAction } from "@tollgate/shared";
 import { db } from "../db/client.js";
 import { dashboardMembers, dashboardRolePermissions } from "../db/schema.js";
 
@@ -29,23 +29,27 @@ export async function canPerformDashboardAction(
   if (dashboardOrgId === callerOrgId) return true;
 
   const [member] = await db
-    .select({ role: dashboardMembers.role })
+    .select({ roleId: dashboardMembers.roleId })
     .from(dashboardMembers)
     .where(and(eq(dashboardMembers.dashboardId, dashboardId), eq(dashboardMembers.userId, userId)));
 
-  // dashboardAccessible's cross-org branch is an EXISTS on this exact row, so
-  // reaching here with no row would mean the scope check that got us this far
-  // already disagreed with this query — defend with the safe default (no
-  // permissions) rather than assume it can't happen.
-  const role: DashboardMemberRole = member?.role ?? "observer";
+  // A TIGHTENING over what this used to do. Roles were an enum, so a missing
+  // member row could fall back to `?? "observer"` and then read that role's
+  // toggles — which, if the host had delegated anything to Observer, granted
+  // the action to someone with no membership row at all. A role is now a per-
+  // dashboard uuid, so there is nothing to fall back TO, and the honest answer
+  // is the safe one: no row, no permissions. dashboardAccessible's cross-org
+  // branch is an EXISTS on this exact row, so reaching here with no row would
+  // mean the scope check that got us this far already disagreed with this
+  // query.
+  if (member === undefined) return false;
 
   const [permission] = await db
     .select({ enabled: dashboardRolePermissions.enabled })
     .from(dashboardRolePermissions)
     .where(
       and(
-        eq(dashboardRolePermissions.dashboardId, dashboardId),
-        eq(dashboardRolePermissions.role, role),
+        eq(dashboardRolePermissions.roleId, member.roleId),
         eq(dashboardRolePermissions.action, action),
       ),
     );
@@ -53,19 +57,24 @@ export async function canPerformDashboardAction(
   return permission?.enabled ?? false;
 }
 
-/** Every gated action's current on/off state for one (dashboard, role) pair —
- *  the delegate-permissions popup's GET/PATCH response shape. A combination
- *  with no row defaults to false, same as canPerformDashboardAction above. */
+/**
+ * Every gated action's current on/off state for one role — the
+ * delegate-permissions popup's GET/PATCH response shape. An action with no row
+ * defaults to false, same as canPerformDashboardAction above, which is also
+ * what makes a freshly created role (no rows at all) start fully restricted.
+ *
+ * Takes a role id rather than (dashboardId, role): the role row already carries
+ * its dashboard, so passing both would be two ways to say one thing. Callers
+ * are responsible for having resolved that id against the dashboard first —
+ * routes/dashboards.ts's resolveDashboardRole is the authorization check.
+ */
 export async function fetchRolePermissions(
-  dashboardId: string,
-  role: DashboardMemberRole,
+  roleId: string,
 ): Promise<Record<DashboardPermissionAction, boolean>> {
   const rows = await db
     .select({ action: dashboardRolePermissions.action, enabled: dashboardRolePermissions.enabled })
     .from(dashboardRolePermissions)
-    .where(
-      and(eq(dashboardRolePermissions.dashboardId, dashboardId), eq(dashboardRolePermissions.role, role)),
-    );
+    .where(eq(dashboardRolePermissions.roleId, roleId));
 
   const byAction = new Map(rows.map((row) => [row.action, row.enabled]));
   const result = {} as Record<DashboardPermissionAction, boolean>;

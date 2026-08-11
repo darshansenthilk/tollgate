@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties } from "react";
 import { Bot, HardHat, Pencil, Plug, Users } from "lucide-react";
-import type { AgentStatus, DashboardMemberRole, DashboardPermissionAction } from "@tollgate/shared";
+import type { AgentStatus, DashboardPermissionAction } from "@tollgate/shared";
 import {
   Card,
   CardAction,
@@ -50,6 +50,7 @@ import type {
   CreateAgentResponse,
   DashboardMember,
   DashboardMembersResponse,
+  DashboardRole,
   DashboardRolePermissions,
   UpdateAgentInput,
   UpdateAgentResponse,
@@ -157,27 +158,37 @@ interface AgentDashboardProps {
    */
   listDashboardMembers?: () => Promise<DashboardMembersResponse>;
   addDashboardMember?: (email: string) => Promise<DashboardMember>;
-  /** Host-only role reassignment — see ShareDashboardDialog's own doc comment
-   *  for why only the host ever calls this. Gated together with the two props
-   *  above; the marketing demo supplies none of the three. */
+  /** The role dropdown's options, needed by BOTH dialogs — so it's grouped
+   *  with the sharing props rather than the host-only role-management ones,
+   *  and the share button is gated on it too. Undefined for the marketing
+   *  demo, same as its two neighbours. */
+  listDashboardRoles?: () => Promise<DashboardRole[]>;
+  /** Host-only role reassignment, by role id — see ShareDashboardDialog's own
+   *  doc comment for why only the host ever calls this. Gated together with
+   *  the props above; the marketing demo supplies none of them. */
   updateDashboardMemberRole?: (
     userId: string,
-    role: DashboardMemberRole,
+    roleId: string,
   ) => Promise<UpdateDashboardMemberRoleResponse>;
   /** Host-only member removal — same optional/paired-with-sharing gating as
    *  updateDashboardMemberRole above. Undefined for the marketing demo. */
   removeDashboardMember?: (userId: string) => Promise<void>;
   /**
-   * The role-permission delegation popup (the HardHat button). Both optional
-   * and both required together, same gating style as the sharing props above
-   * — undefined for the marketing demo, which has no dashboard to delegate
-   * permissions on.
+   * The role-permission delegation popup (the HardHat button): reading a
+   * role's toggles, writing them, and creating/deleting roles outright. All
+   * four optional and all four required together, same gating style as the
+   * sharing props above — undefined for the marketing demo, which has no
+   * dashboard to delegate permissions on. (The popup also needs
+   * listDashboardRoles, which is grouped with sharing above because the share
+   * dialog needs it too.)
    */
-  getDashboardRolePermissions?: (role: DashboardMemberRole) => Promise<DashboardRolePermissions>;
+  getDashboardRolePermissions?: (roleId: string) => Promise<DashboardRolePermissions>;
   setDashboardRolePermissions?: (
-    role: DashboardMemberRole,
+    roleId: string,
     permissions: Partial<Record<DashboardPermissionAction, boolean>>,
   ) => Promise<DashboardRolePermissions>;
+  createDashboardRole?: (name: string) => Promise<DashboardRole>;
+  deleteDashboardRole?: (roleId: string) => Promise<unknown>;
   /**
    * The viewer's OWN standing on the 6 gated actions (GET .../my-permissions),
    * so restricted actions can be hidden/disabled instead of only failing with
@@ -219,10 +230,13 @@ export function AgentDashboard({
   renameDashboard,
   listDashboardMembers,
   addDashboardMember,
+  listDashboardRoles,
   updateDashboardMemberRole,
   removeDashboardMember,
   getDashboardRolePermissions,
   setDashboardRolePermissions,
+  createDashboardRole,
+  deleteDashboardRole,
   myPermissions,
   isHost,
 }: AgentDashboardProps) {
@@ -240,6 +254,21 @@ export function AgentDashboard({
   // Gates the rename pencil and the HardHat permissions button — see isHost's
   // own doc comment for why neither belongs in myPermissions.
   const isDashboardHost = isHost ?? true;
+  // The two prop GROUPS, named once rather than re-spelled at each of their
+  // (button, dialog) use sites. Each dialog needs every prop in its group, so
+  // a caller supplying a partial group renders no affordance at all rather
+  // than a half-wired one — which is exactly what the marketing demo, which
+  // supplies none of them, relies on.
+  const canShareDashboard =
+    listDashboardMembers !== undefined &&
+    addDashboardMember !== undefined &&
+    listDashboardRoles !== undefined;
+  const canManageRoles =
+    listDashboardRoles !== undefined &&
+    getDashboardRolePermissions !== undefined &&
+    setDashboardRolePermissions !== undefined &&
+    createDashboardRole !== undefined &&
+    deleteDashboardRole !== undefined;
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -412,26 +441,21 @@ export function AgentDashboard({
               above. Each button is rendered only when its own actions are
               supplied (and, for the HardHat button, only for the host — see
               isDashboardHost), so either can be present without the other. */}
-          {((getDashboardRolePermissions !== undefined &&
-            setDashboardRolePermissions !== undefined &&
-            isDashboardHost) ||
-            (listDashboardMembers !== undefined && addDashboardMember !== undefined)) && (
+          {((canManageRoles && isDashboardHost) || canShareDashboard) && (
             <CardAction>
               <div className="flex items-center gap-2">
-                {getDashboardRolePermissions !== undefined &&
-                  setDashboardRolePermissions !== undefined &&
-                  isDashboardHost && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-lg"
-                      aria-label={`Manage role permissions for ${dashboardName}`}
-                      onClick={() => setManagingPermissions(true)}
-                    >
-                      <HardHat className="size-4" style={{ color: "var(--muted-foreground)" }} />
-                    </Button>
-                  )}
-                {listDashboardMembers !== undefined && addDashboardMember !== undefined && (
+                {canManageRoles && isDashboardHost && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-lg"
+                    aria-label={`Manage role permissions for ${dashboardName}`}
+                    onClick={() => setManagingPermissions(true)}
+                  >
+                    <HardHat className="size-4" style={{ color: "var(--muted-foreground)" }} />
+                  </Button>
+                )}
+                {canShareDashboard && (
                   <Button
                     type="button"
                     variant="outline"
@@ -723,11 +747,12 @@ export function AgentDashboard({
         />
       )}
 
-      {listDashboardMembers !== undefined && addDashboardMember !== undefined && (
+      {canShareDashboard && (
         <ShareDashboardDialog
           open={sharingDashboard}
           dashboardName={dashboardName}
           listDashboardMembers={listDashboardMembers}
+          listDashboardRoles={listDashboardRoles}
           addDashboardMember={addDashboardMember}
           updateDashboardMemberRole={updateDashboardMemberRole}
           removeDashboardMember={removeDashboardMember}
@@ -736,12 +761,15 @@ export function AgentDashboard({
         />
       )}
 
-      {getDashboardRolePermissions !== undefined && setDashboardRolePermissions !== undefined && (
+      {canManageRoles && (
         <SharePermissionsDialog
           open={managingPermissions}
           dashboardName={dashboardName}
+          listDashboardRoles={listDashboardRoles}
           getDashboardRolePermissions={getDashboardRolePermissions}
           setDashboardRolePermissions={setDashboardRolePermissions}
+          createDashboardRole={createDashboardRole}
+          deleteDashboardRole={deleteDashboardRole}
           onOpenChange={setManagingPermissions}
         />
       )}
