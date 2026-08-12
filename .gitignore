@@ -12,6 +12,7 @@ dist/
 .DS_Store
 *.tsbuildinfo
 demo/.demo-agent.json
+demo/.demo-cookies.txt
 
 # Agent skills (installed globally, not vendored into the repo)
 .agents/

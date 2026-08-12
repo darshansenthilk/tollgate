@@ -14,8 +14,11 @@ API_URL="${API_URL:-http://localhost:4000}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-tollgate-postgres-1}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-tollgate-redis-1}"
 DEMO_MAX_BUDGET_CENTS="${DEMO_MAX_BUDGET_CENTS:-2}"
+DEMO_EMAIL="${DEMO_EMAIL:-demo@tollgate.local}"
+DEMO_PASSWORD="${DEMO_PASSWORD:-tollgate-demo-password}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="$SCRIPT_DIR/.demo-agent.json"
+COOKIE_JAR="$SCRIPT_DIR/.demo-cookies.txt"
 
 echo "== Tollgate demo: seed =="
 echo ""
@@ -57,11 +60,49 @@ docker exec "$REDIS_CONTAINER" sh -c "redis-cli --scan --pattern 'frozen:*' | xa
 echo "   done"
 echo ""
 
+# --- Authenticate as a standing demo user. POST /v1/agents is session-gated
+# and org/dashboard-scoped (requireAuth + resolveDashboardId), so a bare,
+# unauthenticated create no longer works — it did when this script was first
+# written, before dashboard scoping landed. Sign-in is tried first so reruns
+# reuse the same user/org/dashboard rather than accumulating a new one per
+# run; sign-up is the fallback for a genuinely first run. ---
+echo "-- Authenticating as demo user ($DEMO_EMAIL) --"
+rm -f "$COOKIE_JAR"
+SIGNIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE_JAR" \
+  -X POST "$API_URL/api/auth/sign-in/email" \
+  -H "content-type: application/json" \
+  -d "{\"email\":\"$DEMO_EMAIL\",\"password\":\"$DEMO_PASSWORD\"}")
+if [ "$SIGNIN_STATUS" != "200" ]; then
+  echo "   no existing demo user; creating one"
+  curl -sf -c "$COOKIE_JAR" -X POST "$API_URL/api/auth/sign-up/email" \
+    -H "content-type: application/json" \
+    -d "{\"email\":\"$DEMO_EMAIL\",\"password\":\"$DEMO_PASSWORD\",\"name\":\"Demo\"}" >/dev/null
+fi
+echo "   done"
+echo ""
+
+# --- Resolve (or create) the demo dashboard. Every agent now belongs to one
+# explicitly (see routes/agents.ts's resolveDashboardId) — there's no implicit
+# "current" dashboard on the server side. ---
+echo "-- Resolving demo dashboard --"
+ACTIVE=$(curl -sf -b "$COOKIE_JAR" "$API_URL/v1/dashboards/active")
+DASHBOARD_ID=$(echo "$ACTIVE" | node -e "process.stdin.once('data', d => { const v = JSON.parse(d).dashboard; console.log(v ? v.id : ''); })")
+if [ -z "$DASHBOARD_ID" ]; then
+  CREATED=$(curl -sf -b "$COOKIE_JAR" -X POST "$API_URL/v1/dashboards" \
+    -H "content-type: application/json" \
+    -d '{"name":"Demo"}')
+  DASHBOARD_ID=$(echo "$CREATED" | node -e "process.stdin.once('data', d => console.log(JSON.parse(d).id))")
+  echo "   created dashboard $DASHBOARD_ID"
+else
+  echo "   reusing dashboard $DASHBOARD_ID"
+fi
+echo ""
+
 # --- Create the demo agent ---
 echo "-- Creating demo agent (providerSlug: chatgpt, maxBudgetCents: $DEMO_MAX_BUDGET_CENTS) --"
-RESPONSE=$(curl -sf -X POST "$API_URL/v1/agents" \
+RESPONSE=$(curl -sf -b "$COOKIE_JAR" -X POST "$API_URL/v1/agents" \
   -H "content-type: application/json" \
-  -d "{\"name\":\"demo-agent\",\"providerSlug\":\"chatgpt\",\"maxBudgetCents\":$DEMO_MAX_BUDGET_CENTS}")
+  -d "{\"name\":\"demo-agent\",\"providerSlug\":\"chatgpt\",\"maxBudgetCents\":$DEMO_MAX_BUDGET_CENTS,\"dashboardId\":\"$DASHBOARD_ID\"}")
 
 echo "$RESPONSE" > "$STATE_FILE"
 
