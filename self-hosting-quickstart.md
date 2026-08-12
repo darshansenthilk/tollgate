@@ -81,6 +81,33 @@ most common cause.
 Go to the web address you entered during setup (`http://localhost:3000` if
 you just used the defaults). Create your account, and you're done.
 
+## Optional: sign in with your company's identity provider
+
+If your company already uses Red Hat SSO, Keycloak, Okta, or a similar
+system, you can let employees sign in with that instead of a
+Tollgate-specific password. (Email/password sign-in still works either way —
+this is an addition, not a replacement.)
+
+To turn it on, add these to your `.env` (the setup script doesn't ask for
+these yet — add them by hand, then restart with `docker compose -f
+docker-compose.selfhost.yml up -d`):
+
+```
+SSO_ISSUER=https://your-idp.example.com/realms/yourcompany
+SSO_CLIENT_ID=tollgate
+SSO_CLIENT_SECRET=<from your identity provider>
+SSO_LABEL=Acme SSO
+```
+
+Before it'll work, register this exact redirect URL with your identity
+provider:
+```
+<your api URL>/api/auth/oauth2/callback/sso
+```
+
+Once both are set, a "Continue with [your label]" button appears on the
+sign-in page automatically — no rebuild needed.
+
 ## Before real people use it
 
 Two things to handle before this goes live for your team:

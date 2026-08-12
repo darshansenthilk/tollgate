@@ -230,6 +230,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Which sign-in methods this deployment offers. SSO is present only on
+ *  self-hosted builds that configured an IdP — see the api's
+ *  routes/auth-capabilities.ts and lib/sso.ts. */
+export interface AuthCapabilities {
+  emailPassword: boolean;
+  sso: { enabled: false } | { enabled: true; providerId: string; label: string };
+}
+
+/**
+ * Deliberately does NOT go through request().
+ *
+ * Two reasons, both about where this is called from — the signed-out sign-in
+ * page:
+ *  1. request() treats a 401 as "session expired" and fires signOut() + a
+ *     redirect to /sign-in. From /sign-in itself that is a redirect back to
+ *     the same page, i.e. exactly the loop shape that was a real production
+ *     bug here before (see handleUnauthorized's doc comment). This endpoint is
+ *     public and shouldn't 401, but routing it through machinery that reacts
+ *     that way to an unexpected status is a trap not worth leaving armed.
+ *  2. It must never block sign-in. If the api is unreachable or older than
+ *     this dashboard (no such route ⇒ 404), the honest answer is "no SSO" and
+ *     a working email+password form — not a thrown error on the login screen.
+ *     Hence the swallowed failure and the conservative fallback.
+ */
+export async function getAuthCapabilities(): Promise<AuthCapabilities> {
+  const fallback: AuthCapabilities = { emailPassword: true, sso: { enabled: false } };
+  try {
+    const res = await fetch(`${API_URL}/v1/auth/capabilities`, { cache: "no-store" });
+    if (!res.ok) return fallback;
+    return (await res.json()) as AuthCapabilities;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * One stored BYOK key. Deliberately has no field for the key itself — the api
  * never returns a stored key (write-once-reveal-never, same as agent tokens);

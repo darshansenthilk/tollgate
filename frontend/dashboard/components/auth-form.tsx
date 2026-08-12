@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { TwoFactorChallenge } from "@/components/two-factor-challenge";
 import { authClient } from "@/lib/auth-client";
+import { getAuthCapabilities, type AuthCapabilities } from "@/lib/api";
 
 type Mode = "sign-in" | "sign-up";
 
@@ -77,9 +78,54 @@ export function AuthForm({ mode }: { mode: Mode }) {
   // Sign-up never sets this: a brand-new account's twoFactorEnabled defaults
   // false, so the plugin's sign-in hook never fires for it.
   const [twoFactorPending, setTwoFactorPending] = useState(false);
+  // null until the api answers. SSO only exists on self-hosted deployments
+  // that configured an IdP, and only the api knows — see lib/api.ts's
+  // getAuthCapabilities for why this is asked at runtime rather than baked in.
+  const [capabilities, setCapabilities] = useState<AuthCapabilities | null>(null);
+  const [ssoPending, setSsoPending] = useState(false);
 
   const copy = COPY[mode];
   const locked = lockedUntil !== null && lockRemaining > 0;
+  const sso = capabilities?.sso.enabled === true ? capabilities.sso : null;
+
+  // Never blocks the form: getAuthCapabilities resolves to "no SSO" rather
+  // than throwing if the api is unreachable, so email+password stays usable.
+  useEffect(() => {
+    let cancelled = false;
+    void getAuthCapabilities().then((caps) => {
+      if (!cancelled) setCapabilities(caps);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSso() {
+    if (sso === null) return;
+    setSsoPending(true);
+    setError(null);
+    try {
+      // Full-page redirect to the IdP and back — so unlike the email path
+      // there's no success branch to handle here. Better Auth sets the session
+      // cookie on the callback and sends the browser to callbackURL.
+      // errorCallbackURL keeps a rejected/cancelled sign-in on this page
+      // instead of dumping the user on a raw error route.
+      const result = await authClient.signIn.oauth2({
+        providerId: sso.providerId,
+        callbackURL: `${window.location.origin}/agents`,
+        errorCallbackURL: `${window.location.origin}/sign-in`,
+      });
+      if (result.error) {
+        setError(result.error.message ?? "Could not start SSO sign-in.");
+        setSsoPending(false);
+      }
+      // On success the browser is navigating away; deliberately leave
+      // ssoPending true so the button stays disabled through the redirect.
+    } catch {
+      setError("Could not reach the identity provider.");
+      setSsoPending(false);
+    }
+  }
 
   // Restore an in-progress lockout after a reload.
   useEffect(() => {
@@ -227,6 +273,30 @@ export function AuthForm({ mode }: { mode: Mode }) {
               />
             ) : (
               <>
+                {sso !== null && (
+                  // Self-hosted + IdP-configured deployments only. Placed
+                  // above the credentials form because at an org that runs
+                  // SSO it's the path nearly everyone should take — but
+                  // email+password stays right below it on purpose, as the
+                  // way in when the IdP is unreachable (see lib/sso.ts).
+                  <div className="mb-4 flex flex-col gap-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={ssoPending}
+                      onClick={handleSso}
+                    >
+                      {ssoPending ? "Redirecting…" : `Continue with ${sso.label}`}
+                    </Button>
+                    <div className="flex items-center gap-3">
+                      <span className="h-px flex-1 bg-border" />
+                      <span className="text-xs text-muted-foreground">or</span>
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                  </div>
+                )}
+
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="email">Email</Label>

@@ -15,6 +15,7 @@ import { registerAgentDraftRoutes } from "./routes/agent-draft.js";
 import { registerSuggestionRoutes } from "./routes/suggestions.js";
 import { registerDashboardRoutes } from "./routes/dashboards.js";
 import { registerInstallWizardRoutes } from "./routes/install-wizard.js";
+import { registerAuthCapabilityRoutes } from "./routes/auth-capabilities.js";
 import { registerAuthRoutes } from "./lib/auth-mount.js";
 import { requireAuth } from "./lib/require-auth.js";
 import { runMigrations } from "./db/migrate.js";
@@ -70,6 +71,11 @@ await registerAuthRoutes(app);
 // the requireAuth scope below — a visitor reading the marketing site's
 // install steps hasn't signed up for anything yet. See routes/install-wizard.ts.
 registerInstallWizardRoutes(app);
+
+// Also public, and for the same reason: the sign-in page asks which sign-in
+// methods this deployment offers (self-hosted builds may add SSO), and it has
+// no session yet by definition. See routes/auth-capabilities.ts.
+registerAuthCapabilityRoutes(app);
 
 // The management plane (agent CRUD + policy stubs) is gated: requireAuth 401s
 // anonymous callers and scopes each request to the caller's active org. /health

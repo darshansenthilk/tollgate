@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
+import type { BetterAuthPlugin } from "better-auth";
 import { organization, twoFactor } from "better-auth/plugins";
+import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { createAuthMiddleware, APIError } from "better-auth/api";
 import { pool } from "./db.js";
+import { ssoProviderConfig } from "./sso.js";
 import {
   checkSignInLock,
   recordSignInFailure,
@@ -37,6 +40,21 @@ const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN ?? "http://localhost:3000"
 // and crossSubDomainCookies stays disabled.
 const AUTH_COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN;
 
+/**
+ * OAuth2/OIDC SSO, added ONLY for self-hosted deployments that have
+ * configured an identity provider — see lib/sso.ts for the full gate and why
+ * it exists. On the hosted deployment ssoProviderConfig() returns null and
+ * this array is empty, so genericOAuth is never registered and the auth
+ * surface is unchanged from before the feature existed.
+ *
+ * Additive, never a replacement: emailAndPassword below stays enabled in both
+ * builds so a self-hoster can still reach their dashboard when their IdP is
+ * unreachable, and so the first operator can sign in before any IdP exists.
+ */
+const ssoConfig = ssoProviderConfig();
+const ssoPlugins: BetterAuthPlugin[] =
+  ssoConfig === null ? [] : [genericOAuth({ config: [ssoConfig] })];
+
 export const auth = betterAuth({
   // A pg.Pool selects Better Auth's built-in Postgres (Kysely) adapter, so its
   // schema is applied by getMigrations (db/auth-migrate.ts), not drizzle-kit.
@@ -67,7 +85,7 @@ export const auth = betterAuth({
   // db/auth-migrate.ts) and a sign-in hook that withholds the session cookie
   // until a code is verified, for whichever accounts have chosen to enable
   // it. require-auth.ts does not gate on this flag at all anymore.
-  plugins: [organization(), twoFactor({ issuer: "Tollgate" })],
+  plugins: [organization(), twoFactor({ issuer: "Tollgate" }), ...ssoPlugins],
   rateLimit: {
     // Belt to the api's global @fastify/rate-limit braces: Better Auth adds its
     // own limiter on the auth surface, with stricter caps on the credential

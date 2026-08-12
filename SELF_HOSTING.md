@@ -144,6 +144,68 @@ defaults for):
   actually reachable, or `api`'s CORS + Better Auth's trusted-origins check
   both reject the dashboard's requests outright.
 
+## SSO (OAuth2/OIDC) — self-hosted only
+
+**Status (2026-08-12): built and verified live**, including a full round-trip
+against a real Keycloak instance (issuer discovery, redirect to the IdP,
+login, callback, session established, org auto-provisioned) — not just
+typechecked.
+
+**Why self-host-only.** The hosted deployment is email+password (plus opt-in
+TOTP) with no external IdP to federate with. Self-hosters are the opposite:
+they typically already run an IdP (Red Hat SSO — which is Keycloak — or
+Okta/Entra/etc.) and need employees to use it instead of a Tollgate-specific
+password. Email+password is never disabled in either build — the first
+operator has to sign in before any IdP is configured, and a self-hoster whose
+IdP is down still needs a way in.
+
+**Implementation:** Better Auth's `genericOAuth` plugin
+(`backend/api/src/lib/sso.ts`), not `oidc-provider` — Tollgate is consuming an
+external IdP, not acting as one. Standard OIDC discovery
+(`{issuer}/.well-known/openid-configuration`), PKCE forced on, and `issuer`
+set so the callback validates the returned `iss` (RFC 9207) rather than
+trusting whatever responds. Provider id is the neutral `"sso"`, not
+`"keycloak"` — the callback path (`/api/auth/oauth2/callback/sso`) shouldn't
+lie for a customer on Okta or Entra, which the same discovery flow supports
+unchanged.
+
+**The gate is two independent conditions, both required** (`isSelfHosted` +
+all three `SSO_*` vars present — see `sso.ts`'s doc comment for the full
+reasoning): `TOLLGATE_LICENSE_KEY` presence is reused as the self-host signal
+(same one `check-license.ts` already keys on), so the hosted deployment can
+never enable SSO even if the vars somehow leaked into its environment, and a
+self-hoster who hasn't configured an IdP never sees a sign-in button that can
+only fail. Covered by `backend/api/src/lib/sso.test.ts` (6 cases: both-off,
+license-only, each var individually missing, fully configured, trailing-slash
+issuer normalization).
+
+**Runtime discovery, not a build flag.** The dashboard can't know at build
+time whether the deployment it ends up in has SSO configured — same
+NEXT_PUBLIC_*-baked-at-build-time problem the API/proxy URLs already had (see
+"The dashboard image is a genuinely generic, publishable artifact now"
+above). Solved the same way: the sign-in page calls the new public
+`GET /v1/auth/capabilities` at load time and renders the SSO button only if
+the API reports it configured (`routes/auth-capabilities.ts`,
+`frontend/dashboard/lib/api.ts`'s `getAuthCapabilities`).
+
+**Config (see `.env.example`):** `SSO_ISSUER` (realm-inclusive for
+Keycloak/Red Hat SSO), `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, optional
+`SSO_LABEL` (defaults to `"SSO"`, shown on the button). The customer must
+register `<BETTER_AUTH_URL>/api/auth/oauth2/callback/sso` as an allowed
+redirect URI on their IdP client, with the authorization-code flow + PKCE
+enabled.
+
+**Open question, not yet decided:** SSO users get an org auto-provisioned on
+first sign-in the same way any new user does (`auth.ts`'s
+`session.create.before` hook) — so ten employees signing in via the same
+company IdP currently land in ten separate personal orgs rather than one
+shared workspace. Whether SSO users should instead join a single
+pre-designated org (and what role they get there) is a real product decision
+that hasn't been made — see the dashboard-sharing/permissions work
+(`dashboard-permissions.ts`, `dashboardMembers`) for the mechanism this would
+plug into. Not blocking for a single self-hoster testing this out; worth
+resolving before a multi-employee rollout.
+
 ## Migrations
 
 `api` runs its own migrations (`runMigrations` + `runAuthMigrations`, both
@@ -281,6 +343,12 @@ the workspace link resolves) or vendor shared's compiled output in, not
   bundle `node:crypto` for the browser — moved it to its own
   `@tollgate/shared/license` subpath export that only server-only
   `check-license.ts` files import, never anything client-side.
+- **SSO (OAuth2/OIDC), self-hosted only** — see "SSO (OAuth2/OIDC) —
+  self-hosted only" above for the full design and gating logic. Verified live
+  against a real Keycloak container: discovery, redirect, login, callback,
+  and session establishment all worked end-to-end, confirmed by reading the
+  resulting session back (`ssouser@acme.com`, org auto-provisioned) rather
+  than just observing a successful redirect.
 - `scripts/setup-selfhost.sh` — the little-to-no-code onboarding path: a
   guided interactive script that asks a handful of questions (URLs, the
   license key, optional provider keys) and writes a complete `.env` itself
