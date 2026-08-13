@@ -1,10 +1,16 @@
 # PLAN.md
 
-**Status: the dashboard role-permissions feature is BUILT, verified, committed and pushed — `efbed52`
-(backend + create/delete), `5ed9a7d` (popup reshape), `be69d1e` (role counter). The first-boot migration
-ordering bug is also fixed, uncommitted.**
-This file is a reference for the feature as it stands. It is not a plan for new work; nothing here is
-outstanding except the one gap named at the bottom.
+**Status: SHIPPED and MERGED.** The dashboard role-permissions feature is built, verified, and merged into
+`main` at `d225f7b` — `efbed52` (backend + create/delete), `5ed9a7d` (popup reshape), `be69d1e` (role
+counter), `d225f7b` (first-boot migration order). Both gaps this file used to carry are closed.
+
+**There is no outstanding work in this file, and no next task waiting to be picked up.** This is a
+*reference* for the feature as built — data model, api surface, the invariants that must not drift, and
+what has already been verified so it isn't redone. The next round builds on it.
+
+> **If you are resuming here: await instructions.** Do not start work, do not open a planning pass, and do
+> not propose a next step from what looks unfinished — nothing is. Eshaan will say what to improve. This
+> has been vindicated three rounds running: the "logical" next task was not the one he raised.
 
 ---
 
@@ -188,7 +194,7 @@ part of this feature has now been seen in a browser.
 Both gaps this file used to carry are closed. The browser pass is covered under Verification above; the
 first-boot bug is fixed and described below.
 
-### The first-boot migration order (FIXED)
+### The first-boot migration order (FIXED — `d225f7b`)
 
 `index.ts` now calls **`runAuthMigrations()` before `runMigrations()`**. It used to be the other way round,
 and on a genuinely fresh database that failed: `0012_zippy_power_man.sql` backfills `dashboards.created_by`
@@ -209,6 +215,13 @@ dev database was confirmed untouched at 18.
 Existing databases were never affected either way — they already have both halves, and both migrators are
 idempotent, so the reorder costs nothing on a database that has already booted once.
 
+**Knowingly left alone:** the `catch` around both migrators still logs
+`"postgres migration failed; continuing"` at *warn* and lets the api `listen()` anyway. That is what let
+this hide — a fresh clone booted "successfully" onto an empty database and only failed per-request.
+Changing it means deciding whether the api should refuse to start when migrations fail, which is a real
+behaviour change rather than a reorder, so it wasn't folded in. Raise it if you want it; don't treat it as
+a leftover bug.
+
 ## Deliberately not built
 
 Renaming a role (D5 keys everything off ids, so it's a route + a dialog affordance, no schema change);
@@ -218,15 +231,14 @@ the confirmation panels (both are plain conditional renders).
 
 ## Commit state
 
-Three commits, all pushed:
+**Shipped. `main`, `origin/main` and `Eshaan-feature-permissions` are all at `d225f7b`** — the branch was
+fast-forwarded into `main`, so there is no divergence and nothing outstanding. Four commits:
+
 - **`efbed52`** — backend, schema, migration `0017`, role create/delete.
 - **`5ed9a7d`** — "Polished construction hat UI pop up": both dialogs, inline confirmations, the `+` reveal.
 - **`be69d1e`** — "Added role counter to construction hat", including the `MAX_ROLES_PER_DASHBOARD` move
   into `@tollgate/shared`.
+- **`d225f7b`** — "DB fix": the first-boot migration ordering reorder.
 
-**Uncommitted:** the migration-order fix — `backend/api/src/index.ts`, `backend/api/src/db/auth-migrate.ts`
-— plus this file.
-
-`main` is at `a6de787` and this branch is **unmerged** — it is three commits ahead. (`git fetch` can't
-authenticate from this shell, so "pushed" is evidenced by the remote-tracking ref being level with HEAD,
-not by a re-fetch.)
+(`git fetch` can't authenticate from this shell, so "pushed" is evidenced by the remote-tracking refs
+having advanced to `d225f7b`, not by a re-fetch.)
