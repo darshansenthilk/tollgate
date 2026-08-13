@@ -78,6 +78,42 @@ describe("POST /claude/* hot path", () => {
     });
   });
 
+  it("forwards the caller's anthropic-beta header, but nothing else of theirs", async () => {
+    // Real clients (Claude Code among them) opt into newer Messages API
+    // features via this header, and the request body then carries fields
+    // tied to that feature — Anthropic 400s if the header didn't arrive.
+    // Regression test for that: found via a real Claude Code call through
+    // Tollgate, not written speculatively.
+    const h = await buildHarness({ adapters: [claudeAdapter] });
+    h.agents.add(TOKEN, {
+      id: AGENT_ID,
+      status: "active",
+      maxBudgetCents: 100,
+      providerSlug: "claude",
+    });
+    h.upstream.setResponder(
+      () => new Response(JSON.stringify(message("claude-3-5-haiku-20241022", 10, 10)), { status: 200 }),
+    );
+
+    await h.app.inject({
+      method: "POST",
+      url: "/claude/v1/messages",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "anthropic-beta": "context-management-2025-06-27",
+        "x-request-id": "should-not-forward",
+      },
+      payload: { model: "claude-3-5-haiku-20241022", messages: [{ role: "user", content: "hi" }] },
+    });
+
+    const headers = h.upstream.calls[0]?.init?.headers as Record<string, string>;
+    expect(headers["anthropic-beta"]).toBe("context-management-2025-06-27");
+    // The passthrough is a deliberate, per-header allowlist inside the
+    // adapter, not a blanket forward of everything the caller sent — an
+    // unrelated header must NOT leak through.
+    expect(headers["x-request-id"]).toBeUndefined();
+  });
+
   it("accumulates spend across successive requests (atomic INCRBY)", async () => {
     const h = await buildHarness({ adapters: [claudeAdapter] });
     h.agents.add(TOKEN, {

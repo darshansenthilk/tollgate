@@ -197,15 +197,23 @@ export const claudeAdapter: ProviderAdapter = {
   // NOT also prepend it, or the upstream URL doubles up ".../v1/v1/...".
   // Auth is x-api-key (not Authorization: Bearer), plus an explicit API
   // version header Anthropic requires on every request.
-  buildUpstreamRequest: ({ path, query, credential }) => {
+  buildUpstreamRequest: ({ path, query, credential, clientHeaders }) => {
     const clean = path.replace(/^\/+/, "");
-    return {
-      url: `${claudeAdapter.baseUrl}/${clean}${query}`,
-      headers: {
-        "x-api-key": credential.secrets["apiKey"] ?? "",
-        "anthropic-version": ANTHROPIC_VERSION,
-      },
+    const headers: Record<string, string> = {
+      "x-api-key": credential.secrets["apiKey"] ?? "",
+      "anthropic-version": ANTHROPIC_VERSION,
     };
+    // Real clients (Claude Code among them) opt into newer Messages API
+    // features — context management, the memory tool, extended prompt
+    // caching shapes — by sending anthropic-beta, and the request BODY then
+    // contains fields tied to that feature. Silently dropping this header
+    // (the hot path forwards nothing by default; see UpstreamRequestArgs)
+    // left the body's feature fields arriving with no opt-in, which
+    // Anthropic rejects outright (400 "Extra inputs are not permitted") —
+    // discovered by a real Claude Code call through Tollgate, not a guess.
+    const beta = clientHeaders["anthropic-beta"];
+    if (typeof beta === "string") headers["anthropic-beta"] = beta;
+    return { url: `${claudeAdapter.baseUrl}/${clean}${query}`, headers };
   },
 
   // No prepareRequestBody: Anthropic reports usage on streamed responses
