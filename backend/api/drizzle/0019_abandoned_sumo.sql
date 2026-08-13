@@ -1,0 +1,2 @@
+ALTER TABLE "anthropic_managed_agent_links" ADD COLUMN "upstream_key_id" uuid;--> statement-breakpoint
+ALTER TABLE "anthropic_managed_agent_links" ADD CONSTRAINT "anthropic_managed_agent_links_upstream_key_id_org_upstream_keys_id_fk" FOREIGN KEY ("upstream_key_id") REFERENCES "public"."org_upstream_keys"("id") ON DELETE set null ON UPDATE no action;

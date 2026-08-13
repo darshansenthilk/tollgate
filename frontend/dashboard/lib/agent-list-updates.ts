@@ -30,6 +30,8 @@ export function applyCreated(
     systemPrompt: created.systemPrompt,
     blockedTools: created.blockedTools,
     toolDefinitions: created.toolDefinitions,
+    hostPlatform: created.hostPlatform,
+    mcpTargetKeyId: created.mcpTargetKeyId,
   };
   return [item, ...prev];
 }
@@ -61,6 +63,7 @@ export function applyUpdated(
           systemPrompt: updated.systemPrompt,
           blockedTools: updated.blockedTools,
           toolDefinitions: updated.toolDefinitions,
+          mcpTargetKeyId: updated.mcpTargetKeyId,
         }
       : a,
   );

@@ -8,12 +8,13 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "test": "node --import tsx --test src/lib/*.test.ts",
+    "test": "node --import tsx --test src/lib/*.test.ts src/connectors/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/run-migrate.ts",
     "db:auth-migrate": "tsx src/db/run-auth-migrate.ts",
     "db:wipe-agents": "tsx src/db/wipe-agents.ts",
-    "db:purge-old-prompts": "tsx src/db/purge-old-prompts.ts"
+    "db:purge-old-prompts": "tsx src/db/purge-old-prompts.ts",
+    "db:poll-anthropic-usage": "tsx src/db/poll-anthropic-usage.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

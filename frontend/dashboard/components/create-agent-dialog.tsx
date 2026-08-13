@@ -27,6 +27,7 @@ import {
   ApiError,
   draftAgent,
   isDraftAvailable,
+  saveAnthropicLink,
   type CreateAgentInput,
   type CreateAgentResponse,
   type UpstreamKeysResponse,
@@ -38,6 +39,8 @@ import {
   type ProviderSlug,
 } from "@/lib/agent-options";
 import { ConnectAgentSnippet } from "@/components/connect-agent-snippet";
+import { ConnectMcpSnippet } from "@/components/connect-mcp-snippet";
+import { AnthropicLinkFields } from "@/components/anthropic-link-fields";
 import {
   ToolDefinitionsEditor,
   parseToolDrafts,
@@ -48,6 +51,17 @@ import {
  *  being null shows the placeholder rather than a selectable "cleared" state,
  *  so an explicit option is simpler than fighting that. */
 const DEPLOYMENT_DEFAULT_KEY = "__deployment_default__";
+
+/** Sentinel for "a normal, Tollgate-proxied agent" (hostPlatform: null) — same
+ *  reasoning as DEPLOYMENT_DEFAULT_KEY above. Values match the backend's
+ *  ALLOWED_HOST_PLATFORMS (backend/api/src/routes/agents.ts) exactly.
+ *
+ *  Salesforce Agentforce is deliberately not offered here yet — its usage/
+ *  cost connector isn't built (Phase 3 of the approved plan), so there's
+ *  nothing behind the option if an agent were created with it. Add it back
+ *  alongside that connector, once ALLOWED_HOST_PLATFORMS accepts it again. */
+const TOLLGATE_PROXIED = "__tollgate_proxied__";
+const HOST_PLATFORMS = [{ value: "anthropic_managed_agents", label: "Anthropic Managed Agents" }];
 
 interface CreateAgentDialogProps {
   /** Injected so the exact same dialog works against the real api
@@ -81,6 +95,16 @@ export function CreateAgentDialog({
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [hostPlatform, setHostPlatform] = useState<string | null>(null);
+  const [mcpTargetKeyId, setMcpTargetKeyId] = useState<string | null>(null);
+  // Anthropic Managed Agents link — folded straight into creation so linking
+  // is one step instead of "create, then edit to configure the link". Only
+  // anthropicApiKeyId is meaningful without the others; all optional here
+  // (an operator can always finish this later via Edit agent).
+  const [anthropicApiKeyId, setAnthropicApiKeyId] = useState("");
+  const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState("");
+  const [anthropicSessionId, setAnthropicSessionId] = useState("");
+  const [anthropicUpstreamKeyId, setAnthropicUpstreamKeyId] = useState<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [blockedTools, setBlockedTools] = useState("");
   const [toolDrafts, setToolDrafts] = useState<ToolDefinitionDraft[]>([]);
@@ -142,6 +166,19 @@ export function CreateAgentDialog({
       : (upstreamKeys.providers.find((p) => p.slug === ASSISTANT_ADAPTER_SLUGS[providerSlug])
           ?.keys ?? []);
 
+  // "mcp-downstream" keys aren't tied to providerSlug — they're the real
+  // downstream tool server this agent's MCP-gated calls forward to,
+  // independent of which assistant it's nominally provisioned for.
+  const mcpKeyOptions =
+    upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === "mcp-downstream")?.keys ?? []);
+
+  const anthropicAdminKeyOptions =
+    upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === "anthropic-admin")?.keys ?? []);
+
   function resetAndClose() {
     setOpen(false);
     // Reset after the close animation so the form doesn't visibly flash blank.
@@ -151,6 +188,12 @@ export function CreateAgentDialog({
       setModel(null);
       setMaxBudgetCents("");
       setUpstreamKeyId(null);
+      setHostPlatform(null);
+      setMcpTargetKeyId(null);
+      setAnthropicApiKeyId("");
+      setAnthropicWorkspaceId("");
+      setAnthropicSessionId("");
+      setAnthropicUpstreamKeyId(null);
       setSystemPrompt("");
       setBlockedTools("");
       setToolDrafts([]);
@@ -201,9 +244,38 @@ export function CreateAgentDialog({
         systemPrompt: systemPrompt.trim() === "" ? null : systemPrompt.trim(),
         blockedTools: parseBlockedTools(blockedTools),
         toolDefinitions: toolsResult.value,
+        hostPlatform,
+        mcpTargetKeyId,
       });
       setCreated(agent);
       onCreated(agent);
+
+      // Folds "link this agent to Anthropic Managed Agents" into creation
+      // itself — one step instead of "create, then edit to configure the
+      // link". listUpstreamKeys undefined means the marketing demo (no real
+      // api, no real agent id to attach a link to) — skip entirely there.
+      if (
+        hostPlatform === "anthropic_managed_agents" &&
+        anthropicApiKeyId.trim() !== "" &&
+        listUpstreamKeys !== undefined
+      ) {
+        try {
+          await saveAnthropicLink(agent.id, {
+            anthropicApiKeyId: anthropicApiKeyId.trim(),
+            anthropicWorkspaceId: anthropicWorkspaceId.trim() === "" ? null : anthropicWorkspaceId.trim(),
+            currentSessionId: anthropicSessionId.trim() === "" ? null : anthropicSessionId.trim(),
+            upstreamKeyId: anthropicUpstreamKeyId,
+          });
+        } catch (linkErr) {
+          // The agent itself was created successfully — don't fail the whole
+          // flow over the link, just say so; it's editable later either way.
+          setError(
+            `Agent created, but the Anthropic link couldn't be saved: ${
+              linkErr instanceof ApiError ? linkErr.message : "request failed"
+            }. Configure it from Edit agent instead.`,
+          );
+        }
+      }
     } catch (err) {
       // ApiError.message is already a clear, human-readable string here (e.g.
       // the backend's 409 agent_name_taken message), not a raw error code —
@@ -347,6 +419,70 @@ export function CreateAgentDialog({
               />
             </div>
 
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-host-platform">Hosting</Label>
+              <Select
+                items={[
+                  { value: TOLLGATE_PROXIED, label: "Tollgate-proxied (default)" },
+                  ...HOST_PLATFORMS,
+                ]}
+                value={hostPlatform ?? TOLLGATE_PROXIED}
+                onValueChange={(value) => {
+                  setHostPlatform(value === TOLLGATE_PROXIED ? null : value);
+                  setMcpTargetKeyId(null);
+                }}
+              >
+                <SelectTrigger id="agent-host-platform">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={TOLLGATE_PROXIED}>Tollgate-proxied (default)</SelectItem>
+                  {HOST_PLATFORMS.map((p) => (
+                    <SelectItem key={p.value} value={p.value}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {hostPlatform !== null && (
+                // The single most important thing to say here: this agent's
+                // own LLM traffic never touches Tollgate — only its tool
+                // calls do, via the MCP gateway. Assistant/model below stay
+                // required (descriptive, for the dashboard's own display),
+                // not because Tollgate proxies them.
+                <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  This agent&apos;s LLM traffic runs on {HOST_PLATFORMS.find((p) => p.value === hostPlatform)?.label} directly — Tollgate only governs its tool calls, via the MCP server URL shown after creation.
+                </p>
+              )}
+            </div>
+
+            {hostPlatform === "anthropic_managed_agents" && listUpstreamKeys !== undefined && (
+              <div
+                className="flex flex-col gap-3 rounded-lg border p-3"
+                style={{ borderColor: "var(--line)", background: "var(--panel)" }}
+              >
+                <p className="text-sm font-medium">Anthropic Managed Agents link (optional)</p>
+                <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  Fill this in now to start tracking real spend right away, or
+                  skip it and add it later from Edit agent. Real usage syncs
+                  automatically every few minutes once it&apos;s set — no
+                  separate cron or setup step needed.
+                </p>
+                <AnthropicLinkFields
+                  idPrefix="create-anthropic-link"
+                  apiKeyId={anthropicApiKeyId}
+                  onApiKeyIdChange={setAnthropicApiKeyId}
+                  workspaceId={anthropicWorkspaceId}
+                  onWorkspaceIdChange={setAnthropicWorkspaceId}
+                  sessionId={anthropicSessionId}
+                  onSessionIdChange={setAnthropicSessionId}
+                  upstreamKeyId={anthropicUpstreamKeyId}
+                  onUpstreamKeyIdChange={setAnthropicUpstreamKeyId}
+                  adminKeyOptions={anthropicAdminKeyOptions}
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="agent-provider">Assistant</Label>
@@ -459,7 +595,10 @@ export function CreateAgentDialog({
               onChange={setToolDrafts}
             />
 
-            {keyOptions.length > 0 && (
+            {/* Meaningless for an externally-hosted agent — its LLM traffic
+                never reaches Tollgate's proxy, so there's no upstream call to
+                pick a key for. */}
+            {hostPlatform === null && keyOptions.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="agent-upstream-key">Upstream key</Label>
                 <Select
@@ -484,6 +623,45 @@ export function CreateAgentDialog({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {hostPlatform !== null && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="agent-mcp-target-key">MCP downstream server</Label>
+                {mcpKeyOptions.length > 0 ? (
+                  <Select
+                    items={[
+                      { value: DEPLOYMENT_DEFAULT_KEY, label: "None configured yet" },
+                      ...mcpKeyOptions.map((k) => ({
+                        value: k.id,
+                        label: `${k.label} (${k.keyHint})`,
+                      })),
+                    ]}
+                    value={mcpTargetKeyId ?? DEPLOYMENT_DEFAULT_KEY}
+                    onValueChange={(value) =>
+                      setMcpTargetKeyId(value === DEPLOYMENT_DEFAULT_KEY ? null : value)
+                    }
+                  >
+                    <SelectTrigger id="agent-mcp-target-key">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={DEPLOYMENT_DEFAULT_KEY}>None configured yet</SelectItem>
+                      {mcpKeyOptions.map((k) => (
+                        <SelectItem key={k.id} value={k.id}>
+                          {k.label} ({k.keyHint})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    No MCP downstream server saved yet — add one under Settings
+                    → Upstream keys, then pick it here (or edit this agent
+                    afterward).
+                  </p>
+                )}
               </div>
             )}
 
@@ -532,12 +710,16 @@ export function CreateAgentDialog({
               </p>
             )}
 
-            <ConnectAgentSnippet
-              providerSlug={created.providerSlug}
-              model={created.model}
-              token={created.token}
-              allowTest
-            />
+            {created.hostPlatform !== null ? (
+              <ConnectMcpSnippet hostPlatform={created.hostPlatform} token={created.token} />
+            ) : (
+              <ConnectAgentSnippet
+                providerSlug={created.providerSlug}
+                model={created.model}
+                token={created.token}
+                allowTest
+              />
+            )}
 
             <DialogFooter>
               <Button type="button" onClick={resetAndClose}>

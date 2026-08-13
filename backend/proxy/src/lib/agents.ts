@@ -34,11 +34,29 @@ export interface AuthedAgent {
   /** Tools advertised in every outgoing request — see Policy.toolDefinitions's
    *  doc comment. null = nothing added. */
   toolDefinitions: ToolDefinition[] | null;
+  /** Which stored "mcp-downstream" credential (org_upstream_keys.id) the MCP
+   *  gateway forwards this agent's allowed tool calls to — the mcpTargetKeyId
+   *  equivalent of upstreamKeyId, but for tool-call traffic. Null means the
+   *  MCP gateway has nothing to forward to yet. */
+  mcpTargetKeyId: string | null;
 }
 
 /** Tokens are never stored in the clear; we look agents up by SHA-256 hash. */
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** Pulls the raw token out of an `Authorization: Bearer <token>` header, or
+ *  null if it's missing/malformed — the first half of authenticating a
+ *  caller, always used together with hashToken(). Shared by both the LLM
+ *  proxy route and the MCP gateway route, which is why it lives here rather
+ *  than in either route file. */
+export function extractBearer(header: string | undefined): string | null {
+  if (header === undefined) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  if (match === null) return null;
+  const token = match[1];
+  return token === undefined ? null : token.trim() || null;
 }
 
 /**
@@ -59,6 +77,7 @@ interface AgentRow {
   blocked_tools: string[] | null;
   system_prompt: string | null;
   tool_definitions: ToolDefinition[] | null;
+  mcp_target_key_id: string | null;
 }
 
 /** Production AgentStore backed by Postgres. */
@@ -66,7 +85,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
   return {
     async findByTokenHash(tokenHash) {
       const result = await pool.query<AgentRow>(
-        `SELECT a.id, a.org_id, a.status, a.provider_slug, a.upstream_key_id,
+        `SELECT a.id, a.org_id, a.status, a.provider_slug, a.upstream_key_id, a.mcp_target_key_id,
                 p.max_budget_cents, p.blocked_tools, p.system_prompt, p.tool_definitions
            FROM agents a
            LEFT JOIN policies p ON p.id = a.policy_id
@@ -88,6 +107,7 @@ export function pgAgentStore(pool: Pool): AgentStore {
         blockedTools: row.blocked_tools,
         systemPrompt: row.system_prompt,
         toolDefinitions: row.tool_definitions,
+        mcpTargetKeyId: row.mcp_target_key_id,
       };
     },
   };

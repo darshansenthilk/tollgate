@@ -88,6 +88,8 @@ function seedAgents(): AgentListItem[] {
       systemPrompt: null,
       blockedTools: null,
       toolDefinitions: null,
+      hostPlatform: null,
+      mcpTargetKeyId: null,
     },
     {
       id: "demo-research-agent",
@@ -103,6 +105,8 @@ function seedAgents(): AgentListItem[] {
       systemPrompt: null,
       blockedTools: null,
       toolDefinitions: null,
+      hostPlatform: null,
+      mcpTargetKeyId: null,
     },
     {
       id: "demo-data-scraper",
@@ -118,6 +122,8 @@ function seedAgents(): AgentListItem[] {
       systemPrompt: null,
       blockedTools: null,
       toolDefinitions: null,
+      hostPlatform: null,
+      mcpTargetKeyId: null,
     },
     {
       id: "demo-nightly-backfill",
@@ -133,6 +139,8 @@ function seedAgents(): AgentListItem[] {
       systemPrompt: null,
       blockedTools: null,
       toolDefinitions: null,
+      hostPlatform: null,
+      mcpTargetKeyId: null,
     },
   ];
 }
@@ -233,6 +241,8 @@ export function useAgentSimulator(): AgentSimulator {
       systemPrompt: input.systemPrompt,
       blockedTools: input.blockedTools,
       toolDefinitions: input.toolDefinitions,
+      hostPlatform: input.hostPlatform ?? null,
+      mcpTargetKeyId: input.mcpTargetKeyId ?? null,
       token: `tg_demo_${Math.random().toString(36).slice(2, 10)}`,
     };
     setAgents((prev) => applyCreated(prev, response));
@@ -260,6 +270,9 @@ export function useAgentSimulator(): AgentSimulator {
         input.blockedTools !== undefined ? input.blockedTools : current.blockedTools,
       toolDefinitions:
         input.toolDefinitions !== undefined ? input.toolDefinitions : current.toolDefinitions,
+      hostPlatform: current.hostPlatform,
+      mcpTargetKeyId:
+        input.mcpTargetKeyId !== undefined ? input.mcpTargetKeyId : current.mcpTargetKeyId,
     };
     setAgents((prev) => applyUpdated(prev, updated));
     return updated;

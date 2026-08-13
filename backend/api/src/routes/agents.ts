@@ -32,6 +32,15 @@ interface CreateAgentBody {
    *  validating it needs a database round-trip against the caller's org — see
    *  resolveDashboardId, which the route calls before touching anything else. */
   dashboardId: unknown;
+  /** Null (default) means this agent's traffic is proxied through Tollgate's
+   *  own hot path — see agents.host_platform's doc comment in db/schema.ts
+   *  for the external-agent-governance case a non-null value means instead. */
+  hostPlatform: string | null;
+  /** Which stored "mcp-downstream" credential this agent's tool calls forward
+   *  to via the MCP gateway (backend/proxy/src/routes/mcp.ts). Independent of
+   *  upstreamKeyId/providerSlug — an externally-hosted agent can still have
+   *  this set without ever using Tollgate's LLM proxy. */
+  mcpTargetKeyId: string | null;
 }
 
 /**
@@ -40,6 +49,20 @@ interface CreateAgentBody {
  * changes.
  */
 const ALLOWED_PROVIDER_SLUGS = new Set(["claude", "chatgpt", "gemini", "azure", "bedrock"]);
+
+/**
+ * hostPlatform is deliberately plain text with an app-level allowlist here
+ * (matching ALLOWED_PROVIDER_SLUGS's own style), not a pgEnum — a new
+ * platform shouldn't cost a migration. Keep in sync with the frontend's
+ * hosting-platform selector if this list changes.
+ *
+ * "salesforce_agentforce" is deliberately absent for now — the schema
+ * (salesforce_agentforce_links) and MCP gateway both already support it, but
+ * the usage/cost connector (Phase 3 of the approved plan) isn't built yet,
+ * so there's nothing behind it if an agent were created with it. Add it back
+ * here (and to the frontend's HOST_PLATFORMS) when that connector ships.
+ */
+const ALLOWED_HOST_PLATFORMS = new Set(["anthropic_managed_agents"]);
 
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 const TOOL_NAME_MAX = 64;
@@ -174,6 +197,26 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
   if (!toolDefinitionsResult.ok) return null;
   const toolDefinitions = toolDefinitionsResult.value;
 
+  const hostPlatformRaw = rec["hostPlatform"];
+  let hostPlatform: string | null;
+  if (hostPlatformRaw === undefined || hostPlatformRaw === null) {
+    hostPlatform = null;
+  } else if (typeof hostPlatformRaw === "string" && hostPlatformRaw.trim() !== "") {
+    hostPlatform = hostPlatformRaw;
+  } else {
+    return null;
+  }
+
+  const mcpTargetKeyIdRaw = rec["mcpTargetKeyId"];
+  let mcpTargetKeyId: string | null;
+  if (mcpTargetKeyIdRaw === undefined || mcpTargetKeyIdRaw === null) {
+    mcpTargetKeyId = null;
+  } else if (typeof mcpTargetKeyIdRaw === "string" && mcpTargetKeyIdRaw.trim() !== "") {
+    mcpTargetKeyId = mcpTargetKeyIdRaw;
+  } else {
+    return null;
+  }
+
   return {
     name,
     providerSlug,
@@ -184,6 +227,8 @@ function parseCreateBody(body: unknown): CreateAgentBody | null {
     blockedTools,
     toolDefinitions,
     dashboardId: rec["dashboardId"],
+    hostPlatform,
+    mcpTargetKeyId,
   };
 }
 
@@ -216,6 +261,26 @@ async function upstreamKeyBelongsToProvider(
   return rows.length > 0;
 }
 
+/**
+ * Same shape as upstreamKeyBelongsToProvider, but simpler: an MCP downstream
+ * credential isn't tied to an assistant label the way an LLM key is (nothing
+ * routes an MCP tool call by "which assistant" the way the proxy's hot path
+ * does) — it's always exactly the "mcp-downstream" vault provider slug.
+ */
+async function mcpTargetKeyBelongsToOrg(mcpTargetKeyId: string, orgId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: orgUpstreamKeys.id })
+    .from(orgUpstreamKeys)
+    .where(
+      and(
+        eq(orgUpstreamKeys.id, mcpTargetKeyId),
+        eq(orgUpstreamKeys.orgId, orgId),
+        eq(orgUpstreamKeys.providerSlug, "mcp-downstream"),
+      ),
+    );
+  return rows.length > 0;
+}
+
 /** Partial update from PATCH /v1/agents/:id. Every field is optional; an
  *  absent key means "leave alone", which is why this can't reuse
  *  parseCreateBody — there, absent and null both mean null. */
@@ -227,11 +292,19 @@ interface UpdateAgentBody {
   systemPrompt?: string | null;
   blockedTools?: string[] | null;
   toolDefinitions?: ToolDefinition[] | null;
+  mcpTargetKeyId?: string | null;
 }
 
 type UpdateParseResult =
   | { ok: true; body: UpdateAgentBody }
-  | { ok: false; error: "invalid_body" | "provider_slug_immutable" | "dashboard_id_immutable" };
+  | {
+      ok: false;
+      error:
+        | "invalid_body"
+        | "provider_slug_immutable"
+        | "dashboard_id_immutable"
+        | "host_platform_immutable";
+    };
 
 function parseUpdateBody(body: unknown): UpdateParseResult {
   if (typeof body !== "object" || body === null) return { ok: false, error: "invalid_body" };
@@ -248,6 +321,15 @@ function parseUpdateBody(body: unknown): UpdateParseResult {
   // unknown key, then 400ing "invalid_body" for an empty patch, which reads like
   // a malformed request rather than an unsupported one.
   if ("dashboardId" in rec) return { ok: false, error: "dashboard_id_immutable" };
+
+  // Same reasoning as providerSlug just above: whether this agent is proxied
+  // through Tollgate's own hot path or externally-hosted (MCP-gated) is a
+  // fundamental identity decision made at creation, not something to flip on
+  // a live agent whose budget/token semantics already assume one or the
+  // other. mcpTargetKeyId (below) IS editable — repointing which real MCP
+  // server tool calls forward to is a normal config change, same as
+  // upstreamKeyId for a proxied agent's LLM key.
+  if ("hostPlatform" in rec) return { ok: false, error: "host_platform_immutable" };
 
   const out: UpdateAgentBody = {};
 
@@ -299,6 +381,13 @@ function parseUpdateBody(body: unknown): UpdateParseResult {
     const result = parseToolDefinitions(rec["toolDefinitions"]);
     if (!result.ok) return { ok: false, error: "invalid_body" };
     out.toolDefinitions = result.value;
+  }
+
+  if ("mcpTargetKeyId" in rec) {
+    const raw = rec["mcpTargetKeyId"];
+    if (raw === null) out.mcpTargetKeyId = null;
+    else if (typeof raw === "string" && raw.trim() !== "") out.mcpTargetKeyId = raw;
+    else return { ok: false, error: "invalid_body" };
   }
 
   // An empty patch is a caller mistake, not a no-op success.
@@ -426,6 +515,14 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       };
     }
 
+    if (body.hostPlatform !== null && !ALLOWED_HOST_PLATFORMS.has(body.hostPlatform)) {
+      reply.code(400);
+      return {
+        error: "invalid_host_platform",
+        message: `hostPlatform must be one of: ${[...ALLOWED_HOST_PLATFORMS].join(", ")}`,
+      };
+    }
+
     // Which dashboard the agent lands in is the caller's explicit choice, not
     // whichever one happens to be selected server-side. Creating into the wrong
     // dashboard is a durable mistake — there's no "move agent" affordance, so
@@ -463,6 +560,14 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
     ) {
       reply.code(400);
       return { error: "invalid_upstream_key" };
+    }
+
+    if (
+      body.mcpTargetKeyId !== null &&
+      !(await mcpTargetKeyBelongsToOrg(body.mcpTargetKeyId, scope.orgId))
+    ) {
+      reply.code(400);
+      return { error: "invalid_mcp_target_key" };
     }
 
     // Scoped to this DASHBOARD (+ non-archived): a name only needs to be free
@@ -555,12 +660,14 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       )
       insert into "agents" (
         "id", "org_id", "dashboard_id", "name",
-        "provider_slug", "model", "policy_id", "token_hash", "upstream_key_id"
+        "provider_slug", "model", "policy_id", "token_hash", "upstream_key_id",
+        "host_platform", "mcp_target_key_id"
       )
       select
         ${agentId}::uuid, ${scope.orgId}, live."id", ${body.name},
         ${body.providerSlug}, ${body.model}::text, ${policyId}::uuid,
-        ${tokenHash}, ${body.upstreamKeyId}::uuid
+        ${tokenHash}, ${body.upstreamKeyId}::uuid,
+        ${body.hostPlatform}::text, ${body.mcpTargetKeyId}::uuid
       from live
       returning "id"
     `);
@@ -588,6 +695,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
       blockedTools: body.blockedTools,
       toolDefinitions: body.toolDefinitions,
       dashboardId: scope.dashboardId,
+      hostPlatform: body.hostPlatform,
+      mcpTargetKeyId: body.mcpTargetKeyId,
       // Returned once. Only the hash is ever persisted — this response is the
       // only chance the caller has to see the raw token.
       token,
@@ -619,6 +728,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         systemPrompt: policies.systemPrompt,
         blockedTools: policies.blockedTools,
         toolDefinitions: policies.toolDefinitions,
+        hostPlatform: agents.hostPlatform,
+        mcpTargetKeyId: agents.mcpTargetKeyId,
       })
       .from(agents)
       // Three independent filters, all load-bearing:
@@ -666,6 +777,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           systemPrompt: row.systemPrompt,
           blockedTools: row.blockedTools,
           toolDefinitions: row.toolDefinitions,
+          hostPlatform: row.hostPlatform,
+          mcpTargetKeyId: row.mcpTargetKeyId,
           currentMonthSpendCents: microCentsToCents(
             Number.isNaN(spentMicroCents) ? 0 : spentMicroCents,
           ),
@@ -728,6 +841,12 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
             message: "An agent can't be moved to a different dashboard.",
           };
         }
+        if (parsed.error === "host_platform_immutable") {
+          return {
+            error: "host_platform_immutable",
+            message: "An agent's hosting platform can't be changed after it's created.",
+          };
+        }
         return { error: "invalid_body" };
       }
       const body = parsed.body;
@@ -778,11 +897,25 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
         return { error: "invalid_upstream_key" };
       }
 
-      const agentFields: { name?: string; model?: string | null; upstreamKeyId?: string | null } =
-        {};
+      if (
+        body.mcpTargetKeyId !== undefined &&
+        body.mcpTargetKeyId !== null &&
+        !(await mcpTargetKeyBelongsToOrg(body.mcpTargetKeyId, agent.dashboardOrgId))
+      ) {
+        reply.code(400);
+        return { error: "invalid_mcp_target_key" };
+      }
+
+      const agentFields: {
+        name?: string;
+        model?: string | null;
+        upstreamKeyId?: string | null;
+        mcpTargetKeyId?: string | null;
+      } = {};
       if (body.name !== undefined) agentFields.name = body.name;
       if (body.model !== undefined) agentFields.model = body.model;
       if (body.upstreamKeyId !== undefined) agentFields.upstreamKeyId = body.upstreamKeyId;
+      if (body.mcpTargetKeyId !== undefined) agentFields.mcpTargetKeyId = body.mcpTargetKeyId;
 
       if (Object.keys(agentFields).length > 0) {
         await db
@@ -827,6 +960,8 @@ export function registerAgentRoutes(app: FastifyInstance, redis: Redis): void {
           systemPrompt: policies.systemPrompt,
           blockedTools: policies.blockedTools,
           toolDefinitions: policies.toolDefinitions,
+          hostPlatform: agents.hostPlatform,
+          mcpTargetKeyId: agents.mcpTargetKeyId,
         })
         .from(agents)
         .leftJoin(policies, eq(policies.id, agents.policyId))

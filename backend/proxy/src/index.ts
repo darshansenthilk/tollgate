@@ -15,11 +15,20 @@ import { redisTokenUsageStore } from "./lib/token-usage.js";
 import { redisCurrentPromptStore } from "./lib/current-prompt.js";
 import { pgApprovalStore } from "./lib/tool-approvals.js";
 import { registerProxyRoute } from "./routes/proxy.js";
+import { registerInternalConnectorRoutes } from "./routes/internal-connectors.js";
+import { registerMcpGatewayRoute } from "./routes/mcp.js";
 
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
 const startedAt = Date.now();
 
-const app = Fastify({ logger: true });
+// Fastify's default bodyLimit is 1MB, silently 413ing any real multimodal
+// payload (a PDF/image/audio attachment) long before it reaches an adapter
+// or an upstream provider's own limit — discovered via a real request:
+// Anthropic's Messages API accepts documents up to 32MB, and a legitimately
+// chunked, correctly-sized request was still rejected here. Set with
+// headroom above that real, largest-known provider cap rather than pinned
+// exactly to it.
+const app = Fastify({ logger: true, bodyLimit: 40 * 1024 * 1024 });
 
 // Security-header hygiene. The proxy is a server-to-server data plane (agents
 // call it with a Tollgate token), not browser-facing, so no CORS. A generous
@@ -52,6 +61,18 @@ app.get("/health", async (_req, reply): Promise<HealthReport> => {
   };
 });
 
+// Shared across registerProxyRoute and registerInternalConnectorRoutes — one
+// vault instance, one onDecryptFailure alarm, whether the caller is a
+// proxied LLM request or an internal connector poll.
+const vault = pgVault(pool, {
+  onDecryptFailure: (orgId, slug) => {
+    app.log.error(
+      { orgId, slug },
+      "stored upstream key could not be decrypted — check VAULT_ENCRYPTION_KEY matches the api service; requests for this org/provider are being denied",
+    );
+  },
+});
+
 /**
  * Data plane: agents call POST /:providerSlug/* with a Tollgate token; the proxy
  * authenticates, checks the agent's declared assistant against the resolved
@@ -68,14 +89,7 @@ registerProxyRoute(app, {
   // Org-scoped: a BYOK org's own provider key, else Tollgate's env key.
   // A stored-but-undecryptable key denies the request (see lib/vault.ts) —
   // loud, because it silently breaks every request for that org.
-  vault: pgVault(pool, {
-    onDecryptFailure: (orgId, slug) => {
-      app.log.error(
-        { orgId, slug },
-        "stored upstream key could not be decrypted — check VAULT_ENCRYPTION_KEY matches the api service; requests for this org/provider are being denied",
-      );
-    },
-  }),
+  vault,
   freeze: redisFreezeStore(redis),
   tokenUsage: redisTokenUsageStore(redis),
   currentPrompt: redisCurrentPromptStore(redis),
@@ -85,6 +99,24 @@ registerProxyRoute(app, {
   fetchImpl: fetch,
   now: () => new Date(),
   assistantAdapterSlugs,
+});
+
+// Internal-only: api's usage pollers (external agent governance) call these
+// to decrypt a platform-connector credential and make the real outbound call
+// server-side — see routes/internal-connectors.ts's doc comment for why this
+// exists instead of giving api its own decrypt function.
+registerInternalConnectorRoutes(app, { vault, fetchImpl: fetch });
+
+// The other half of external agent governance: agents hosted on a platform
+// Tollgate can't intercept LLM traffic for (Anthropic Managed Agents,
+// Salesforce Agentforce) are instead pointed at this as their MCP tool
+// server — see routes/mcp.ts's doc comment for the full design.
+registerMcpGatewayRoute(app, {
+  agents: pgAgentStore(pool),
+  vault,
+  approvals: pgApprovalStore(pool, redis),
+  spendLog: pgSpendLog(pool),
+  fetchImpl: fetch,
 });
 
 async function main() {

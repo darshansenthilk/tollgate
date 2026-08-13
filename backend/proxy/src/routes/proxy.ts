@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AgentStatus } from "@tollgate/shared";
 import type { ProviderRegistry } from "../adapters/registry.js";
 import type { AgentStore } from "../lib/agents.js";
-import { hashToken } from "../lib/agents.js";
+import { hashToken, extractBearer } from "../lib/agents.js";
 import type { BudgetStore } from "../lib/budget.js";
 import {
   centsToMicroCents,
@@ -55,14 +55,6 @@ const FROZEN_STATUSES: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
 interface ProxyParams {
   providerSlug: string;
   "*": string;
-}
-
-function extractBearer(header: string | undefined): string | null {
-  if (header === undefined) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (match === null) return null;
-  const token = match[1];
-  return token === undefined ? null : token.trim() || null;
 }
 
 /**
@@ -260,6 +252,10 @@ export function registerProxyRoute(app: FastifyInstance, deps: ProxyDeps): void 
           method: "POST",
           body,
           credential,
+          // Not forwarded by default — see UpstreamRequestArgs's doc comment.
+          // Only an adapter that explicitly reads a specific header out of
+          // this actually forwards it.
+          clientHeaders: req.headers,
         });
       } catch (err) {
         // A credential that's stored but unusable for this provider (an Azure

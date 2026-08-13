@@ -127,6 +127,20 @@
       "when": 1786416048092,
       "tag": "0017_normal_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786591974000,
+      "tag": "0018_military_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786595594452,
+      "tag": "0019_abandoned_sumo",
+      "breakpoints": true
     }
   ]
 }

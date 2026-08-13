@@ -119,7 +119,14 @@ function parseSaveBody(body: unknown): ParseResult {
     else config[field.name] = value;
   }
 
-  if (Object.keys(secrets).length === 0) return { ok: false, error: "invalid_body" };
+  // Not "secrets must be non-empty": every REQUIRED field is already
+  // enforced by the loop above, whichever of secrets/config it belongs to.
+  // "mcp-downstream" is a real provider whose only required field
+  // (serverUrl) lives in config, not secrets — a bare "must have a secret"
+  // check would reject it even when fully and correctly filled in.
+  if (Object.keys(secrets).length === 0 && Object.keys(config).length === 0) {
+    return { ok: false, error: "invalid_body" };
+  }
 
   const label = rawLabel === undefined || rawLabel.trim() === "" ? "Default" : rawLabel.trim();
 

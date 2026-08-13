@@ -82,12 +82,20 @@ export function buildConnectSnippets(
   const upstreamModel = upstreamModelId(providerSlug, model);
 
   if (providerSlug === "claude") {
+    // auth_token/authToken, NOT api_key/apiKey. Verified against the real SDK
+    // source (both Python and TS): api_key routes through apiKeyAuth() and is
+    // sent as an X-Api-Key header (Anthropic's own non-standard convention,
+    // mirrored by claude.ts's adapter when it signs the OUTBOUND request with
+    // the org's real vaulted key) — but the proxy's extractBearer only reads
+    // Authorization: Bearer off the INCOMING request. api_key would 401 with
+    // missing_token. auth_token routes through bearerAuth() and sends
+    // Authorization: Bearer, which is what the token actually needs.
     return {
       python: `from anthropic import Anthropic
 
 client = Anthropic(
     base_url="${baseUrl}",
-    api_key="${token}",
+    auth_token="${token}",
 )
 
 response = client.messages.create(
@@ -100,7 +108,7 @@ print(response.content[0].text)`,
 
 const client = new Anthropic({
   baseURL: "${baseUrl}",
-  apiKey: "${token}",
+  authToken: "${token}",
 });
 
 const response = await client.messages.create({
@@ -241,6 +249,52 @@ const response = await client.chat.completions.create({
 });
 console.log(response.choices[0].message.content);`,
   };
+}
+
+/**
+ * Platform-specific copy for pointing an externally-hosted agent's own tool
+ * registration at Tollgate's MCP gateway (backend/proxy/src/routes/mcp.ts)
+ * instead of the SDK snippets above — those describe rerouting LLM traffic,
+ * which an externally-hosted agent's platform (not Tollgate) already owns.
+ * null for any hostPlatform this doesn't recognize, mirroring
+ * buildConnectSnippets's own "unknown input -> null" contract.
+ */
+export interface McpConnectInfo {
+  serverUrl: string;
+  token: string;
+  instructions: string;
+}
+
+export function buildMcpConnectInfo(hostPlatform: string, token: string): McpConnectInfo | null {
+  const serverUrl = `${PROXY_URL}/mcp`;
+
+  if (hostPlatform === "anthropic_managed_agents") {
+    return {
+      serverUrl,
+      token,
+      // NOT a Console form — Anthropic's Managed Agents MCP registration is
+      // API-driven: the agent declares this URL under mcp_servers (POST
+      // /v1/agents), and the token goes into a vault credential
+      // (type: "static_bearer", matched by mcp_server_url) referenced when
+      // creating the session. See platform.claude.com/docs/en/managed-agents/
+      // mcp-connector and .../vaults for the exact request shapes — confirmed
+      // directly against those docs after an earlier, wrong assumption here
+      // that this was a point-and-click Console flow.
+      instructions:
+        "Registered via the Managed Agents API, not a Console form: declare this URL under the agent's mcp_servers, then add the token as a static_bearer vault credential (matched by this same URL) and reference that vault when creating the session. See platform.claude.com/docs/en/managed-agents/mcp-connector.",
+    };
+  }
+
+  if (hostPlatform === "salesforce_agentforce") {
+    return {
+      serverUrl,
+      token,
+      instructions:
+        "In Salesforce Setup, register this URL as an external MCP tool source for this Agentforce agent, using the token as its auth credential.",
+    };
+  }
+
+  return null;
 }
 
 /** The proxy path + minimal request body for a real, trivial test call —

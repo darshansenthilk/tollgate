@@ -203,6 +203,33 @@ export const agents = pgTable(
     upstreamKeyId: uuid("upstream_key_id").references(() => orgUpstreamKeys.id, {
       onDelete: "set null",
     }),
+    /**
+     * Null (default) means this agent's traffic is proxied through Tollgate's
+     * own hot path, same as every agent before this column existed. A non-null
+     * value means the opposite: this agent runs entirely on someone else's
+     * infrastructure (Anthropic Managed Agents, Salesforce Agentforce) that
+     * Tollgate cannot put itself in the request path of — confirmed directly
+     * against a real Managed Agents account that no model-endpoint override
+     * exists there. Governance for these agents comes from two OTHER
+     * mechanisms instead: the MCP gateway (routes/mcp.ts, gates real-time tool
+     * calls) and a periodic usage poller (per-platform connector, writes real
+     * spend_events rows). Plain text + an app-level allowlist, not a pgEnum —
+     * same reasoning as providerSlug just above: a new platform shouldn't cost
+     * a migration.
+     */
+    hostPlatform: text("host_platform"),
+    /**
+     * Which real downstream MCP server this agent's TOOL calls forward to,
+     * once the MCP gateway sits in front of them — the mcpTargetKeyId
+     * equivalent of upstreamKeyId, but for tool-call traffic rather than LLM
+     * traffic. Points at an org_upstream_keys row with providerSlug
+     * "mcp-downstream" (serverUrl + optional authToken). Unrelated to
+     * upstreamKeyId, which stays unused for an externally-hosted agent (it
+     * has no proxied LLM traffic to bill).
+     */
+    mcpTargetKeyId: uuid("mcp_target_key_id").references(() => orgUpstreamKeys.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -287,6 +314,73 @@ export const orgUpstreamKeys = pgTable(
     ),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// External platform links — one table per platform (Anthropic Managed Agents,
+// Salesforce Agentforce), not one shared/generic table. Each platform's real
+// API shape is different enough (Anthropic: API-key + workspace + session id;
+// Salesforce: org id + agent id, no session concept) that a shared table would
+// need a bag of platform-specific nullable columns anyway — three concrete
+// columns per platform is the smaller, more honest thing.
+//
+// Both are 1:1 with an agent (onDelete: cascade — unlike every FK on `agents`
+// itself, these tables ARE the agent's own external-platform config, not
+// billing history or something another row depends on, so there's nothing
+// protective to lose by letting them disappear with their agent).
+// ---------------------------------------------------------------------------
+
+export const anthropicManagedAgentLinks = pgTable("anthropic_managed_agent_links", {
+  id: uuid("id").primaryKey(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .unique()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  /** Same plain-text, non-FK org reference every other table uses. */
+  orgId: text("org_id").notNull(),
+  /** Which stored "anthropic-admin" credential (backend/shared's
+   *  UPSTREAM_PROVIDERS) the poller decrypts to authenticate the usage-report
+   *  and session-budget calls. An org can save more than one Admin key (the
+   *  upstream-keys screen allows multiple labeled keys per provider), so this
+   *  must name a specific row rather than assuming "the org's only key". */
+  upstreamKeyId: uuid("upstream_key_id").references(() => orgUpstreamKeys.id, {
+    onDelete: "set null",
+  }),
+  /** Filters Anthropic's Usage & Cost Admin API's usage_report to just this
+   *  agent's traffic — one Anthropic API key per Tollgate agent is how
+   *  per-agent attribution works, since Anthropic's own report is grouped by
+   *  api_key_id/workspace_id, not by anything Tollgate-specific. */
+  anthropicApiKeyId: text("anthropic_api_key_id").notNull(),
+  /** Optional additional filter dimension — null when the org doesn't
+   *  separate Managed Agents traffic into its own workspace. */
+  anthropicWorkspaceId: text("anthropic_workspace_id"),
+  /** The Managed Agents session this agent is currently bound to, if known —
+   *  what a future setBudget() call (native budget delegation) would target.
+   *  Null until either discovered via GET /v1/sessions or entered manually. */
+  currentSessionId: text("current_session_id"),
+  /** Watermark so the usage poller re-fetches only what's new since last run,
+   *  not the org's entire history every time. Null until the first poll. */
+  lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const salesforceAgentforceLinks = pgTable("salesforce_agentforce_links", {
+  id: uuid("id").primaryKey(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .unique()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  orgId: text("org_id").notNull(),
+  /** The Salesforce org this agent lives in — Salesforce's DigitalWallet
+   *  object is queried per-org, not globally. */
+  salesforceOrgId: text("salesforce_org_id").notNull(),
+  /** The Agentforce agent id within that Salesforce org, for attributing
+   *  DigitalWallet consumption to this specific Tollgate agent. */
+  agentforceAgentId: text("agentforce_agent_id").notNull(),
+  lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ---------------------------------------------------------------------------
 // Spend events

@@ -130,6 +130,16 @@ export interface UpstreamRequestArgs {
   body: string | undefined;
   /** Decrypted credential for this org — see UpstreamCredential. */
   credential: UpstreamCredential;
+  /**
+   * The caller's own request headers, lowercased keys (Fastify's own
+   * normalization) — NOT forwarded anywhere by default. Exists so an adapter
+   * can selectively pick out specific headers its provider's real API uses
+   * for feature opt-in (e.g. Claude's anthropic-beta), without the hot path
+   * ever hardcoding a provider-specific header name itself. An adapter that
+   * ignores this field forwards none of the caller's headers, same as
+   * before this existed.
+   */
+  clientHeaders: Record<string, string | string[] | undefined>;
 }
 
 /** Where a forwarded request goes and what it carries. */
@@ -301,6 +311,14 @@ export const CLAUDE_PRICES: Record<string, ModelPrice> = {
   "claude-3-opus": { inputCentsPerMTok: 1500, outputCentsPerMTok: 7500 },
   "claude-3-sonnet": { inputCentsPerMTok: 300, outputCentsPerMTok: 1500 },
   "claude-3-haiku": { inputCentsPerMTok: 25, outputCentsPerMTok: 125 },
+  // Verified directly against anthropic.com/claude/haiku (2026-08-12), not
+  // guessed — the claude-3-x snapshots above are retired (404 on real calls
+  // as of this date) and this table had no current-generation entry at all,
+  // meaning any real Claude 4.x/4.5 traffic priced at silent $0 and never
+  // tripped budget enforcement. Only adding the one family actually verified
+  // here; claude-sonnet-4-5/claude-opus-4-5/etc. need the same real-price
+  // check before being added, not a guess.
+  "claude-haiku-4-5": { inputCentsPerMTok: 100, outputCentsPerMTok: 500 },
 };
 
 /**
@@ -425,11 +443,19 @@ const API_KEY_FIELD: CredentialField = {
 };
 
 /**
- * Providers an org can bring their own key for, keyed by ADAPTER slug — the
- * same vocabulary backend/proxy/src/adapters/registry.ts routes on and that
- * the *_UPSTREAM_KEY env vars use, NOT the "chatgpt"/"claude" assistant labels
- * agents are created with (see registry.ts's assistantAdapterSlugs for why the
- * two differ). The label here is the user-facing name for the dashboard.
+ * Providers an org can bring their own key for. Most slugs here are ADAPTER
+ * slugs — the same vocabulary backend/proxy/src/adapters/registry.ts routes
+ * on and that the *_UPSTREAM_KEY env vars use, NOT the "chatgpt"/"claude"
+ * assistant labels agents are created with (see registry.ts's
+ * assistantAdapterSlugs for why the two differ).
+ *
+ * Three slugs below are the exception: "mcp-downstream", "anthropic-admin",
+ * and "salesforce-connected-app" reuse this same vault/UI machinery for
+ * credentials that back the MCP gateway and the external-platform usage
+ * connectors (external agent governance) rather than a proxy adapter — there
+ * is deliberately no matching entry in registry.ts for these three, since
+ * nothing forwards LLM traffic through them. The label here is the
+ * user-facing name for the dashboard either way.
  */
 export const UPSTREAM_PROVIDERS = [
   {
@@ -498,6 +524,63 @@ export const UPSTREAM_PROVIDERS = [
       },
     ],
   },
+  {
+    // What agents.mcpTargetKeyId points at — the real backend Tollgate's MCP
+    // gateway forwards an allowed tool call to, once one is configured.
+    slug: "mcp-downstream",
+    label: "MCP downstream server",
+    fields: [
+      {
+        name: "serverUrl",
+        label: "Server URL",
+        secret: false,
+        placeholder: "https://your-mcp-server.example.com",
+        help: "The real MCP server Tollgate forwards allowed tool calls to.",
+        // Same hostname-interpolation caution as Azure's resourceName/Bedrock's
+        // region: this becomes the literal destination of a forwarded request,
+        // so it's restricted to a real https URL rather than an arbitrary string.
+        pattern: /^https:\/\/[a-zA-Z0-9.-]+(:\d+)?(\/.*)?$/,
+        patternHelp: "Must be a full https:// URL.",
+      },
+      {
+        name: "authToken",
+        label: "Auth token",
+        secret: true,
+        help: "Optional — only if the downstream MCP server requires its own auth.",
+      },
+    ],
+  },
+  {
+    // Org-wide, not pointed at by any single agent's FK — one Admin key
+    // covers every Managed-Agents-hosted agent's usage in this org. Distinct
+    // from the "claude" slug above: that's a normal Anthropic API key used to
+    // proxy LLM calls, this is a privileged Admin key (sk-ant-admin01-…) used
+    // only to read usage/cost reports and update a session's own budget cap.
+    slug: "anthropic-admin",
+    label: "Anthropic Admin API key",
+    fields: [
+      {
+        name: "adminApiKey",
+        label: "Admin API key",
+        secret: true,
+        placeholder: "sk-ant-admin01-…",
+        help: "From Claude Console → Settings → Organization — needs Admin API access, not a regular API key.",
+      },
+    ],
+  },
+  {
+    slug: "salesforce-connected-app",
+    label: "Salesforce connected app",
+    fields: [
+      {
+        name: "clientId",
+        label: "Consumer key",
+        secret: false,
+        help: "From the connected app's settings in Salesforce Setup.",
+      },
+      { name: "clientSecret", label: "Consumer secret", secret: true },
+    ],
+  },
 ] as const;
 
 export type UpstreamProviderSlug = (typeof UPSTREAM_PROVIDERS)[number]["slug"];
@@ -513,13 +596,14 @@ export function credentialFieldsFor(slug: string): readonly CredentialField[] {
 }
 
 /**
- * Fields the org must actually supply. `sessionToken` is the only optional one
- * today (AWS long-lived IAM users don't have one), and it's marked optional by
- * carrying a `help` that says so — rather than adding a `required` flag whose
- * only false value would be this single field.
+ * Fields the org must actually supply. Optional fields are marked by carrying
+ * a `help` that says so, rather than a `required` flag on every field —
+ * `sessionToken` (AWS long-lived IAM users don't have one) and
+ * "mcp-downstream"'s `authToken` (only needed if the downstream MCP server
+ * requires its own auth) are the two today.
  */
 export function isOptionalCredentialField(field: CredentialField): boolean {
-  return field.name === "sessionToken";
+  return field.name === "sessionToken" || field.name === "authToken";
 }
 
 /**
@@ -886,6 +970,42 @@ export function freezeKey(agentId: string): string {
  */
 export function toolGrantKey(agentId: string, toolName: string): string {
   return `toolgrant:${agentId}:${toolName}`;
+}
+
+/**
+ * The escalation half of the tool gate: instead of a blocked tool call being a
+ * dead end, whichever route raised it (the proxy's own hot path, or the MCP
+ * gateway's tool-call gate — same mechanism, different caller) checks whether
+ * an operator has already granted this one and — if not — raises a request
+ * they can approve from the dashboard.
+ *
+ * Split across both stores on purpose. The GRANT is Redis (hot path, read on
+ * every blocked call, TTL'd so an approval expires on its own); the REQUEST is
+ * Postgres (an operator-facing queue that has to survive a Redis flush).
+ *
+ * The interface lives here (shared) rather than in backend/proxy so both
+ * routes.ts and routes/mcp.ts can type against it without either depending on
+ * the other — mirrors the ProviderAdapter (shared) / openaiAdapter (proxy)
+ * split. The only real implementation, pgApprovalStore, still lives in
+ * backend/proxy/src/lib/tool-approvals.ts — a caller only ever raises
+ * requests and reads grants; resolving a request and writing a grant are the
+ * api's, so an agent (or an external platform's tool call) can never approve
+ * itself.
+ */
+export interface ApprovalStore {
+  /**
+   * Atomically spend an operator's approval of this exact tool for this
+   * agent, returning whether there was one to spend.
+   *
+   * Single-use, not a time window: approving "delete_customer, this once"
+   * must not hand the agent a period in which it can delete five hundred
+   * records. The grant still carries a TTL as a backstop so an approval
+   * nobody acted on doesn't sit armed forever.
+   */
+  consumeGrant(agentId: string, toolName: string): Promise<boolean>;
+  /** Raise a pending request for an operator to resolve. Idempotent: an agent
+   *  retrying a blocked call in a loop must not flood the queue. */
+  requestApproval(args: { orgId: string; agentId: string; toolName: string }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

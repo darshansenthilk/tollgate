@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConnectAgentSnippet } from "@/components/connect-agent-snippet";
+import { ConnectMcpSnippet } from "@/components/connect-mcp-snippet";
 import { providerLabel } from "@/lib/agent-options";
 import type { AgentListItem } from "@/lib/api";
 
@@ -35,8 +36,9 @@ export function AgentIntegrationDialog({ agent, onOpenChange }: AgentIntegration
         <DialogHeader>
           <DialogTitle>Connect {agent?.name}</DialogTitle>
           <DialogDescription>
-            Point this agent&apos;s code at Tollgate instead of calling{" "}
-            {providerLabel(agent?.providerSlug ?? "")} directly.
+            {agent?.hostPlatform != null
+              ? "Register Tollgate's MCP gateway as this agent's tool source."
+              : `Point this agent's code at Tollgate instead of calling ${providerLabel(agent?.providerSlug ?? "")} directly.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -53,12 +55,16 @@ export function AgentIntegrationDialog({ agent, onOpenChange }: AgentIntegration
           </p>
         </div>
 
-        {agent !== null && (
-          <ConnectAgentSnippet
-            providerSlug={agent.providerSlug}
-            model={agent.model}
-            token={PLACEHOLDER_TOKEN}
-          />
+        {agent !== null && agent.hostPlatform !== null ? (
+          <ConnectMcpSnippet hostPlatform={agent.hostPlatform} token={PLACEHOLDER_TOKEN} />
+        ) : (
+          agent !== null && (
+            <ConnectAgentSnippet
+              providerSlug={agent.providerSlug}
+              model={agent.model}
+              token={PLACEHOLDER_TOKEN}
+            />
+          )
         )}
 
         <DialogFooter>

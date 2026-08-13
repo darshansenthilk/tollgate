@@ -71,6 +71,14 @@ export interface AgentListItem {
    *  @tollgate/shared ToolDefinition's doc comment. null = nothing configured
    *  (the calling app's own tools, if any, pass through unchanged). */
   toolDefinitions: ToolDefinition[] | null;
+  /** null (default) = a normal, Tollgate-proxied agent. Otherwise which
+   *  external platform hosts this agent's own LLM traffic — Tollgate can't
+   *  intercept that traffic, only govern tool calls via the MCP gateway. */
+  hostPlatform: string | null;
+  /** Which stored "mcp-downstream" key (see UpstreamKey.id) this agent's
+   *  tool calls forward to via the MCP gateway. Only meaningful when
+   *  hostPlatform is set. */
+  mcpTargetKeyId: string | null;
 }
 
 /** Exact shape returned by POST /v1/agents — token is present ONLY here. */
@@ -85,6 +93,8 @@ export interface CreateAgentResponse {
   systemPrompt: string | null;
   blockedTools: string[] | null;
   toolDefinitions: ToolDefinition[] | null;
+  hostPlatform: string | null;
+  mcpTargetKeyId: string | null;
   token: string;
 }
 
@@ -97,6 +107,8 @@ export interface CreateAgentInput {
   systemPrompt: string | null;
   blockedTools: string[] | null;
   toolDefinitions: ToolDefinition[] | null;
+  hostPlatform?: string | null;
+  mcpTargetKeyId?: string | null;
 }
 
 /**
@@ -114,6 +126,7 @@ export interface UpdateAgentInput {
   systemPrompt?: string | null;
   blockedTools?: string[] | null;
   toolDefinitions?: ToolDefinition[] | null;
+  mcpTargetKeyId?: string | null;
 }
 
 /** Exact shape returned by PATCH /v1/agents/:id — a committed agent row, no token. */
@@ -128,6 +141,8 @@ export interface UpdateAgentResponse {
   systemPrompt: string | null;
   blockedTools: string[] | null;
   toolDefinitions: ToolDefinition[] | null;
+  hostPlatform: string | null;
+  mcpTargetKeyId: string | null;
 }
 
 /** Shared shape of POST .../freeze, POST .../unfreeze, PATCH .../policy. */
@@ -191,6 +206,7 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
   // account count the api composed into the sentence.
   dashboard_role_not_found: "That role no longer exists on this dashboard.",
   dashboard_permission_denied: "Your role on this dashboard doesn't allow that.",
+  wrong_host_platform: "This agent isn't hosted on Anthropic Managed Agents.",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -536,6 +552,51 @@ export function updateAgentPolicy(
   return request<AgentMutationResponse>(`/v1/agents/${id}/policy`, {
     method: "PATCH",
     body: JSON.stringify({ maxBudgetCents }),
+  });
+}
+
+/** An agent's Anthropic Managed Agents link — see backend/api's
+ *  anthropic-links.ts. Only meaningful when the agent's hostPlatform is
+ *  "anthropic_managed_agents". */
+export interface AnthropicManagedAgentLinkInfo {
+  anthropicApiKeyId: string;
+  anthropicWorkspaceId: string | null;
+  currentSessionId: string | null;
+  upstreamKeyId: string | null;
+  lastPolledAt: string | null;
+}
+
+export interface SaveAnthropicLinkInput {
+  anthropicApiKeyId: string;
+  anthropicWorkspaceId: string | null;
+  currentSessionId: string | null;
+  upstreamKeyId: string | null;
+}
+
+/** null when the agent has no link configured yet. */
+export async function getAnthropicLink(
+  agentId: string,
+): Promise<AnthropicManagedAgentLinkInfo | null> {
+  const res = await request<{ link: AnthropicManagedAgentLinkInfo | null }>(
+    `/v1/agents/${agentId}/anthropic-link`,
+  );
+  return res.link;
+}
+
+export async function saveAnthropicLink(
+  agentId: string,
+  input: SaveAnthropicLinkInput,
+): Promise<AnthropicManagedAgentLinkInfo> {
+  const res = await request<{ link: AnthropicManagedAgentLinkInfo }>(
+    `/v1/agents/${agentId}/anthropic-link`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+  return res.link;
+}
+
+export function deleteAnthropicLink(agentId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/v1/agents/${agentId}/anthropic-link`, {
+    method: "DELETE",
   });
 }
 

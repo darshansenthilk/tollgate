@@ -26,21 +26,27 @@ export const DEFAULT_TEST_ORG_ID = "org-test";
 export class FakeAgentStore implements AgentStore {
   private readonly byHash = new Map<string, AuthedAgent>();
 
-  /** orgId, upstreamKeyId, blockedTools, systemPrompt and toolDefinitions are
-   *  all optional and default to their "off" value, so the many tests that
-   *  predate any of them stay unchanged while a test exercising one can
-   *  still pin a specific value. */
+  /** orgId, upstreamKeyId, blockedTools, systemPrompt, toolDefinitions and
+   *  mcpTargetKeyId are all optional and default to their "off" value, so the
+   *  many tests that predate any of them stay unchanged while a test
+   *  exercising one can still pin a specific value. */
   add(
     token: string,
     agent: Omit<
       AuthedAgent,
-      "orgId" | "upstreamKeyId" | "blockedTools" | "systemPrompt" | "toolDefinitions"
+      | "orgId"
+      | "upstreamKeyId"
+      | "blockedTools"
+      | "systemPrompt"
+      | "toolDefinitions"
+      | "mcpTargetKeyId"
     > & {
       orgId?: string;
       upstreamKeyId?: string | null;
       blockedTools?: string[] | null;
       systemPrompt?: string | null;
       toolDefinitions?: ToolDefinition[] | null;
+      mcpTargetKeyId?: string | null;
     },
   ): void {
     this.byHash.set(hashToken(token), {
@@ -50,6 +56,7 @@ export class FakeAgentStore implements AgentStore {
       blockedTools: agent.blockedTools ?? null,
       systemPrompt: agent.systemPrompt ?? null,
       toolDefinitions: agent.toolDefinitions ?? null,
+      mcpTargetKeyId: agent.mcpTargetKeyId ?? null,
     });
   }
 

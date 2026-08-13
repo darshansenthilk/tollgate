@@ -40,6 +40,7 @@ import {
   toolDefinitionsToDrafts,
   type ToolDefinitionDraft,
 } from "@/components/tool-definitions-editor";
+import { AnthropicLinkPanel } from "@/components/anthropic-link-panel";
 
 /** Sentinel Select value for "don't pin a specific key" — see
  *  create-agent-dialog.tsx's identical constant for why. */
@@ -77,6 +78,7 @@ export function EditAgentDialog({
   const [model, setModel] = useState<string | null>(null);
   const [maxBudgetCents, setMaxBudgetCents] = useState("");
   const [upstreamKeyId, setUpstreamKeyId] = useState<string | null>(null);
+  const [mcpTargetKeyId, setMcpTargetKeyId] = useState<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [blockedTools, setBlockedTools] = useState("");
   const [toolDrafts, setToolDrafts] = useState<ToolDefinitionDraft[]>([]);
@@ -101,6 +103,18 @@ export function EditAgentDialog({
       : (upstreamKeys.providers.find((p) => p.slug === ASSISTANT_ADAPTER_SLUGS[editing.providerSlug])
           ?.keys ?? []);
 
+  // See create-agent-dialog.tsx's identical derivation — "mcp-downstream"
+  // keys aren't tied to providerSlug.
+  const mcpKeyOptions =
+    upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === "mcp-downstream")?.keys ?? []);
+
+  const anthropicAdminKeyOptions =
+    upstreamKeys === null
+      ? []
+      : (upstreamKeys.providers.find((p) => p.slug === "anthropic-admin")?.keys ?? []);
+
   // React's documented "adjusting state when a prop changes" pattern, keyed on
   // the agent's *id* rather than the object. `agent` is re-derived from the 3s
   // poll on every render, so reseeding on object identity would wipe whatever
@@ -114,6 +128,7 @@ export function EditAgentDialog({
     setModel(agent.model);
     setMaxBudgetCents(agent.maxBudgetCents === null ? "" : String(agent.maxBudgetCents));
     setUpstreamKeyId(agent.upstreamKeyId);
+    setMcpTargetKeyId(agent.mcpTargetKeyId);
     setSystemPrompt(agent.systemPrompt ?? "");
     setBlockedTools(formatBlockedTools(agent.blockedTools));
     setToolDrafts(toolDefinitionsToDrafts(agent.toolDefinitions));
@@ -145,6 +160,7 @@ export function EditAgentDialog({
       model !== editing.model ||
       budgetValue !== editing.maxBudgetCents ||
       upstreamKeyId !== editing.upstreamKeyId ||
+      mcpTargetKeyId !== editing.mcpTargetKeyId ||
       systemPromptValue !== editing.systemPrompt ||
       JSON.stringify(blockedToolsValue) !== JSON.stringify(editing.blockedTools) ||
       // An unresolved (invalid JSON) draft counts as dirty too, so Save stays
@@ -189,6 +205,7 @@ export function EditAgentDialog({
       if (model !== editing.model) input.model = model;
       if (budgetValue !== editing.maxBudgetCents) input.maxBudgetCents = budgetValue;
       if (upstreamKeyId !== editing.upstreamKeyId) input.upstreamKeyId = upstreamKeyId;
+      if (mcpTargetKeyId !== editing.mcpTargetKeyId) input.mcpTargetKeyId = mcpTargetKeyId;
       if (systemPromptValue !== editing.systemPrompt) input.systemPrompt = systemPromptValue;
       if (JSON.stringify(blockedToolsValue) !== JSON.stringify(editing.blockedTools)) {
         input.blockedTools = blockedToolsValue;
@@ -299,7 +316,7 @@ export function EditAgentDialog({
 
           <ToolDefinitionsEditor idPrefix="edit" drafts={toolDrafts} onChange={setToolDrafts} />
 
-          {keyOptions.length > 0 && (
+          {editing?.hostPlatform === null && keyOptions.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-agent-upstream-key">Upstream key</Label>
               <Select
@@ -325,6 +342,38 @@ export function EditAgentDialog({
                 </SelectContent>
               </Select>
             </div>
+          )}
+
+          {editing?.hostPlatform !== null && editing?.hostPlatform !== undefined && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-agent-mcp-target-key">MCP downstream server</Label>
+              <Select
+                items={[
+                  { value: DEPLOYMENT_DEFAULT_KEY, label: "None configured" },
+                  ...mcpKeyOptions.map((k) => ({ value: k.id, label: `${k.label} (${k.keyHint})` })),
+                ]}
+                value={mcpTargetKeyId ?? DEPLOYMENT_DEFAULT_KEY}
+                onValueChange={(value) =>
+                  setMcpTargetKeyId(value === DEPLOYMENT_DEFAULT_KEY ? null : value)
+                }
+              >
+                <SelectTrigger id="edit-agent-mcp-target-key">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEPLOYMENT_DEFAULT_KEY}>None configured</SelectItem>
+                  {mcpKeyOptions.map((k) => (
+                    <SelectItem key={k.id} value={k.id}>
+                      {k.label} ({k.keyHint})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {editing?.hostPlatform === "anthropic_managed_agents" && (
+            <AnthropicLinkPanel agentId={editing.id} adminKeyOptions={anthropicAdminKeyOptions} />
           )}
 
           {error !== null && (

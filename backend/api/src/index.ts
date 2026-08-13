@@ -14,6 +14,8 @@ import { registerApprovalRoutes } from "./routes/approvals.js";
 import { registerAgentDraftRoutes } from "./routes/agent-draft.js";
 import { registerSuggestionRoutes } from "./routes/suggestions.js";
 import { registerDashboardRoutes } from "./routes/dashboards.js";
+import { registerAnthropicLinkRoutes } from "./routes/anthropic-links.js";
+import { pollAllAnthropicLinks } from "./connectors/poll-anthropic-links.js";
 import { registerInstallWizardRoutes } from "./routes/install-wizard.js";
 import { registerAuthCapabilityRoutes } from "./routes/auth-capabilities.js";
 import { registerAuthRoutes } from "./lib/auth-mount.js";
@@ -96,7 +98,60 @@ await app.register(async (scope) => {
   registerAgentDraftRoutes(scope);
   registerSuggestionRoutes(scope);
   registerDashboardRoutes(scope, redis);
+  registerAnthropicLinkRoutes(scope);
 });
+
+/**
+ * External agent governance: keeps Anthropic Managed Agents usage/budget
+ * syncing automatic once an agent is linked — no separate cron setup
+ * required for a normal install (see connectors/poll-anthropic-links.ts's
+ * own doc comment; db/poll-anthropic-usage.ts still exists for operators who
+ * want their own external cron instead).
+ *
+ * Deliberately the first in-process scheduler in this codebase: unlike the
+ * proxy's hot path — which has to answer real, timing-sensitive requests —
+ * this is a simple, self-contained reconciliation loop with no request
+ * depending on its exact timing, so a bare setInterval here is the pragmatic
+ * choice over standing up a separate scheduler service for one job. A no-op
+ * (one cheap SELECT) when no agent has actually been linked, so this costs
+ * nothing on a deployment that isn't using the feature.
+ *
+ * ANTHROPIC_POLL_INTERVAL_MINUTES=0 (or negative) turns it off entirely, for
+ * anyone who'd rather rely only on their own external cron.
+ */
+const ANTHROPIC_POLL_INTERVAL_MINUTES = Number(process.env.ANTHROPIC_POLL_INTERVAL_MINUTES ?? 15);
+let anthropicPollTimer: NodeJS.Timeout | undefined;
+let anthropicPollRunning = false;
+
+function scheduleAnthropicPoll(): void {
+  if (!Number.isFinite(ANTHROPIC_POLL_INTERVAL_MINUTES) || ANTHROPIC_POLL_INTERVAL_MINUTES <= 0) {
+    app.log.info("ANTHROPIC_POLL_INTERVAL_MINUTES <= 0 — automatic Anthropic usage polling is off");
+    return;
+  }
+
+  async function runOnce(): Promise<void> {
+    // Overlap guard: a run slower than the interval (a large backlog, a slow
+    // upstream) skips the next tick rather than piling up concurrent polls
+    // against the same rows.
+    if (anthropicPollRunning) return;
+    anthropicPollRunning = true;
+    try {
+      const { linksPolled, linksFailed } = await pollAllAnthropicLinks();
+      if (linksPolled > 0) {
+        app.log.info({ linksPolled, linksFailed }, "anthropic usage poll complete");
+      }
+    } catch (err) {
+      app.log.error({ err }, "anthropic usage poll failed");
+    } finally {
+      anthropicPollRunning = false;
+    }
+  }
+
+  // First run shortly after boot (not immediately — let migrations/listen
+  // finish first), then every interval after that.
+  setTimeout(() => void runOnce(), 30_000);
+  anthropicPollTimer = setInterval(() => void runOnce(), ANTHROPIC_POLL_INTERVAL_MINUTES * 60_000);
+}
 
 async function main() {
   try {
@@ -126,9 +181,11 @@ async function main() {
     app.log.warn({ err }, "postgres migration failed; continuing");
   }
   await app.listen({ port: PORT, host: "0.0.0.0" });
+  scheduleAnthropicPoll();
 }
 
 async function shutdown() {
+  if (anthropicPollTimer) clearInterval(anthropicPollTimer);
   await app.close();
   await redis.quit().catch(() => {});
   await pool.end().catch(() => {});

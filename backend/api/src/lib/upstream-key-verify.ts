@@ -76,11 +76,34 @@ function probeSpec(slug: UpstreamProviderSlug, credential: UpstreamCredential): 
     return null;
   }
 
-  return {
-    url: "https://api.openai.com/v1/models",
-    headers: { authorization: `Bearer ${apiKey}` },
-    displayName: "OpenAI",
-  };
+  if (slug === "openai") {
+    return {
+      url: "https://api.openai.com/v1/models",
+      headers: { authorization: `Bearer ${apiKey}` },
+      displayName: "OpenAI",
+    };
+  }
+
+  if (slug === "anthropic-admin") {
+    const adminApiKey = credential.secrets["adminApiKey"] ?? "";
+    return {
+      // Cheap, read-only, and specific to Admin keys — a regular "claude"
+      // key (sk-ant-...) gets a 401 here even though it authenticates fine
+      // against /v1/models, which is exactly the mix-up this probe exists to
+      // catch before the poller finds out at 3am.
+      url: "https://api.anthropic.com/v1/organizations/me",
+      headers: { "x-api-key": adminApiKey, "anthropic-version": ANTHROPIC_VERSION },
+      displayName: "Anthropic",
+    };
+  }
+
+  // "mcp-downstream", "salesforce-connected-app": neither authenticates with
+  // a bare apiKey secret (see their field definitions in @tollgate/shared's
+  // UPSTREAM_PROVIDERS), so falling through to the OpenAI probe above would
+  // send an empty bearer token and always report a false rejection. No cheap
+  // read-only probe exists for these yet either — same "verified at first
+  // use" tradeoff as Bedrock above.
+  return null;
 }
 
 /** Pull the provider's own error message out of its JSON envelope. Both use

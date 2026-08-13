@@ -13,6 +13,7 @@
   "dependencies": {
     "@fastify/helmet": "^13.1.0",
     "@fastify/rate-limit": "^11.1.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@tollgate/shared": "workspace:*",
     "aws4fetch": "1.0.20",
     "dotenv": "^16.4.5",
